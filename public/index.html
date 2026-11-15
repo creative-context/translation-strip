@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translation Strip</title>
+<link rel="stylesheet" href="design-tokens.css">
+<link rel="stylesheet" href="design-base.css">
+<link rel="stylesheet" href="design-components.css">
+<script src="design-icons.js"></script>
+<style>
+  /* The strip fills its window: as wide as the window, 145 pt tall in the app. */
+  body { --msg: 14px; --msg-lh: 20px; }
+  body.embed textarea, body.embed input { cursor: text !important; }
+
+  /* Two panels, each with its own controls: the Spanish side writes and translates, the English
+     side adjusts and sends. No separate bar, so the text gets the height. */
+  /* In the app the window is clear and rounded like the strip, so only the strip's surface shows. */
+  body.embed { background: transparent; }
+  .strip { position: relative; width: 100%; height: 145px; border-radius: var(--radius-raised); background: var(--color-surface-raised);
+    padding: 8px; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; height: 100%; min-height: 0; }
+  .f { position: relative; display: grid; grid-template-rows: 1fr auto; gap: 6px; min-height: 0; min-width: 0;
+    border-radius: var(--radius-container); padding: 10px 12px 8px; background: var(--color-background-card);
+    transition: background-color 240ms var(--ease-standard); }
+  /* Surfaces, no lines: the boxes stand apart by their tone only. The Spanish box always has a
+     surface, since that's where you write; the English side stays flat until there's English. */
+  .f.es { background: var(--obsidian-veil-selected); }
+  .f.es:focus-within { background: var(--color-overlay-pressed); }
+  .f.en { grid-template-rows: 1fr auto auto; background: transparent; }
+  .foot { display: flex; align-items: center; gap: 8px; height: 28px; min-width: 0; margin: 0 -4px; }
+  .foot .grow { flex: 1; }
+  .en-wrap { position: relative; min-height: 0; }
+  textarea { all: unset; box-sizing: border-box; display: block; width: 100%; height: 100%; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-primary); cursor: text; }
+  textarea::placeholder { color: var(--color-text-secondary); }
+  .tagrow { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+  .status { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; overflow: hidden; } /* whole; the chat's name gives way */
+  .status:empty { display: none; }
+  .status.tag { height: 20px; }
+  .tagrow .grow { flex: 1; }
+  .adjust-btn { flex: none; }
+  .adjust-btn kbd, .chip kbd { font: inherit; opacity: .7; }
+  .adjust-btn svg.i { width: 12px; height: 12px; }
+  /* Dictation: the mic sits where Adjust sits on the English side. Listening is yours, so it's
+     neutral white, never a state color. */
+  .dict-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--csm-text-meta); color: var(--color-text-secondary); white-space: nowrap; }
+  .dict-label:empty { display: none; }
+  .level { display: inline-flex; align-items: center; gap: 2px; height: 12px; }
+  .level i { width: 2px; height: 4px; border-radius: 1px; background: var(--color-text-primary); animation: level 900ms ease-in-out infinite; }
+  .level i:nth-child(2) { height: 8px; animation-delay: 150ms; }
+  .level i:nth-child(3) { height: 11px; animation-delay: 300ms; }
+  .level i:nth-child(4) { height: 6px; animation-delay: 450ms; }
+  @keyframes level { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+  .mic { width: 28px; height: 28px; border-radius: 50%; }
+  .mic svg.i { width: 16px; height: 16px; }
+  [data-dict="on"] .f.es { background: var(--color-overlay-pressed); }
+  [data-dict="on"] .mic { background: var(--color-text-primary); color: var(--color-on-light); }
+
+  /* The adjust line: a note on the translation, in Spanish or English. */
+  .adjust-row { display: none; align-items: center; gap: 6px; }
+  [data-adjust="open"] .adjust-row { display: flex; }
+  .adjust-row .field { flex: 1; height: 26px; background: var(--color-overlay-pressed); font-size: var(--csm-text-body); }
+  .adjust-row .field:focus { background: #FFFFFF1A; }
+  .actions { display: inline-flex; gap: 6px; flex: none; }
+  .actions:empty { display: none; }
+  .busy { display: none; position: absolute; left: 0; top: 0; color: var(--color-text-accent); align-items: center; gap: 8px; font-size: var(--msg); line-height: var(--msg-lh); }
+  [data-state="translating"] .busy, [data-state="starting"] .busy { display: inline-flex; }
+  [data-state="translating"] .en-out, [data-state="starting"] .en-out { visibility: hidden; }
+  [data-state="question"] .en-out { color: var(--color-text-orange); }
+  [data-state="stale"] .en-out { color: var(--color-text-secondary); text-decoration: line-through; text-decoration-color: var(--color-text-disabled); }
+
+  /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
+  [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  [data-state="stale"] .f.en, [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
+  [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
+  [data-state="error"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
+  [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
+
+  .preview { color: var(--color-text-secondary); white-space: nowrap; }
+  /* The chat's name gives way first, so a notice beside it stays whole. */
+  .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 100; }
+  .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+  [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
+  .hint { color: var(--color-text-secondary); white-space: nowrap; }
+  .hint:empty { display: none; }
+  .hint kbd { font: inherit; color: var(--color-text-primary); }
+  .more-btn { font-size: 15px; letter-spacing: 1px; flex: none; margin-left: auto; } /* stays right while the tag row is hidden */
+  .send { gap: 8px; flex: none; }
+  .send kbd { font: inherit; opacity: .7; }
+  .btn:disabled { opacity: .4; pointer-events: none; }
+  /* Nothing to send yet: a gray button you can still read, not a dimmed blue one. */
+  .send:disabled { opacity: 1; background: var(--color-overlay-hover); color: var(--color-text-secondary); }
+
+  /* The menu opens over the fields, not above the strip: the app's window is only as tall as the strip. */
+  .menu { position: absolute; right: 8px; bottom: calc(8px + 8px + 28px + 6px); width: max-content; max-width: calc(100% - 16px); padding: 6px;
+    border-radius: var(--radius-raised); background: var(--color-surface-raised); box-shadow: var(--shadow-raised); display: none; z-index: 5; gap: 6px; }
+  .menu.open { display: flex; }
+  .menu .col { display: flex; flex-direction: column; min-width: 0; }
+  .menu .mh { padding: 6px 8px 4px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); min-height: 24px; }
+  .menu button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .menu button:hover { background: var(--obsidian-veil-selected); }
+  .menu button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: -2px; }
+  .menu button .ck { width: 12px; color: var(--color-text-accent); visibility: hidden; }
+  .menu button[aria-checked="true"] .ck { visibility: visible; }
+  .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
+  .menu .off { color: var(--color-text-secondary); }
+  .menu .off:hover { color: var(--obsidian-text-hover); }
+
+  /* First run: one sentence and one button over the strip. */
+  .cover { display: none; position: absolute; inset: 0; border-radius: var(--radius-raised); background: var(--color-surface-raised); z-index: 10;
+    align-items: center; gap: 16px; padding: 0 24px; font-size: var(--msg); line-height: var(--msg-lh); }
+  [data-access="no"] .cover { display: flex; }
+</style>
+</head>
+<body>
+<div class="strip" id="strip" data-state="idle" data-teams="unknown" data-access="ok" data-adjust="" data-dict="off">
+  <div class="fields" id="fields">
+    <div class="f es">
+      <textarea class="es-in" id="es" lang="es" placeholder="Message" aria-label="Message to translate" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <div class="foot">
+        <div class="pseg tone" id="tone"><button data-register="normal" aria-pressed="true">Normal</button><button data-register="formal" aria-pressed="false">Formal</button></div>
+        <span class="preview" id="preview" hidden>Preview · nothing is sent</span>
+        <span class="grow"></span>
+        <span class="dict-label" id="dictLabel"></span>
+        <button class="icon-btn mic" id="mic" title="Dictate ⌘D" aria-label="Dictate" aria-pressed="false"></button>
+        <span class="hint" id="hint"></span>
+      </div>
+    </div>
+    <div class="f en">
+      <div class="en-wrap">
+        <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="English translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <div class="busy"><span class="calm"><i></i><i></i><i></i></span><span id="busyText">Translating…</span></div>
+      </div>
+      <div class="adjust-row">
+        <input class="field adj-in" id="adjIn" placeholder="What to change" aria-label="What to change" spellcheck="false" autocomplete="off" autocapitalize="off">
+        <button class="btn small chip" id="chip" data-quick="más corto">Shorter</button>
+      </div>
+      <div class="foot">
+        <div class="tagrow" id="tagrow">
+          <span class="status" id="status" role="status" aria-live="polite"></span><span class="actions" id="actions"></span><span class="grow"></span>
+          <button class="btn ghost small adjust-btn" id="adjustBtn"><span id="pencil"></span>Adjust <kbd>⌘K</kbd></button>
+        </div>
+        <button class="icon-btn more-btn" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <span class="to" id="to">To <b id="chat"></b></span>
+        <button class="btn primary send" id="send" disabled>Send <kbd>⌘⏎</kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="menu" id="menu" role="menu">
+    <div class="col">
+      <div class="mh">⌘⏎</div>
+      <button role="menuitemradio" data-mode="send" aria-checked="true"><span class="ck" data-ic="check"></span>Send</button>
+      <button role="menuitemradio" data-mode="leave" aria-checked="false"><span class="ck" data-ic="check"></span>Put in Teams without sending</button>
+    </div>
+    <hr>
+    <div class="col">
+      <div class="mh">Model</div>
+      <button role="menuitemradio" data-model="haiku" aria-checked="true"><span class="ck" data-ic="check"></span>Haiku</button>
+      <button role="menuitemradio" data-model="sonnet" aria-checked="false"><span class="ck" data-ic="check"></span>Sonnet</button>
+    </div>
+    <hr>
+    <div class="col">
+      <div class="mh">&nbsp;</div>
+      <button role="menuitem" class="off" data-do="guide">Open voice guide</button>
+      <button role="menuitem" class="off" data-do="restart">Restart translator</button>
+    </div>
+  </div>
+  <div class="cover"><span>Allow Accessibility to send messages in Teams.</span><button class="btn primary" id="accessBtn">Open System Settings</button></div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------------------------
+// The strip's page. State comes from the server (/api/stream); the Spanish, the English and what
+// is happening to them live here. The shell and the stand-in bridge are described in
+// docs/contract.md. Nothing here stores a message, and nothing logs one.
+// ---------------------------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const box = $("strip"), esIn = $("es"), enOut = $("en"), adjIn = $("adjIn"), menu = $("menu"), moreBtn = $("more");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ic = n => DesignIcons.svg(n);
+
+// The design system has no mic yet: drawn on its 24 px grid and stroke, to add to mac-app-design before it is vendored.
+const MIC = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg>`;
+$("mic").innerHTML = MIC;
+$("pencil").innerHTML = ic("pencil");
+for (const s of document.querySelectorAll("[data-ic]")) s.innerHTML = ic(s.dataset.ic);
+
+// ------------------------------------------------------------------------------ the bridge
+const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.strip;
+const inApp = !!handler;
+document.body.classList.toggle("embed", inApp);
+$("preview").hidden = inApp;
+
+function post(msg) {
+  if (handler) { try { handler.postMessage(msg); } catch (e) {} }
+  else standIn(msg);
+}
+
+// The stand-in bridge, for a browser with no shell: a made-up chat and a made-up last message, and a
+// send that succeeds after a moment without sending anything. The query string picks a case to
+// try: ?teams=closed|nochat  ?draft=1  ?access=0  ?mic=denied  ?send=draft|no-teams|no-chat|not-front|mismatch|no-access
+const qp = new URLSearchParams(location.search);
+const PREVIEW_DICTATION = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.".split(" ");
+let previewTimer;
+function previewTeams() {
+  const t = qp.get("teams");
+  if (t === "closed") return { open: false, chat: null, from: null, last: null, draft: false };
+  if (t === "nochat") return { open: true, chat: null, from: null, last: null, draft: false };
+  return { open: true, chat: "Priya Raman", from: "Priya Raman", last: "Could you send me the budget numbers before Thursday?", draft: qp.get("draft") === "1" };
+}
+function standIn(msg) {
+  if (msg.type === "ready") {
+    setTimeout(() => {
+      window.strip.access({ accessibility: qp.get("access") !== "0", microphone: qp.get("mic") === "denied" ? "denied" : "unknown" });
+      window.strip.teams(previewTeams());
+    }, 0);
+  } else if (msg.type === "send") {
+    setTimeout(() => {
+      const why = qp.get("send");
+      if (why && !(why === "draft" && msg.afterDraft)) window.strip.sent({ ok: false, reason: why });
+      else window.strip.sent({ ok: true });
+    }, 800);
+  } else if (msg.type === "dictation") {
+    clearInterval(previewTimer);
+    if (msg.action === "start") {
+      if (qp.get("mic") === "denied") { window.strip.dictation({ state: "denied" }); return; }
+      let n = 0;
+      window.strip.dictation({ state: "on", text: "" });
+      previewTimer = setInterval(() => {
+        n++;
+        window.strip.dictation({ state: n >= PREVIEW_DICTATION.length ? "off" : "on", text: PREVIEW_DICTATION.slice(0, n).join(" ") });
+        if (n >= PREVIEW_DICTATION.length) clearInterval(previewTimer);
+      }, 160);
+    } else if (msg.action === "stop") {
+      window.strip.dictation({ state: "off" });
+    }
+  }
+}
+
+// What the shell tells the page (and what the stand-in tells it).
+const shell = { teams: null, access: { accessibility: null, microphone: "unknown" } };
+window.strip = {
+  teams(m) {
+    shell.teams = m && typeof m === "object" ? m : null;
+    if (st.notice && st.notice.env) st.notice = null;
+    paint();
+  },
+  sent(m) { onSent(m || {}); },
+  dictation(m) { onDictation(m || {}); },
+  access(m) {
+    shell.access = { accessibility: m && typeof m.accessibility === "boolean" ? m.accessibility : null, microphone: (m && m.microphone) || "unknown" };
+    if (shell.access.microphone === "denied") { if (st.dict === "on") cancelDictation(); st.dict = "denied"; }
+    else if (st.dict === "denied") st.dict = "off";
+    paint();
+  },
+  focus() { esIn.focus(); },
+};
+
+// ------------------------------------------------------------------------------ the server
+let srv = null;       // { translator, settings, … } from /api/state
+const tr = () => (srv && srv.translator) || {};
+const settings = () => (srv && srv.settings) || { model: "haiku", mode: "send" };
+
+let source, lastBeat = Date.now(), backoff = 1000, reconnectTimer = 0;
+function connect() {
+  clearTimeout(reconnectTimer); reconnectTimer = 0;
+  try { if (source) source.close(); } catch (e) {}
+  source = new EventSource("/api/stream");
+  source.onmessage = e => {
+    lastBeat = Date.now(); backoff = 1000;
+    try { srv = JSON.parse(e.data); } catch (err) { return; }
+    paint();
+  };
+  source.addEventListener("ping", () => { lastBeat = Date.now(); });
+  source.onerror = () => {
+    try { source.close(); } catch (e) {}
+    if (!reconnectTimer) { reconnectTimer = setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 5000); }
+  };
+}
+// The server pings every 9 s; silence for 25 s means a dead connection that never closed.
+setInterval(() => { if (Date.now() - lastBeat > 25000) { lastBeat = Date.now(); connect(); } }, 5000);
+
+async function api(path, body) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 60000);
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}), signal: ctl.signal });
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    return { status: r.status, data: data && typeof data === "object" ? data : {} };
+  } catch (e) {
+    return { status: 0, data: { error: "failed" } };
+  } finally { clearTimeout(timer); }
+}
+// One request at a time on the server: a "busy" waits and asks again, for as long as this ask is still the current one.
+async function ask(path, body, id) {
+  const until = Date.now() + 50000;
+  for (;;) {
+    const r = await api(path, body);
+    if (id !== st.req) return null;
+    if (r.status === 409 && r.data.error === "busy" && Date.now() < until) { await sleep(700); if (id !== st.req) return null; continue; }
+    return r;
+  }
+}
+
+// ------------------------------------------------------------------------------ the page's state
+const st = {
+  phase: "idle",     // idle translating ready adjusting stale question sending sent leave draft error
+  register: "normal",
+  es: "",            // the Spanish the English answers
+  en: "",            // the English as translated or adjusted (the field may hold the user's edits)
+  lint: [],          // findings on the English: [{ level, message }]
+  prev: "", prevLint: [], adjusted: false, adjustOpen: false, lastNote: "",
+  err: null,         // { kind, until, what } when phase is "error"
+  notice: null,      // a tag over a ready translation: { kind, text, actions, env? }
+  sendMode: "send", sentAt: "",
+  req: 0,            // bumps whenever an answer in flight stops mattering
+  dict: "off", dictBase: "", dictStopping: false, dictDone: null,
+};
+let fadeTimer = 0, sendWatch = 0, dictTimer = 0;
+
+const context = () => {
+  const t = shell.teams;
+  if (!t || !t.chat) return undefined;
+  const c = { chat: t.chat };
+  if (t.from) c.from = t.from;
+  if (t.last) c.last = t.last;
+  return c;
+};
+const clock = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function untilText(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return "";
+  return d.toDateString() === new Date().toDateString() ? clock(d) : `${d.toLocaleDateString("en-US", { weekday: "short" })} ${clock(d)}`;
+}
+
+// Each error the server can tell apart, as a tag, its buttons and the state the strip takes.
+function errorView(kind, until, what) {
+  if (kind === "limit") { const u = untilText(until); return { state: "limit", tag: { kind: "idle", text: u ? `Plan limit reached until ${u}` : "Plan limit reached" }, actions: [] }; }
+  if (kind === "guide") return { state: "noguide", tag: { kind: "idle", text: "Voice guide not set" }, actions: [{ act: "guide", label: "Open guide settings" }] };
+  const retry = [{ act: what === "adjust" ? "retry-adjust" : "retry", label: "Try again" }];
+  if (kind === "offline") return { state: "error", tag: { kind: "error", text: "Can't reach Claude" }, actions: retry };
+  return { state: "error", tag: { kind: "error", text: what === "adjust" ? "Couldn't adjust" : "Couldn't translate" }, actions: retry };
+}
+
+// What the strip says about itself right now: its state name (for color), the tag and its buttons.
+function view() {
+  const p = st.phase, t = shell.teams;
+  const v = { state: p, tag: null, actions: [] };
+  const tag = (kind, text, actions) => { v.tag = { kind, text }; if (actions) v.actions = actions; };
+  if (p === "translating") v.state = tr().status === "starting" ? "starting" : "translating";
+  else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
+  else if (p === "sent") tag("done", `Sent ${st.sentAt}`);
+  else if (p === "leave") tag("done", "In Teams, not sent");
+  else if (p === "adjusting") tag("working", "Adjusting…");
+  else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
+  else if (p === "question") tag("asks", "Asks you");
+  else if (p === "stale") tag("needs", "Translation out of date");
+  else if (p === "draft") tag("needs", "Teams has a draft in this chat", [{ act: "add", label: "Add after draft" }, { act: "cancel", label: "Cancel", ghost: true }]);
+  else if (st.notice) tag(st.notice.kind, st.notice.text, st.notice.actions || []);
+  else if (p === "idle" && tr().guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
+  else if (t && !t.open) tag("idle", "Teams isn't open", [{ act: "open-teams", label: "Open Teams" }]);
+  else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
+  else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
+  else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
+  if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo", ghost: true }]);
+  return v;
+}
+
+const canAdjust = () => st.phase === "ready" && !!enOut.value.trim();
+function canSend(afterDraft) {
+  const t = shell.teams;
+  if (!(st.phase === "ready" || (afterDraft && st.phase === "draft"))) return false;
+  return !!enOut.value.trim() && !!(t && t.open && t.chat) && shell.access.accessibility !== false && !st.dictStopping;
+}
+
+let drawn = "";
+function paint() {
+  const v = view(), t = shell.teams, open = st.adjustOpen && canAdjust();
+  box.dataset.state = v.state;
+  box.dataset.teams = !t ? "unknown" : !t.open ? "closed" : !t.chat ? "nochat" : "ok";
+  box.dataset.access = shell.access.accessibility === false ? "no" : "ok";
+  box.dataset.adjust = open ? "open" : "";
+  box.dataset.dict = st.dict;
+  $("fields").inert = shell.access.accessibility === false;
+  $("busyText").textContent = v.state === "starting" ? "Starting translator…" : "Translating…";
+  $("chat").textContent = (t && t.chat) || "";
+  esIn.readOnly = st.phase === "sending";
+  enOut.readOnly = st.phase !== "ready";
+
+  const send = $("send");
+  send.disabled = !canSend(false);
+  send.innerHTML = `${settings().mode === "leave" ? "Put in Teams" : "Send"} <kbd>⌘⏎</kbd>`;
+  $("hint").innerHTML = ["idle", "stale", "sent", "leave", "question"].includes(st.phase) ? `<kbd>⏎</kbd> Translate` : "";
+  for (const b of document.querySelectorAll("#tone button")) b.setAttribute("aria-pressed", b.dataset.register === st.register);
+  for (const b of menu.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === settings().mode);
+  for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
+
+  $("adjustBtn").style.display = canAdjust() ? "" : "none";
+  $("tagrow").style.display = (v.tag || v.actions.length || canAdjust()) && !open ? "" : "none";
+  // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
+  const sig = JSON.stringify([v.tag, v.actions]);
+  if (sig !== drawn) {
+    drawn = sig;
+    const status = $("status"), actions = $("actions");
+    status.replaceChildren(); actions.replaceChildren();
+    if (v.tag) {
+      status.className = `status tag s-${v.tag.kind}`;
+      if (v.tag.title) status.title = v.tag.title; else status.removeAttribute("title");
+      const mark = document.createElement("span");
+      if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
+      else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
+      const words = document.createElement("span");
+      words.textContent = v.tag.text;
+      status.append(mark, words);
+    } else { status.className = "status"; status.removeAttribute("title"); }
+    for (const a of v.actions) {
+      const b = document.createElement("button");
+      b.className = `btn${a.ghost ? " ghost" : ""} small`;
+      b.dataset.act = a.act; b.textContent = a.label;
+      actions.append(b);
+    }
+  }
+
+  const label = $("dictLabel");
+  label.replaceChildren();
+  if (st.dict === "on") {
+    label.innerHTML = `<span class="level"><i></i><i></i><i></i><i></i></span>Listening`;
+  } else if (st.dict === "denied") {
+    label.append("Microphone not allowed ");
+    const b = document.createElement("button");
+    b.className = "btn ghost small"; b.dataset.act = "mic-settings"; b.textContent = "Open Settings";
+    label.append(b);
+  }
+  $("mic").setAttribute("aria-pressed", st.dict === "on");
+}
+
+// ------------------------------------------------------------------------------ translating and adjusting
+function setEnglish(text, lint) { st.en = text; enOut.value = text; st.lint = lint || []; }
+const cleanLint = l => (Array.isArray(l) ? l.filter(f => f && typeof f.message === "string" && f.message) : []);
+
+async function translate() {
+  if (st.phase === "sending" || st.phase === "adjusting" || st.dictStopping) return;
+  const text = esIn.value.trim();
+  if (!text) return;
+  if (st.phase === "translating" && text === st.es) return;
+  clearTimeout(fadeTimer);
+  const id = ++st.req;
+  st.es = text; setEnglish("", []); st.prev = ""; st.prevLint = [];
+  st.notice = null; st.err = null; st.adjusted = false; st.adjustOpen = false; st.phase = "translating";
+  paint();
+  const r = await ask("/api/translate", { text, register: st.register, context: context() }, id);
+  if (!r) return;
+  if (esIn.value.trim() !== text) { st.phase = "idle"; paint(); return; }
+  const d = r.data;
+  if (typeof d.question === "string" && d.question.trim()) {
+    setEnglish("", []); enOut.value = d.question; st.phase = "question";
+  } else if (typeof d.english === "string" && d.english.trim()) {
+    setEnglish(d.english, cleanLint(d.lint)); st.phase = "ready";
+  } else {
+    st.err = { kind: d.error || "failed", until: d.until, what: "translate" }; st.phase = "error";
+  }
+  paint();
+}
+
+function openAdjust() {
+  if (!canAdjust()) return;
+  st.adjustOpen = true; paint();
+  adjIn.value = ""; adjIn.focus();
+}
+function closeAdjust(focusBack) { st.adjustOpen = false; paint(); if (focusBack) esIn.focus(); }
+
+async function adjust(note) {
+  note = (note || "").trim();
+  if (!note || !canAdjust()) return;
+  const text = esIn.value.trim(), english = enOut.value.trim();
+  const id = ++st.req;
+  st.prev = enOut.value; st.prevLint = st.lint; st.lastNote = note;
+  st.en = enOut.value; st.notice = null; st.adjustOpen = false; st.phase = "adjusting";
+  paint();
+  const r = await ask("/api/adjust", { text, english, note, register: st.register, context: context() }, id);
+  if (!r) return;
+  if (esIn.value.trim() !== text) { st.phase = "stale"; paint(); return; }
+  const d = r.data;
+  st.phase = "ready";
+  if (typeof d.english === "string" && d.english.trim()) {
+    setEnglish(d.english, cleanLint(d.lint)); st.adjusted = true; esIn.focus();
+  } else if (typeof d.question === "string" && d.question.trim()) {
+    // The English stays as it was; the question is shown over it.
+    st.notice = { kind: "asks", text: d.question };
+  } else {
+    const e = errorView(d.error || "failed", d.until, "adjust");
+    st.notice = { kind: e.tag.kind, text: e.tag.text, actions: e.actions };
+  }
+  paint();
+}
+
+function undo() {
+  if (st.phase !== "ready" || !st.adjusted) return;
+  setEnglish(st.prev, st.prevLint); st.adjusted = false; paint();
+}
+
+function setRegister(r) {
+  st.register = r; paint();
+  if (st.phase === "translating") { st.es = ""; translate(); }   // the answer in flight was for the other register
+  else if (st.phase === "ready" && esIn.value.trim()) translate();
+}
+
+// ------------------------------------------------------------------------------ sending
+function send(afterDraft) {
+  if (!canSend(afterDraft)) return;
+  clearTimeout(fadeTimer); clearTimeout(sendWatch);
+  st.sendMode = settings().mode === "leave" ? "leave" : "send";
+  st.adjustOpen = false; st.notice = null; st.phase = "sending";
+  paint();
+  const msg = { type: "send", text: enOut.value.trim(), mode: st.sendMode };
+  if (afterDraft) msg.afterDraft = true;
+  st.lastText = msg.text;
+  post(msg);
+  // The shell always answers. If it doesn't, the strip must not stay stuck.
+  sendWatch = setTimeout(() => {
+    if (st.phase !== "sending") return;
+    st.phase = "ready"; st.notice = { kind: "error", text: "Teams didn't answer. Check the chat" };
+    paint();
+  }, 20000);
+}
+
+function onSent(m) {
+  if (st.phase !== "sending") return;
+  clearTimeout(sendWatch);
+  if (m.ok) {
+    st.leftover = null;
+    st.sentAt = clock(new Date());
+    setEnglish("", []); st.es = ""; esIn.value = ""; st.adjusted = false;
+    st.phase = st.sendMode === "leave" ? "leave" : "sent";
+    paint(); esIn.focus();
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => { if (st.phase === "sent" || st.phase === "leave") { st.phase = "idle"; paint(); } }, 4000);
+    return;
+  }
+  // The text stays, so nothing is lost; each reason says what to do.
+  st.phase = "ready";
+  const resend = [{ act: "resend", label: "Try again" }];
+  switch (m.reason) {
+    case "draft":
+      // The "draft" is our own text from a failed try: adding it again would send it twice.
+      if (st.leftover && st.leftover === st.lastText) st.notice = { kind: "error", text: "Already in Teams. Not sent" };
+      else st.phase = "draft";
+      break;
+    case "no-teams": st.notice = { kind: "idle", text: "Teams isn't open", actions: [{ act: "open-teams", label: "Open Teams" }], env: true }; break;
+    case "no-chat": st.notice = { kind: "idle", text: "No chat open in Teams", env: true }; break;
+    case "not-front": st.notice = { kind: "error", text: "Teams didn't come forward", actions: resend }; break;
+    case "mismatch": st.leftover = st.lastText; st.notice = { kind: "error", text: "Teams changed it. Not sent" }; break;
+    case "no-access": shell.access.accessibility = false; break;
+    // Return didn't send it: the text is still in the box, so trying again would only find it there.
+    case "not-sent": st.leftover = st.lastText; st.notice = { kind: "error", text: "In Teams' box, not sent" }; break;
+    default: st.notice = { kind: "error", text: "Couldn't send", actions: resend };
+  }
+  paint();
+}
+
+// ------------------------------------------------------------------------------ dictation
+function startDictation() {
+  if (st.dict !== "off" || st.dictStopping || ["sending", "translating", "adjusting"].includes(st.phase)) return;
+  st.dictBase = esIn.value.trim() ? esIn.value.trim() + " " : "";
+  st.dict = "on"; paint(); esIn.focus();
+  post({ type: "dictation", action: "start" });
+}
+// Stop, then run `then` once the last words have come in (or after a moment if they don't).
+function stopDictation(then) {
+  if (st.dict !== "on") { if (then) then(); return; }
+  st.dict = "off"; st.dictStopping = true; paint();
+  clearTimeout(dictTimer);
+  st.dictDone = () => { clearTimeout(dictTimer); st.dictStopping = false; st.dictDone = null; paint(); if (then) then(); };
+  dictTimer = setTimeout(() => { if (st.dictDone) st.dictDone(); }, 1800); // longer than the shell's 1.5 s wait for the final result
+  post({ type: "dictation", action: "stop" });   // after the above: the stand-in answers at once
+}
+function cancelDictation() {
+  if (st.dict === "on") post({ type: "dictation", action: "stop" });
+  if (st.dict === "on") st.dict = "off";
+  clearTimeout(dictTimer); st.dictStopping = false; st.dictDone = null;
+}
+function onDictation(m) {
+  if (m.state === "denied") { st.dict = "denied"; st.dictStopping = false; st.dictDone = null; paint(); return; }
+  if (m.state === "on" && st.dict === "off" && !st.dictStopping) { st.dictBase = esIn.value.trim() ? esIn.value.trim() + " " : ""; st.dict = "on"; }
+  // The text is the whole transcript so far: it replaces what dictation added.
+  if (typeof m.text === "string" && (st.dict === "on" || st.dictStopping)) { esIn.value = st.dictBase + m.text; onSpanishInput(); }
+  if (m.state === "off") { if (st.dict === "on") st.dict = "off"; if (st.dictDone) { st.dictDone(); return; } }
+  paint();
+}
+function toggleDictation() { if (st.dict === "on") stopDictation(); else startDictation(); }
+
+// ------------------------------------------------------------------------------ the fields
+// The Spanish changed. An answer for the old text no longer counts; a translation of it is out of date.
+function onSpanishInput() {
+  const v = esIn.value.trim();
+  st.notice = null; st.adjustOpen = false; st.adjusted = false;
+  if (st.phase === "sent" || st.phase === "leave") { clearTimeout(fadeTimer); st.phase = "idle"; }
+  else if (st.phase === "translating") { if (v !== st.es) { st.req++; st.phase = "idle"; } }
+  else if (st.phase === "adjusting") { if (v !== st.es) { st.req++; st.phase = "stale"; } }
+  else if ((st.phase === "ready" || st.phase === "stale" || st.phase === "draft") && st.en) {
+    if (v !== st.es) st.phase = "stale"; else if (st.phase === "stale") st.phase = "ready";
+  }
+  paint();
+}
+esIn.addEventListener("input", onSpanishInput);
+enOut.addEventListener("input", () => { st.en = enOut.value; st.lint = []; paint(); });
+
+function clearAll() {
+  cancelDictation(); clearTimeout(fadeTimer); st.req++;
+  esIn.value = ""; st.es = ""; setEnglish("", []);
+  st.prev = ""; st.prevLint = []; st.notice = null; st.err = null; st.adjusted = false; st.adjustOpen = false; st.phase = "idle";
+  paint(); esIn.focus();
+}
+
+function closeMenu() { menu.classList.remove("open"); moreBtn.setAttribute("aria-expanded", "false"); }
+
+document.addEventListener("keydown", e => {
+  if (e.isComposing || e.keyCode === 229) return;
+  const k = e.key;
+  if (e.metaKey && !e.ctrlKey && !e.altKey) {
+    const l = k.toLowerCase();
+    if (l === "k") { e.preventDefault(); openAdjust(); }
+    else if (l === "d") { e.preventDefault(); toggleDictation(); }
+    else if (k === "Enter") { e.preventDefault(); if (st.dict === "on") stopDictation(() => send(false)); else send(false); }
+    return;
+  }
+  if (k === "Escape") {
+    e.preventDefault();
+    if (menu.classList.contains("open")) closeMenu();
+    else if (box.dataset.adjust === "open") closeAdjust(true);
+    else if (st.phase !== "sending") clearAll();
+    return;
+  }
+  if (k === "Enter" && !e.shiftKey) {
+    if (e.target === esIn) { e.preventDefault(); if (st.dict === "on") stopDictation(translate); else translate(); }
+    else if (e.target === adjIn) { e.preventDefault(); adjust(adjIn.value); }
+  }
+});
+
+$("mic").onclick = toggleDictation;
+$("adjustBtn").onclick = openAdjust;
+$("chip").onclick = () => adjust($("chip").dataset.quick);
+$("send").onclick = () => send(false);
+$("accessBtn").onclick = () => post({ type: "open", what: "accessibility" });
+for (const b of document.querySelectorAll("#tone button")) b.onclick = () => setRegister(b.dataset.register);
+
+box.addEventListener("click", e => {
+  const a = e.target.closest("[data-act]");
+  if (!a) return;
+  switch (a.dataset.act) {
+    case "retry": translate(); break;
+    case "retry-adjust": st.notice = null; adjust(st.lastNote); break;
+    case "undo": undo(); esIn.focus(); break;
+    case "add": send(true); break;
+    case "cancel": st.phase = "ready"; paint(); esIn.focus(); break;
+    case "resend": st.notice = null; send(false); break;
+    case "open-teams": post({ type: "open", what: "teams" }); break;
+    case "guide": post({ type: "open", what: "guide" }); break;
+    case "mic-settings": post({ type: "open", what: "microphone" }); break;
+  }
+});
+
+// ------------------------------------------------------------------------------ the ⋯ menu
+moreBtn.onclick = e => {
+  e.stopPropagation();
+  const open = menu.classList.toggle("open");
+  moreBtn.setAttribute("aria-expanded", String(open));
+};
+document.addEventListener("click", e => { if (!menu.contains(e.target) && e.target !== moreBtn) closeMenu(); });
+
+async function setSettings(patch) {
+  const before = srv;
+  srv = Object.assign({}, srv, { settings: Object.assign({}, settings(), patch) });
+  paint();
+  const r = await api("/api/settings", patch);
+  if (r.status === 200 && r.data.settings) srv = Object.assign({}, srv, { settings: r.data.settings });
+  else srv = before;
+  paint();
+}
+menu.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.mode) setSettings({ mode: b.dataset.mode });
+  else if (b.dataset.model) setSettings({ model: b.dataset.model });
+  else if (b.dataset.do === "guide") { post({ type: "open", what: "guide" }); closeMenu(); }
+  else if (b.dataset.do === "restart") { api("/api/translator/restart", {}); closeMenu(); }
+});
+
+// ------------------------------------------------------------------------------ go
+connect();
+paint();
+post({ type: "ready" });
+esIn.focus();
+</script>
+</body>
+</html>

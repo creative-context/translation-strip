@@ -1,0 +1,13 @@
+{
+  "name": "mac-app-design",
+  "version": "0.9.0",
+  "repo": "creative-context/mac-app-design",
+  "commit": "f07ba3b5bb19",
+  "files": {
+    "design-tokens.css": "9b1c95621a01070f94e41122cc981c92632f2fd08cf4ec07157198d1a965c241",
+    "design-base.css": "060ea9bd63e863315d4eb8c1e6b00c911d18ba96cf1368fef5a336838a6fab4f",
+    "design-components.css": "0acb91d882e5f004e456804dace9c0d55b3f0510be809704157909cc3675d65d",
+    "design-dataviz.css": "830e8d74c5b4066d940d3a6f4ae324323d658baef82a0bda9a1ae2eef642296a",
+    "design-icons.js": "970333ecaee97e7ca02997f116b2d93e3a013fd2acfb2c6038628d7612a3e83c"
+  }
+}
