@@ -132,8 +132,8 @@
   .menu button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: -2px; }
   .menu button .ck { width: 12px; color: var(--color-text-accent); visibility: hidden; }
   .menu button[aria-checked="true"] .ck { visibility: visible; }
-  /* Model and Position: one column, a row of buttons each with its label on the left, in line with
-     the other columns' two items, so three models and five sides fit the strip's height and width. */
+  /* The settings: what ⌘⏎ does, the model and the position, three rows of buttons each with its
+     label on the left, so they fit the strip's height with no title row; the commands sit beside them. */
   .menu .prow { display: flex; align-items: center; gap: 8px; height: 26px; }
   .menu .prow .pl { flex: none; width: 52px; padding-left: 8px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); }
   .menu .posrow { display: flex; gap: 2px; }
@@ -188,9 +188,7 @@
     /* The menu stacks its groups in one column and opens over the English box, above its footer. */
     .menu { left: 8px; right: 8px; bottom: calc(50% + 74px); width: auto; max-width: none; max-height: calc(50% - 82px); overflow-y: auto; flex-direction: column; }
     .menu hr { width: auto; height: 1px; margin: 2px 8px; align-self: stretch; }
-    .menu .col:last-child .mh, .menu .col.prefs .mh { display: none; }
-    .menu .prow .pl { width: 88px; padding-left: 28px; }   /* in line with the items' words, as in the other groups */
-    .menu .col:last-child button { padding-left: 28px; }   /* in line with the items that have a check mark */
+    .menu .col:last-child button { padding-left: 16px; }   /* in line with the rows' labels */
 
     /* First run: the sentence over its button, on the one veil. */
     .cover { flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; }
@@ -234,14 +232,11 @@
     </div>
   </div>
   <div class="menu" id="menu" role="menu">
-    <div class="col">
-      <div class="mh">On ⌘⏎</div>
-      <button role="menuitemradio" data-mode="send" aria-checked="true"><span class="ck" data-ic="check"></span>Send</button>
-      <button role="menuitemradio" data-mode="leave" aria-checked="false"><span class="ck" data-ic="check"></span>Put in Teams without sending</button>
-    </div>
-    <hr>
     <div class="col prefs">
-      <div class="mh">&nbsp;</div>
+      <div class="prow"><span class="pl" id="modeLabel">On ⌘⏎</span><div class="posrow" role="group" aria-labelledby="modeLabel">
+        <button role="menuitemradio" data-mode="send" aria-checked="true">Send</button>
+        <button role="menuitemradio" data-mode="leave" aria-checked="false" title="Put in Teams without sending">Put in Teams</button>
+      </div></div>
       <div class="prow"><span class="pl" id="modelLabel">Model</span><div class="posrow" role="group" aria-labelledby="modelLabel">
         <button role="menuitemradio" data-model="haiku" aria-checked="true">Haiku</button>
         <button role="menuitemradio" data-model="sonnet" aria-checked="false">Sonnet</button>
@@ -257,7 +252,6 @@
     </div>
     <hr>
     <div class="col">
-      <div class="mh">&nbsp;</div>
       <button role="menuitem" data-do="guide">Open voice guide</button>
       <button role="menuitem" data-do="restart">Restart translator</button>
     </div>

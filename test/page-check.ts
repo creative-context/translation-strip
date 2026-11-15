@@ -246,7 +246,7 @@ const narrowCheck = (group: string, name: string, fn: () => Promise<string | voi
 // The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
 // about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
 const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout"]);
-const ROW_ONLY: RegExp[] = [/its three columns/, /^its first column is titled/, /^a long message scrolls inside its box/];
+const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are three labeled rows/, /^a long message scrolls inside its box/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
 // ===================================================================================== typing and keys
@@ -585,7 +585,7 @@ check("Adjust", "an adjust that asks a question shows it as a tag over the kept 
 });
 
 // ===================================================================================== Settings menu
-check("Settings menu", "the button opens the menu with its three columns; outside click and Esc close it", async () => {
+check("Settings menu", "the button opens the menu with its two columns; outside click and Esc close it", async () => {
   const t = await open();
   eq(await t.p.locator("#more").getAttribute("aria-expanded"), "false", "aria-expanded before");
   await t.p.click("#more");
@@ -603,13 +603,14 @@ check("Settings menu", "the button opens the menu with its three columns; outsid
   await t.p.click("#more");
   ok(!(await vis(t.p, "#menu")), "a second click on the button should close it");
 });
-check("Settings menu", "its first column is titled 'On ⌘⏎'; every command is in primary text; the gear is the footer's last control, 28 × 28", async () => {
+check("Settings menu", "the settings are three labeled rows (On ⌘⏎, Model, Position) with no title row above them; every command is in primary text; the gear is the footer's last control, 28 × 28", async () => {
   const t = await open();
   await ready(t);
   await t.p.click("#more");
-  const heads = await t.p.locator("#menu .mh").allInnerTexts();
-  eq(heads[0], "On ⌘⏎", "first column title");
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "Model, Position", "the middle column's two rows");
+  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Position", "the rows' labels");
+  eq(await t.p.locator("#menu .mh").count(), 0, "title rows");
+  const tops = await t.p.evaluate(() => [document.querySelector("#menu .prow")!, document.querySelector("#menu [data-do]")!].map((e) => Math.round(e.getBoundingClientRect().top)));
+  ok(Math.abs(tops[0] - tops[1]) <= 2, `the first row and the first command should start on one line (${tops.join(", ")})`);
   const colors = await t.p.evaluate(() => [...document.querySelectorAll("#menu button")].map((b) => ({ t: (b.textContent || "").trim(), c: getComputedStyle(b).color, off: b.classList.contains("off") })));
   const prim = await t.p.evaluate(() => { const d = document.createElement("i"); d.style.color = "var(--color-text-primary)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; });
   for (const b of colors) ok(b.c === prim && !b.off, `"${b.t}" should be in primary text (${b.c}, off=${b.off}, wanted ${prim})`);
@@ -631,7 +632,7 @@ check("Settings menu", "Send item: sets mode send (request, check mark)", async 
   eq(await t.p.locator("#menu [data-mode=leave]").getAttribute("aria-checked"), "false", "Put in Teams unchecked");
   eq((await t.p.locator("#send").innerText()).replace(/\s+/g, " "), "Send ⌘⏎", "Send button label");
 });
-check("Settings menu", "Put in Teams without sending item: sets mode leave and renames the button", async () => {
+check("Settings menu", "Put in Teams item (its title says 'without sending'): sets mode leave and renames the button", async () => {
   await resetSettings();
   const t = await open();
   await t.p.click("#more");
@@ -639,6 +640,7 @@ check("Settings menu", "Put in Teams without sending item: sets mode leave and r
   await settle(t.p, 300);
   eq(JSON.stringify(reqsTo(t, "/api/settings")[0]?.body), JSON.stringify({ mode: "leave" }), "settings request");
   eq(await t.p.locator("#menu [data-mode=leave]").getAttribute("aria-checked"), "true", "checked");
+  eq(await t.p.locator("#menu [data-mode=leave]").getAttribute("title"), "Put in Teams without sending", "its title");
   eq((await t.p.locator("#send").innerText()).replace(/\s+/g, " "), "Put in Teams ⌘⏎", "Send button label");
   await resetSettings();
 });
@@ -1814,22 +1816,20 @@ colCheck("Column", "'Left in Teams, not sent' sits in the middle too", async () 
   ok(Math.abs(msg.cx - mod.cx) <= 1 && Math.abs(msg.cy - mod.cy) <= 1, "the message isn't in the module's middle");
   await resetSettings();
 });
-colCheck("Column", "the settings menu stacks its three groups in one column over the English module, above its footer, inside the window", async () => {
+colCheck("Column", "the settings menu stacks its two groups in one column over the English module, above its footer, inside the window", async () => {
   const t = await open();
   await ready(t, LONG_EN);
   await t.p.click("#more");
   const m = await rect(t.p, "#menu"), mod = await rect(t.p, ".f.en"), foot = await rect(t.p, ".f.en .foot");
   ok(m.l >= mod.l && m.r <= mod.r && m.t >= mod.t && m.b <= foot.t, `the menu isn't over the English module, above its footer (${JSON.stringify(m)})`);
   const cols = await t.p.evaluate(() => [...document.querySelectorAll("#menu .col")].map((c) => { const r = c.getBoundingClientRect(); return [r.left, r.top, r.bottom]; }));
-  eq(cols.length, 3, "groups");
+  eq(cols.length, 2, "groups");
   ok(cols.every((c, i) => c[0] === cols[0][0] && (i === 0 || c[1] >= cols[i - 1][2])), `the groups aren't stacked: ${JSON.stringify(cols)}`);
-  const heads = await t.p.locator("#menu .mh").evaluateAll((els: any[]) => els.map((e) => [e.textContent.trim(), getComputedStyle(e).display]));
-  eq(heads[0][0], "On ⌘⏎", "first group title");
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "Model, Position", "the second group's two rows");
-  eq(heads[1][1], "none", "the Model and Position group has no blank title row");
-  eq(heads[2][1], "none", "the last group has no blank title row");
+  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Position", "the settings' rows");
+  const lefts = await t.p.evaluate(() => [...document.querySelectorAll("#menu .pl, #menu [data-do]")].map((e) => { const rg = document.createRange(); rg.selectNodeContents(e); return Math.round(rg.getBoundingClientRect().left); }));
+  ok(new Set(lefts).size === 1, `the labels and the commands should start in one line: ${lefts.join(", ")}`);
   const dividers = await t.p.evaluate(() => [...document.querySelectorAll("#menu hr")].map((h) => { const r = h.getBoundingClientRect(); return [r.width, r.height]; }));
-  ok(dividers.length === 2 && dividers.every(([w, h]) => w > 100 && h === 1), `the dividers should run across: ${JSON.stringify(dividers)}`);
+  ok(dividers.length === 1 && dividers.every(([w, h]) => w > 100 && h === 1), `the divider should run across: ${JSON.stringify(dividers)}`);
   eq(await t.p.locator("#menu button").count(), 12, "items");
   await expectLayout(t.p);
   await t.p.click("#menu [data-mode=leave]");

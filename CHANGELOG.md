@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- The settings menu has no empty row on top: what ⌘⏎ does is a row of buttons too (Send, Put in Teams), beside Model and Position, each with its label on the left. The menu is narrower and its commands sit level with the first row.
+- The README has the family's layout: a centered header with the version and badges, a screenshot of the strip with made-up text, an Overview, and sections for AI assistants and the license.
+
 ## 0.7.0
 
 - The strip's settings menu has Position: Auto, ↓, ↑, ← and →, so you can move the strip without the menu bar. The app menu's Layout and this row stay in step.

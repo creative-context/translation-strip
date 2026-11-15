@@ -1,28 +1,62 @@
-# Translation Strip
+<h1 align="center">Translation Strip</h1>
 
-A Mac app that sits in the gap under your Teams window. You write in Spanish, press Return and get English ready to send, in your own voice. ⌘Return sends it to the chat you have open, with no copying or pasting.
+<p align="center">
+  A Mac app that sits in the gap under your Teams window:<br>
+  write in Spanish, get English in your own voice, and send it with ⌘⏎.
+</p>
 
-Version 0.7.0 · macOS 14 or later · Microsoft Teams · Built with Swift and [Bun](https://bun.sh)
+<p align="center">
+  <b>Version 0.7</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
+</p>
 
-Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. The strip translates the meaning, in the voice your guide describes, and adds nothing you didn't write, so no greeting, name, thanks or closing line appears on its own.
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.7.1-6FA6E8?labelColor=1A1D21" alt="Version 0.7.1">
+  <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
+  <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
+</p>
 
-The English comes from a hidden Claude Code session on your own Claude plan, so you don't need an API key. The session follows your voice guide, a Markdown file you point the app to, and an optional linter checks every reply against it.
+<p align="center">
+  <a href="#overview"><b>Overview</b></a> ·
+  <a href="#getting-started"><b>Getting started</b></a> ·
+  <a href="#use-it"><b>Use it</b></a> ·
+  <a href="#privacy"><b>Privacy</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#ai-assistants"><b>AI assistants</b></a> ·
+  <a href="CHANGELOG.md"><b>Changelog</b></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="The strip with made-up text: on the left, a Spanish message with Normal and Formal, the mic and Translate; on the right, its English, ready to go to Priya Raman, with Adjust, Send and the settings gear" width="100%">
+</p>
+
+## Overview
+
+Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. Press Return and the strip gives you the English, in the voice your guide describes. Press ⌘Return and it goes to the chat you have open in Teams, with no copying or pasting.
+
+**What it does differently:**
+
+- **Your voice, not a word-for-word translation.** It carries the meaning in the voice your guide describes and adds nothing you didn't write: no greeting, name, thanks or closing line appears on its own.
+- **It sends where you're looking.** ⌘⏎ puts the English in the Teams chat you have open, checks the box holds exactly that text, and sends only if that chat is still the one the strip shows.
+- **Your Claude plan, no API key.** A hidden Claude Code session on your plan writes the English. Every message gets a fresh one, so none of them sees what you wrote before.
+- **Your linter has the last word.** When the voice linter you point it to finds an error, the app asks for one fix before you see the English. A warning shows above the text.
+- **It stays out of the way.** The strip docks on any side of Teams, follows it, and steps aside when Teams is minimized, hidden or on another desktop.
+
+**Requirements:** macOS 14 or later, the new Microsoft Teams, and Claude Code signed in with a Claude plan. To build it, [Bun](https://bun.sh) and the Xcode Command Line Tools.
+
+**Status:** 0.x. It reads Teams through Accessibility, so a Teams update can change what it finds.
+
+> This is an independent project. It isn't made, endorsed or supported by Anthropic or Microsoft. Claude and Claude Code are trademarks of Anthropic, and Microsoft Teams is a trademark of Microsoft.
 
 ## Getting started
 
-You need:
-
-- macOS 14 or later and the new Microsoft Teams.
-- Claude Code, signed in with a Claude plan.
-- [Bun](https://bun.sh) and the Xcode Command Line Tools, to build the app.
-
-Then:
+### Build and install
 
 1. Build the app and install it in `~/Applications`:
    ```bash
    sh app/build.sh --install
    ```
-2. From the app menu, use Choose Voice Guide… to pick your guide. Choose Voice Linter… is optional: the app runs it as `bun <linter> <file> --todo` on each reply and shows its first finding.
+2. From the app menu, use Choose Voice Guide… to pick your guide, a Markdown file that describes how you write. Choose Voice Linter… is optional: the app runs it as `bun <linter> <file> --todo` on each reply.
 3. Allow Accessibility when the strip asks. The app needs it to put the message in Teams and to see which chat is open.
 
 macOS ties the Accessibility permission to the app's signature. If your keychain has a code-signing identity named "Translation Strip Local Signing", `build.sh` signs with it and the permission stays after a rebuild. Without one, `build.sh` signs ad hoc and you allow each new build again.
@@ -108,4 +142,14 @@ sh app/build.sh            # build into build/
 sh app/build.sh --install  # build, copy to ~/Applications and open it
 ```
 
-The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data. `AGENTS.md` has the rules for changing the code.
+`bun docs/screenshot.ts` redraws `docs/screenshot.png` from the page mock, with made-up text.
+
+The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data.
+
+## AI assistants
+
+To work on this repository, an agent reads [`AGENTS.md`](AGENTS.md), which `CLAUDE.md` imports.
+
+## License
+
+[MIT](LICENSE).
