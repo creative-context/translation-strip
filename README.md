@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/demo.gif" alt="The strip at work under a simplified chat window, with made-up text: a Spanish message is typed, Return turns it into English, Command-Return sends it, and it shows in the chat while the strip says Sent to Priya Raman" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
+    <img src="docs/demo-light.gif" alt="The strip at work under a simplified chat window, with made-up text: a Spanish message is typed, Return turns it into English, Command-Return sends it, and it shows in the chat while the strip says Sent to Priya Raman" width="100%">
+  </picture>
 </p>
 
 <h1 align="center">Translation Strip</h1>
@@ -14,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.7.3-6FA6E8?labelColor=1A1D21" alt="Version 0.7.3">
+  <img src="https://img.shields.io/badge/version-0.7.4-6FA6E8?labelColor=1A1D21" alt="Version 0.7.4">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">

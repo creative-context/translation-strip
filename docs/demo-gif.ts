@@ -1,7 +1,9 @@
-// Records docs/demo.gif: how the strip is used, with made-up text. A simplified chat window sits
+// Records docs/demo-dark.gif and docs/demo-light.gif: how the strip is used, with made-up text. A simplified chat window sits
 // on top (a generic chat, not any real app's look) and the strip is docked under it, as wide, as
 // in the app. The story: you write in Spanish, ⏎ translates, ⌘⏎ sends, and the message shows in
-// the chat. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIF at 880 px.
+// the chat. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
+// window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
+// theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
 // Needs the page mock (`bun test/page-mock.ts`, port 4813), Playwright (PLAYWRIGHT_DIR, by default
 // the one in ../mac-app-design) and ffmpeg. Run from the repo: `bun docs/demo-gif.ts`.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -20,7 +22,7 @@ const ES = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo 
 const SCENE = `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${BASE}/design-tokens.css"><link rel="stylesheet" href="${BASE}/design-base.css">
 <style>
-  html, body { margin: 0; background: #0b0c0e; width: ${W}px; height: ${CHAT_H + STRIP_H}px; overflow: hidden; }
+  html, body { margin: 0; background: transparent; width: ${W}px; height: ${CHAT_H + STRIP_H}px; overflow: hidden; }
   body { font-family: -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   .win { position: absolute; left: 0; top: 0; width: ${W}px; height: ${CHAT_H}px; box-sizing: border-box; border-radius: 12px 12px 0 0;
     background: #17181b; display: grid; grid-template-rows: 44px 1fr 56px; overflow: hidden; }
@@ -36,7 +38,9 @@ const SCENE = `<!doctype html><html><head><meta charset="utf-8">
   .me { opacity: 0; transform: translateY(8px); transition: opacity 260ms ease-out, transform 260ms ease-out; }
   .me.in { opacity: 1; transform: none; }
   .compose { margin: 8px 20px 14px; border-radius: 8px; background: #212227; color: #7d828a; font-size: 13px; display: flex; align-items: center; padding: 0 12px; }
-  iframe { position: absolute; left: 0; top: ${CHAT_H}px; width: ${W}px; height: ${STRIP_H}px; border: 0; }
+  /* The strip, docked under the chat as in the app; together they read as one window with round corners. */
+  .dock { position: absolute; left: 0; top: ${CHAT_H}px; width: ${W}px; height: ${STRIP_H}px; border-radius: 0 0 12px 12px; overflow: hidden; background: #0b0c0e; }
+  iframe { display: block; width: ${W}px; height: ${STRIP_H}px; border: 0; }
   .hint { position: absolute; left: 50%; top: ${CHAT_H - 45}px; transform: translateX(-50%) scale(.96); opacity: 0;
     padding: 7px 14px; border-radius: 999px; background: rgba(250,250,252,.94); color: #111; font-size: 13px; font-weight: 600;
     box-shadow: 0 6px 20px rgba(0,0,0,.45); transition: opacity 160ms ease-out, transform 160ms ease-out; white-space: nowrap; }
@@ -52,7 +56,7 @@ const SCENE = `<!doctype html><html><head><meta charset="utf-8">
   </div>
   <div class="compose">Type a message</div>
 </div>
-<iframe id="strip" src="${BASE}/"></iframe>
+<div class="dock"><iframe id="strip" src="${BASE}/"></iframe></div>
 <div class="hint" id="hint"></div>
 </body></html>`;
 
@@ -70,10 +74,14 @@ await frame.addStyleTag({ content: "#preview { display: none !important; }" }); 
 await frame.waitForTimeout(300);
 
 const dir = mkdtempSync(join(tmpdir(), "strip-demo-"));
-const frames: { file: string; ms: number }[] = [];
+const THEMES = [{ name: "dark", bg: "#0d1117" }, { name: "light", bg: "#ffffff" }]; // GitHub's page colors
+const frames: { file: string; ms: number }[] = []; // file has a {theme} slot
 const snap = async (ms: number) => {
-  const file = join(dir, `f${String(frames.length).padStart(4, "0")}.png`);
-  await page.screenshot({ path: file });
+  const file = join(dir, `f${String(frames.length).padStart(4, "0")}-{theme}.png`);
+  for (const t of THEMES) {
+    await page.evaluate((bg: string) => { document.documentElement.style.background = bg; }, t.bg);
+    await page.screenshot({ path: file.replace("{theme}", t.name) });
+  }
   frames.push({ file, ms });
 };
 // Real time passes while frames are taken, so a wait records what animates meanwhile.
@@ -119,13 +127,16 @@ await record(400, 60);
 await snap(2500);
 await browser.close();
 
-// The GIF: each frame for its time, scaled to 880 px, one palette for the whole story.
-const list = frames.map((f) => `file '${f.file}'\nduration ${(f.ms / 1000).toFixed(3)}`).join("\n") + `\nfile '${frames.at(-1)!.file}'\n`;
-writeFileSync(join(dir, "list.txt"), list);
-const out = join(ROOT, "docs", "demo.gif");
-const ff = Bun.spawnSync(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", join(dir, "list.txt"), "-fps_mode", "vfr",
-  "-vf", `scale=${W}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff:max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
-  "-loop", "0", out]);
-if (ff.exitCode !== 0) { console.error(String(ff.stderr)); process.exit(1); }
+// The GIFs: each frame for its time, scaled to 880 px, one palette for the whole story.
+for (const t of THEMES) {
+  const at = (f: string) => f.replace("{theme}", t.name);
+  const list = frames.map((f) => `file '${at(f.file)}'\nduration ${(f.ms / 1000).toFixed(3)}`).join("\n") + `\nfile '${at(frames.at(-1)!.file)}'\n`;
+  writeFileSync(join(dir, `list-${t.name}.txt`), list);
+  const out = join(ROOT, "docs", `demo-${t.name}.gif`);
+  const ff = Bun.spawnSync(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", join(dir, `list-${t.name}.txt`), "-fps_mode", "vfr",
+    "-vf", `scale=${W}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff:max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
+    "-loop", "0", out]);
+  if (ff.exitCode !== 0) { console.error(String(ff.stderr)); process.exit(1); }
+  console.log(`docs/demo-${t.name}.gif, ${frames.length} frames`);
+}
 rmSync(dir, { recursive: true, force: true });
-console.log(`docs/demo.gif, ${frames.length} frames`);

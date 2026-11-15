@@ -624,9 +624,13 @@ describe("the notices and their buttons", () => {
     });
   }
 
-  test("the plan limit says until when, if it is known", () => {
-    const at = new Date(Date.now() + 2 * 3600_000).toISOString();
-    expect(SS.errorView("limit", at, "translate").tag.text).toMatch(/^Plan limit reached until \d{1,2}:\d{2}\s?[AP]M$/);
+  test("the plan limit says until when, if it is known: the time today, the day and time after", () => {
+    // Two hours from now can be tomorrow late in the day, so the day shows when it isn't today.
+    const at = new Date(Date.now() + 2 * 3600_000);
+    const today = at.toDateString() === new Date().toDateString();
+    expect(SS.errorView("limit", at.toISOString(), "translate").tag.text).toMatch(today ? /^Plan limit reached until \d{1,2}:\d{2}\s?[AP]M$/ : /^Plan limit reached until [A-Z][a-z]{2} \d{1,2}:\d{2}\s?[AP]M$/);
+    const later = new Date(Date.now() + 3 * 86400_000).toISOString();
+    expect(SS.errorView("limit", later, "translate").tag.text).toMatch(/^Plan limit reached until [A-Z][a-z]{2} \d{1,2}:\d{2}\s?[AP]M$/);
     expect(SS.errorView("limit", "not a date", "translate").tag.text).toBe("Plan limit reached");
   });
 

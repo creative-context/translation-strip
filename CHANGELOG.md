@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.4
+
+- The README's animation has round corners, drawn on GitHub's page color in both its light and dark themes.
+- The release zip is built on GitHub's macOS 26 image, whose Xcode has the dictation the app uses. 0.7.3's build stopped there, so 0.7.4 is the first release with a download.
+- Two tests no longer depend on the time of day or a fast machine.
+- A little more room between "To" and the chat's name.
+
 ## 0.7.3
 
 - A short README, like a normal Mac app's: what it does, install, a few lines of use, privacy in three points and how to uninstall. The manual moves to `docs/guide.md`, the whole privacy contract to `docs/privacy.md`, and how it's built to `docs/architecture.md`, word for word.

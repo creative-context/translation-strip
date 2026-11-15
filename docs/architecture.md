@@ -19,6 +19,6 @@ sh app/build.sh            # build into build/
 sh app/build.sh --install  # build, copy to ~/Applications and open it
 ```
 
-`bun docs/demo-gif.ts` records `docs/demo.gif` from the page mock, with made-up text (it needs Playwright and ffmpeg).
+`bun docs/demo-gif.ts` records `docs/demo-dark.gif` and `docs/demo-light.gif`, one for each GitHub theme, from the page mock, with made-up text (it needs Playwright and ffmpeg).
 
 The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data.

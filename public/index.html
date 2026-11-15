@@ -98,7 +98,7 @@
   /* The chat's name gives way first, so a notice beside it stays whole. */
   /* The chat's name gives way first (down to about "To Castellan…"), so a notice beside it stays whole. */
   .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; margin-right: 8px; }   /* 16 px to Send: with it, not stuck to it */
-  .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+  .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); margin-left: 2px; }   /* "To" and the name read as two words */
   [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
   .more-btn { flex: none; width: 28px; height: 28px; }
   .more-btn svg.i { width: 16px; height: 16px; }

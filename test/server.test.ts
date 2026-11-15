@@ -333,7 +333,7 @@ describe("Translation Strip server", () => {
     await until("a spare with the guide", async () => starts().at(-1).systemGuide === GUIDE_TEXT);
     await statusIs("ready");
     expect(JSON.stringify(await state())).not.toContain(DIR);
-  });
+  }, 20000); // a slower Mac, like GitHub's, takes longer than the default 5 s
 
   test("settings: writes the file, and a new model restarts the translator", async () => {
     const before = starts().length;
