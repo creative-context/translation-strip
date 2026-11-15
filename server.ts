@@ -5,10 +5,11 @@ import { isAbsolute } from "node:path";
 import pkg from "./package.json";
 import { clock, PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
 import { lint } from "./src/lint";
-import type { Context, Register, Request as Ask } from "./src/protocol";
+import { isLanguage } from "./src/languages";
+import { answerFor, type Context, type Register, type Request as Ask } from "./src/protocol";
 import { createServer } from "./src/server-kit";
-import { fileThere, loadSettings, MODELS, MODES, saveSettings, settingsStamp } from "./src/settings";
-import { bump, onBump, snapshot, state, type Mode, type Model } from "./src/state";
+import { checkChange, fileThere, loadSettings, saveSettings, settingsStamp } from "./src/settings";
+import { bump, onBump, publicSettings, snapshot, state } from "./src/state";
 import { Translator } from "./src/translator";
 
 const VERSION = process.env.STRIP_VERSION || pkg.version; // the app says its own version; run by hand, package.json's
@@ -25,7 +26,7 @@ function readSettings() {
   const s = loadSettings();
   state.settings = s;
   const linter = fileThere(s.linter) ? "ok" : "missing";
-  if (state.translator.linter !== linter || before.model !== s.model || before.mode !== s.mode) {
+  if (state.translator.linter !== linter || JSON.stringify(publicSettings(before)) !== JSON.stringify(publicSettings(s))) {
     state.translator.linter = linter;
     bump();
   }
@@ -60,6 +61,12 @@ function context(v: any): Context | undefined {
   return Object.keys(c).length ? c : undefined;
 }
 const register = (v: unknown): Register => (v === "formal" ? "formal" : "normal");
+// The notes the turn carries: only non-empty ones (the settings keep no others) for languages on the
+// list, and none at all when there are none.
+function notes() {
+  const n = Object.fromEntries(Object.entries(state.settings.notes).filter(([k]) => state.settings.languages.includes(k)));
+  return Object.keys(n).length ? { notes: n } : {};
+}
 
 async function body(req: Request): Promise<any> {
   try {
@@ -69,18 +76,19 @@ async function body(req: Request): Promise<any> {
   }
 }
 
-// A polish or an adjust, start to finish: the translator, then the linter. English the linter
-// finds an error in gets one fix before the page sees it: an adjust whose note names the errors.
-// The fix is kept only when it has fewer errors; else the first English goes back with its
-// findings, as before. Warnings are left alone (the guide says they depend on the message).
+// A polish or an adjust, start to finish: the translator, then the linter, in any language. A reply
+// the linter finds an error in gets one fix before the page sees it: an adjust whose note names the
+// errors, in the reply's own language (Auto off), so the fix keeps the language. The fix is kept
+// only when it has fewer errors; else the first reply goes back with its findings, as before.
+// Warnings are left alone (the guide says they depend on the message).
 async function run(r: Ask) {
   if (translator.busy()) return json({ error: "busy" }, 409);
   const out = await translator.request(r);
   if (!out.ok) return json(out.until ? { error: out.error, until: out.until } : { error: out.error }, 503);
   if ("question" in out.reply) return json({ question: out.reply.question });
-  if (!("english" in out.reply)) return json({ error: "failed" }, 503);
-  let english = out.reply.english;
-  let l = await lint(english, state.settings.linter);
+  const { language, from } = answerFor(out.reply, r);
+  let text = out.reply.text;
+  let l = await lint(text, state.settings.linter);
   const linter = l.ok ? "ok" : "missing";
   if (state.translator.linter !== linter) {
     state.translator.linter = linter;
@@ -89,16 +97,16 @@ async function run(r: Ask) {
   const errors = l.lint.filter((f) => f.level === "error");
   if (errors.length && !translator.busy()) {
     const note = `The user's voice guide rules this out, so change only it and keep everything else as it is: ${errors.map((f) => f.message).join(" / ")}`;
-    const fix = await translator.request({ task: "adjust", text: r.text, english, note, register: r.register, ...(r.context ? { context: r.context } : {}) });
-    if (fix.ok && "english" in fix.reply) {
-      const l2 = await lint(fix.reply.english, state.settings.linter);
+    const fix = await translator.request({ task: "adjust", text: r.text, current: text, note, register: r.register, target: language, auto: false, ...(r.notes ? { notes: r.notes } : {}), ...(r.context ? { context: r.context } : {}) });
+    if (fix.ok && "text" in fix.reply) {
+      const l2 = await lint(fix.reply.text, state.settings.linter);
       const left = l2.lint.filter((f) => f.level === "error").length;
       const kept = left < errors.length;
-      if (kept) { english = fix.reply.english; l = l2; }
+      if (kept) { text = fix.reply.text; l = l2; }
       fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; a fix ${kept ? `kept (${left} left)` : "didn't help, the first reply goes back"}`);
-    } else fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; the fix got no English, the first reply goes back`);
+    } else fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; the fix got no message, the first reply goes back`);
   }
-  return json({ english, lint: l.lint });
+  return json({ text, language, from, lint: l.lint });
 }
 // Counts only, never the text.
 const fixLog = (words: string) => console.error(`${new Date().toISOString()} lint: ${words}`);
@@ -112,33 +120,38 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     const b = await body(req);
     const text = str(b?.text).trim();
     if (!text) return json({ error: "text" }, 400);
-    return run({ task: "polish", text, register: register(b.register), ...(context(b.context) ? { context: context(b.context) } : {}) });
+    // target, when given, is a one-time override: this request writes in it, with Auto off.
+    if (b.target !== undefined && !isLanguage(b.target)) return json({ error: "target" }, 400);
+    const lang = b.target !== undefined ? { target: b.target as string, auto: false } : { target: state.settings.target, auto: state.settings.auto };
+    return run({ task: "polish", text, register: register(b.register), ...lang, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) });
   }
 
   if (url.pathname === "/api/adjust" && post) {
     const b = await body(req);
     const text = str(b?.text).trim();
-    const english = str(b?.english).trim();
+    const current = str(b?.current).trim();
     const note = str(b?.note, 2000).trim();
-    if (!english || !note) return json({ error: "text" }, 400);
-    return run({ task: "adjust", text, english, note, register: register(b.register), ...(context(b.context) ? { context: context(b.context) } : {}) });
+    if (!current || !note) return json({ error: "text" }, 400);
+    // An adjust keeps the current text's language: the target is that language, Auto off.
+    const language = str(b?.language, 40).trim() || state.settings.target;
+    return run({ task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) });
   }
 
   if (url.pathname === "/api/settings" && post) {
     const b = await body(req);
     if (!b || typeof b !== "object" || Array.isArray(b)) return json({ error: "settings" }, 400);
-    const model = b.model as Model | undefined;
-    const mode = b.mode as Mode | undefined;
-    if ((model !== undefined && !MODELS.includes(model)) || (mode !== undefined && !MODES.includes(mode))) return json({ error: "settings" }, 400);
+    const change = checkChange(b, state.settings);
+    if (!change) return json({ error: "settings" }, 400);
     const voiceGuide = pathSetting(b.voiceGuide);
     const linter = pathSetting(b.linter);
     if (voiceGuide === null || linter === null) return json({ error: "path" }, 400);
-    // The only writer of settings.json: the page's choices and the paths the app's menu sends.
-    saveSettings({ model, mode, voiceGuide, linter });
+    // The only writer of settings.json: the page's and Settings' choices and the paths the app sends.
+    // The language keys go with each request, so they never restart the translator.
+    saveSettings({ ...change, voiceGuide, linter });
     const changed = readSettings();
     if (changed.model || changed.guide) translator.restartWhenIdle(changed.model ? "model changed" : "guide setting changed");
     else translator.refresh();
-    return json({ settings: { model: state.settings.model, mode: state.settings.mode } });
+    return json({ settings: publicSettings() });
   }
 
   if (url.pathname === "/api/translator/restart" && post) {

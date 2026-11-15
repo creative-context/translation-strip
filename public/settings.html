@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<link rel="stylesheet" href="design-tokens.css">
+<link rel="stylesheet" href="design-base.css">
+<link rel="stylesheet" href="design-components.css">
+<script src="design-icons.js"></script>
+<style>
+  /* The Settings window's page: what the user sets once, in four groups.
+     The window is 620 pt wide; the page scrolls when its languages don't fit the window's height. */
+  body.embed textarea { -webkit-user-select: text; user-select: text; cursor: text !important; }
+  .page { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+  .body { display: grid; gap: 18px; padding: 18px 20px 22px; max-width: 620px; margin: 0 auto; }
+  .page[data-ready="0"] .body { display: none; }
+  .wait { display: none; padding: 40px 20px; text-align: center; color: var(--color-text-secondary); font-size: 13px; }
+  .page[data-ready="0"] .wait { display: block; }
+
+  /* A group: its name, then its rows on one surface. Rows stand apart by a faint rule. */
+  .grp h2 { margin: 0 0 6px 4px; font-size: var(--csm-text-body); line-height: var(--csm-lh-body); font-weight: var(--font-weight-heading); color: var(--color-text-secondary); }
+  .box { border-radius: var(--radius-raised); background: var(--color-background-card); }
+  .row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; font-size: 13px; line-height: 18px; min-width: 0; }
+  .row + .row, .row + .edit, .edit + .row { box-shadow: inset 0 1px 0 #FFFFFF0F; }
+  .k { flex: 1; min-width: 0; color: var(--color-text-primary); }
+  .k small { display: block; color: var(--color-text-secondary); font-size: var(--csm-text-body); line-height: var(--csm-lh-body); margin-top: 1px; }
+  .k .gloss { color: var(--color-text-secondary); margin-left: 6px; font-size: var(--csm-text-body); }
+  .k .notes { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-line; }
+  .row .btn { height: 24px; font-size: var(--csm-text-body); flex: none; }
+  .file { font-family: var(--font-family-mono); font-size: var(--csm-text-body); color: var(--color-text-secondary); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .none { color: var(--color-text-secondary); font-size: var(--csm-text-body); white-space: nowrap; }
+  /* The end of a language's row: Target, or the remove button, in one slot, so every Notes… lines up. */
+  .tagline { flex: none; width: 52px; text-align: center; color: var(--color-text-secondary); font-size: var(--csm-text-meta); white-space: nowrap; }
+  .row .icon-btn { flex: none; margin: 0 14px; }
+
+  /* Selects open the Mac's own menu; drawn as the family's buttons, with the up-down chevrons a pop-up button has. */
+  select { all: unset; box-sizing: border-box; height: 24px; padding: 0 26px 0 10px; border-radius: var(--radius-element); flex: none; max-width: 240px;
+    background: var(--obsidian-veil-selected) no-repeat right 8px center / 8px 12px; color: var(--color-text-primary); font-size: var(--csm-text-body);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12' fill='none' stroke='%23C9CCD2' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 4.5 4 2l2.5 2.5M1.5 7.5 4 10l2.5-2.5'/%3E%3C/svg%3E");
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  select:hover { background-color: var(--color-overlay-pressed); }
+  select:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: 2px; }
+  select option { color: initial; }
+  /* Add a language: a row that reads as a link, the whole row its pop-up. */
+  .add { position: relative; }
+  .add select { position: absolute; inset: 0; width: 100%; max-width: none; height: 100%; opacity: 0; border-radius: 0 0 var(--radius-raised) var(--radius-raised); }
+  .add .k { color: var(--color-text-accent); }
+  .add:hover .k { color: var(--obsidian-text-hover); }
+  .add:focus-within { outline: 2px solid var(--color-text-accent); outline-offset: -2px; border-radius: 0 0 var(--radius-raised) var(--radius-raised); }
+  .add.full .k { color: var(--color-text-secondary); }
+  .switch:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: 2px; }
+
+  /* A language's notes, edited in place, under its row. */
+  .edit { padding: 4px 12px 12px; display: grid; gap: 8px; }
+  .edit textarea { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 72px; max-height: 180px; padding: 7px 10px; overflow-y: auto;
+    border-radius: var(--radius-element); background: var(--obsidian-veil-selected); color: var(--color-text-primary);
+    font-size: 13px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; caret-color: var(--color-text-accent); field-sizing: content; }
+  .edit textarea:focus { background: var(--color-overlay-pressed); }
+  .edit textarea::placeholder { color: var(--color-text-secondary); }
+  .edit .bar { display: flex; align-items: center; gap: 8px; }
+  .edit .bar .grow { flex: 1; }
+  .edit .count { color: var(--color-text-secondary); font-size: var(--csm-text-meta); }
+  .edit .btn { height: 24px; }
+  .edit kbd { font: inherit; opacity: 0.8; }
+
+  .note { color: var(--color-text-secondary); font-size: var(--csm-text-body); line-height: var(--csm-lh-body); margin: 6px 4px 0; }
+  .status { min-height: 16px; margin: -6px 4px 0; font-size: var(--csm-text-body); color: var(--color-text-red); }
+  .status:empty { display: none; }
+</style>
+</head>
+<body>
+<div class="page" id="page" data-ready="0">
+  <div class="wait">Waiting for the app's server…</div>
+  <div class="body">
+    <section class="grp" aria-labelledby="h-reply">
+      <h2 id="h-reply">Reply in</h2>
+      <div class="box">
+        <div class="row"><label class="k" for="target">Target language<small>What replies are written in when Auto is off, or can't tell.</small></label><select id="target"></select></div>
+        <div class="row"><label class="k" for="auto">Auto<small>Answer in the language of the other person's last message, when it's clear.</small></label><input type="checkbox" class="switch" id="auto"></div>
+      </div>
+    </section>
+
+    <section class="grp" aria-labelledby="h-guide">
+      <h2 id="h-guide">Voice guide</h2>
+      <div class="box">
+        <div class="row"><div class="k" id="l-guide">Guide<small>How you sound, for every language.</small></div><span class="file" id="guideFile"></span><button class="btn" data-choose="voiceGuide" aria-describedby="l-guide">Choose…</button></div>
+        <div class="row"><div class="k" id="l-linter">Linter<small>Optional. It checks every reply.</small></div><span class="file" id="linterFile"></span><button class="btn" data-choose="linter" aria-describedby="l-linter">Choose…</button></div>
+      </div>
+    </section>
+
+    <section class="grp" aria-labelledby="h-langs">
+      <h2 id="h-langs">Your languages</h2>
+      <div class="box" id="langs"></div>
+      <div class="note">Your languages show in the menu's Reply in row. Notes are optional: a few lines your guide can't say for a language, such as which form of "you" Formal uses, or phrases you use in it.</div>
+    </section>
+
+    <section class="grp" aria-labelledby="h-dict">
+      <h2 id="h-dict">Dictation</h2>
+      <div class="box">
+        <div class="row"><label class="k" for="dictation">Dictate in</label><select id="dictation"></select></div>
+      </div>
+    </section>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </div>
+</div>
+<script>
+"use strict";
+// ---------------------------------------------------------------------------------------------
+// The Settings window's page. It reads the state from the server (/api/state, then /api/stream)
+// and writes /api/settings; the server checks every value and is the only writer of
+// settings.json. Choose… asks the shell for a file through the `settings` message handler; in a
+// browser there's no shell and Choose… does nothing. The contract: docs/contract.md.
+// ---------------------------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const MAX_LANGS = 8, MAX_NOTE = 600;
+// The languages written in another script get their English name beside their own.
+const GLOSS = { "日本語": "Japanese", "한국어": "Korean", "中文": "Chinese" };
+
+// ------------------------------------------------------------------------------ the bridge
+const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.settings;
+document.body.classList.toggle("embed", !!handler);
+function post(msg) { if (handler) { try { handler.postMessage(msg); } catch (e) {} } }
+
+// ------------------------------------------------------------------------------ the server
+let srv = null; // { settings, options, … } from /api/state
+const S = () => (srv && srv.settings) || {};
+const O = () => (srv && srv.options) || {};
+
+function take(state) {
+  if (!state || typeof state !== "object" || !state.settings) return;
+  srv = state;
+  paint();
+}
+
+let source, lastBeat = Date.now(), backoff = 1000, reconnectTimer = 0;
+function connect() {
+  clearTimeout(reconnectTimer); reconnectTimer = 0;
+  try { if (source) source.close(); } catch (e) {}
+  source = new EventSource("/api/stream");
+  source.onmessage = e => {
+    lastBeat = Date.now(); backoff = 1000;
+    let s; try { s = JSON.parse(e.data); } catch (err) { return; }
+    take(s);
+  };
+  source.addEventListener("ping", () => { lastBeat = Date.now(); });
+  source.onerror = () => {
+    try { source.close(); } catch (e) {}
+    if (!reconnectTimer) { reconnectTimer = setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 5000); }
+  };
+}
+// The server pings every 9 s; silence for 25 s means a dead connection that never closed.
+setInterval(() => { if (Date.now() - lastBeat > 25000) { lastBeat = Date.now(); connect(); } }, 5000);
+
+async function refresh() {
+  try { const r = await fetch("/api/state", { cache: "no-store" }); if (r.ok) take(await r.json()); } catch (e) {}
+}
+
+// A change shows at once; the server's answer is what stays. A refusal puts back what the server has.
+let statusTimer = 0;
+function say(text) {
+  $("status").textContent = text;
+  clearTimeout(statusTimer);
+  if (text) statusTimer = setTimeout(() => { $("status").textContent = ""; }, 6000);
+}
+// `local`: what the server will do with it too, shown at once (a new target joins your languages).
+async function save(patch, local) {
+  srv = Object.assign({}, srv, { settings: Object.assign({}, S(), patch, local || {}) });
+  paint();
+  let status = 0, data = {};
+  try {
+    const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+    status = r.status;
+    try { data = await r.json(); } catch (e) {}
+  } catch (e) {}
+  if (status === 200 && data && data.settings) {
+    say("");
+    // The answer may leave out what it didn't change (the file names): keep those.
+    srv = Object.assign({}, srv, { settings: Object.assign({}, S(), data.settings) });
+    paint();
+    return true;
+  }
+  say(status === 400 ? "That setting can't be saved." : "Couldn't save the change. Try again.");
+  await refresh();
+  return false;
+}
+
+// ------------------------------------------------------------------------------ painting
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const label = l => GLOSS[l] ? `${l} (${GLOSS[l]})` : l;
+const langs = () => Array.isArray(S().languages) && S().languages.length ? S().languages : [S().target || "English"];
+const allLangs = () => { const a = Array.isArray(O().languages) ? O().languages.slice() : []; for (const l of langs()) if (!a.includes(l)) a.push(l); return a; };
+const notes = () => (S().notes && typeof S().notes === "object") ? S().notes : {};
+
+let editing = null;      // the language whose notes are open
+let drawnLangs = "";     // what the list was drawn from, so a stream update doesn't redraw an open editor
+
+function fillSelect(sel, groups, value) {
+  const key = JSON.stringify([groups, value]);
+  if (sel.dataset.key === key) return;
+  sel.dataset.key = key;
+  sel.innerHTML = groups.map(g => {
+    const opts = g.items.map(i => `<option value="${esc(i.value)}"${i.disabled ? " disabled" : ""}>${esc(i.text)}</option>`).join("");
+    return g.label ? `<optgroup label="${esc(g.label)}">${opts}</optgroup>` : opts;
+  }).join("");
+  sel.value = value;
+}
+
+function paint() {
+  if (!srv) return;
+  $("page").dataset.ready = "1";
+  const s = S(), mine = langs(), full = mine.length >= MAX_LANGS;
+  const target = s.target || mine[0];
+
+  // Reply in: your languages first, then every other one; one that isn't yours joins your list.
+  const others = allLangs().filter(l => !mine.includes(l));
+  fillSelect($("target"), [
+    { label: "Your languages", items: mine.map(l => ({ value: l, text: label(l) })) },
+    ...(others.length ? [{ label: full ? "Other languages (your list is full)" : "Other languages", items: others.map(l => ({ value: l, text: label(l), disabled: full })) }] : []),
+  ], target);
+  $("auto").checked = !!s.auto;
+
+  // Voice guide: the file's name only; the paths never reach the page.
+  const files = s.files || {};
+  for (const [id, name] of [["guideFile", files.voiceGuide], ["linterFile", files.linter]]) {
+    const el = $(id);
+    el.textContent = name || "Not set";
+    el.title = name || "";
+    el.classList.toggle("none", !name);
+    el.classList.toggle("file", !!name);
+  }
+
+  // Your languages.
+  const key = JSON.stringify([mine, target, notes(), allLangs(), editing]);
+  if (key !== drawnLangs) { drawnLangs = key; drawLangs(mine, target, full); }
+
+  // Dictation.
+  const dict = Array.isArray(O().dictation) ? O().dictation : [];
+  const items = dict.map(d => ({ value: d.id, text: d.name }));
+  if (s.dictation && !dict.some(d => d.id === s.dictation)) items.unshift({ value: s.dictation, text: s.dictation });
+  fillSelect($("dictation"), [{ items }], s.dictation || "es-MX");
+}
+
+function drawLangs(mine, target, full) {
+  const box = $("langs"), n = notes();
+  const keep = editing ? box.querySelector(".edit textarea") : null;
+  const draft = keep ? keep.value : null, hadFocus = keep && document.activeElement === keep;
+  let html = "";
+  for (const l of mine) {
+    const note = n[l] || "";
+    const isTarget = l === target;
+    html += `<div class="row lang" data-lang="${esc(l)}">
+      <div class="k"><span class="name">${esc(l)}</span>${GLOSS[l] ? `<span class="gloss">${esc(GLOSS[l])}</span>` : ""}${note ? `<small class="notes" title="${esc(note)}">${esc(note)}</small>` : ""}</div>
+      ${note ? "" : `<span class="none">No notes</span>`}
+      <button class="btn" data-act="notes" aria-expanded="${editing === l}" aria-label="Notes for ${esc(l)}">Notes…</button>
+      ${isTarget
+        ? `<span class="tagline" title="Your target language. Pick another target to remove it.">Target</span>`
+        : `<button class="icon-btn" data-act="remove" aria-label="Remove ${esc(l)}" title="Remove ${esc(l)}">${DesignIcons.svg("close")}</button>`}
+    </div>`;
+    if (editing === l) {
+      html += `<div class="edit" data-lang="${esc(l)}">
+        <textarea maxlength="${MAX_NOTE}" aria-label="Notes for ${esc(l)}" placeholder="A few lines for replies in ${esc(l)}, such as which form of &quot;you&quot; Formal uses.">${esc(note)}</textarea>
+        <div class="bar"><span class="count"></span><span class="grow"></span>
+          ${note ? `<button class="btn ghost" data-act="clear">Clear notes</button>` : ""}
+          <button class="btn ghost" data-act="cancel">Cancel</button>
+          <button class="btn primary" data-act="save">Save <kbd>⌘⏎</kbd></button></div>
+      </div>`;
+    }
+  }
+  const addable = allLangs().filter(l => !mine.includes(l));
+  if (full || !addable.length) {
+    html += `<div class="row add full"><div class="k">${full ? `Up to ${MAX_LANGS} languages` : "Every language is in your list"}</div></div>`;
+  } else {
+    html += `<div class="row add"><div class="k" aria-hidden="true">Add a language…</div>
+      <select id="add" aria-label="Add a language"><option value="" selected disabled>Add a language…</option>${addable.map(l => `<option value="${esc(l)}">${esc(label(l))}</option>`).join("")}</select></div>`;
+  }
+  box.innerHTML = html;
+  const ta = box.querySelector(".edit textarea");
+  if (ta) {
+    if (draft !== null) ta.value = draft;
+    count(ta);
+    if (hadFocus || draft === null) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+}
+
+function count(ta) {
+  const c = ta.closest(".edit").querySelector(".count");
+  c.textContent = ta.value.length > MAX_NOTE - 100 ? `${ta.value.length} of ${MAX_NOTE}` : "";
+}
+
+// ------------------------------------------------------------------------------ the controls
+$("target").addEventListener("change", e => {
+  const t = e.target.value;
+  save({ target: t }, langs().includes(t) ? null : { languages: [...langs(), t] });
+});
+$("auto").addEventListener("change", e => save({ auto: e.target.checked }));
+$("dictation").addEventListener("change", e => save({ dictation: e.target.value }));
+for (const b of document.querySelectorAll("[data-choose]")) b.addEventListener("click", () => post({ type: "choose", what: b.dataset.choose }));
+
+// Notes go as the whole object with the one language changed: an empty string removes it.
+function saveNote(lang, text) {
+  const next = Object.assign({}, notes());
+  next[lang] = text.trim().slice(0, MAX_NOTE);
+  editing = null;
+  return save({ notes: next });
+}
+function closeEditor() { editing = null; drawnLangs = ""; paint(); }
+
+$("langs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const lang = b.closest("[data-lang]").dataset.lang;
+  switch (b.dataset.act) {
+    case "notes": editing = editing === lang ? null : lang; drawnLangs = ""; paint(); break;
+    case "remove": if (lang !== S().target) save({ languages: langs().filter(l => l !== lang) }); break;
+    case "save": saveNote(lang, $("langs").querySelector(".edit textarea").value); break;
+    case "clear": saveNote(lang, ""); break;
+    case "cancel": closeEditor(); break;
+  }
+});
+$("langs").addEventListener("change", e => {
+  if (e.target.id !== "add" || !e.target.value) return;
+  const l = e.target.value;
+  if (!langs().includes(l) && langs().length < MAX_LANGS) save({ languages: [...langs(), l] });
+});
+$("langs").addEventListener("input", e => { if (e.target.matches(".edit textarea")) count(e.target); });
+$("langs").addEventListener("keydown", e => {
+  if (!e.target.matches(".edit textarea")) return;
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveNote(e.target.closest(".edit").dataset.lang, e.target.value); }
+  else if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
+});
+
+// ⌘W closes the window, as any Mac window; the app menu leaves ⌘W to its pages.
+document.addEventListener("keydown", e => {
+  if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "w") { e.preventDefault(); post({ type: "close" }); }
+});
+
+refresh();
+connect();
+</script>
+</body>
+</html>

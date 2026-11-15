@@ -100,6 +100,18 @@
   .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; margin-right: 8px; }   /* 16 px to Send: with it, not stuck to it */
   .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); margin-left: 2px; }   /* "To" and the name read as two words */
   [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
+  /* The language the English is in, before "To <chat>": "Auto · Português" when Auto chose it, or just the
+     target. 16 px to "To". When it isn't the target, a click writes this one in the target instead. */
+  .lang { all: unset; box-sizing: border-box; flex: none; display: inline-flex; align-items: center; gap: 0; height: 24px; padding: 0 4px; margin-right: 8px; border-radius: 6px;
+    white-space: nowrap; color: var(--color-text-secondary); cursor: default; transition: background-color 160ms var(--ease-standard); }
+  .lang[hidden] { display: none; }
+  .lang b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+  .lang .auto { white-space: pre; }
+  .lang[aria-disabled="false"] { cursor: pointer; }
+  .lang[aria-disabled="false"]:hover { background: var(--obsidian-veil-selected); }
+  .lang:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: -2px; }
+  [data-fit~="lang"] .lang .auto { display: none; }
+  [data-fit~="nolang"] .lang { display: none; }
   .more-btn { flex: none; width: 28px; height: 28px; }
   .more-btn svg.i { width: 16px; height: 16px; }
   .send, #translate { gap: 8px; flex: none; }
@@ -140,6 +152,21 @@
   .menu .posrow button { width: auto; min-width: 28px; height: 24px; padding: 0 8px; justify-content: center; color: var(--color-text-primary); }
   .menu .posrow button[aria-checked="true"] { background: var(--color-overlay-pressed); }
   .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
+  /* Four settings in a 2 x 2 grid of rows (On ⌘⏎, Model / Reply in, Position), so the menu keeps the strip's height. */
+  .menu .col.prefs { display: grid; grid-template-columns: auto auto; grid-auto-rows: 26px; column-gap: 20px; align-content: start; align-self: start; }
+  /* Reply in: Auto, a thin line, then your languages. */
+  .menu .posrow .sep { flex: none; width: 1px; align-self: stretch; margin: 5px 4px; background: var(--obsidian-veil-selected); }
+  .menu .langs { display: contents; }
+  /* Many languages in a narrow menu: the row scrolls sideways rather than push the menu out of the window. */
+  .menu .col.prefs, .menu .prow, .menu .reply { min-width: 0; }
+  .menu .reply { overflow-x: auto; scrollbar-width: none; }
+  .menu .reply::-webkit-scrollbar { display: none; }
+  /* A narrow strip: Position leaves the menu (it's in Settings and the app menu's Layout), and the three
+     rows left stack in one column, beside the commands. */
+  @media (orientation: landscape) and (max-width: 719px) {
+    .menu .col.prefs { grid-template-columns: minmax(0, auto); flex: 0 1 auto; }
+    .menu .prow.position { display: none; }
+  }
 
   /* A short strip (dragged below 140 pt): there's no room above the footer, so the menu opens to the
      left of the gear, as tall as the strip lets it, and the gear stays clickable. */
@@ -189,6 +216,11 @@
     .menu { left: 8px; right: 8px; bottom: calc(50% + 74px); width: auto; max-width: none; max-height: calc(50% - 82px); overflow-y: auto; flex-direction: column; }
     .menu hr { width: auto; height: 1px; margin: 2px 8px; align-self: stretch; }
     .menu .col:last-child button { padding-left: 16px; }   /* in line with the rows' labels */
+    .menu .col.prefs { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+    .menu .prow { height: auto; min-height: 26px; align-items: flex-start; }
+    .menu .prow .pl { padding-top: 6px; }
+    .menu .prow .posrow { flex-wrap: wrap; row-gap: 2px; padding: 1px 0; }
+    .lang { order: 4; }
 
     /* First run: the sentence over its button, on the one veil. */
     .cover { flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; }
@@ -211,7 +243,7 @@
     </div>
     <div class="f en">
       <div class="en-wrap">
-        <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="English translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="Translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
         <div class="busy"><span class="calm"><i></i><i></i><i></i></span><span id="busyText">Translating…</span></div>
         <div class="done-msg" id="doneMsg" role="status" aria-live="polite"></div>
       </div>
@@ -225,6 +257,7 @@
         </div>
         <span class="grow"></span>
         <button class="btn ghost small adjust-btn" id="adjustBtn" aria-label="Adjust" title="Adjust ⌘K"><span id="pencil"></span><span class="lbl">Adjust</span> <kbd>⌘K</kbd></button>
+        <button class="lang" id="lang" type="button" aria-disabled="true" hidden><span class="auto">Auto · </span><b id="langName"></b></button>
         <span class="to" id="to">To <b id="chat"></b></span>
         <button class="btn primary send" id="send" disabled>Send <kbd>⌘⏎</kbd></button>
         <button class="icon-btn more-btn" id="more" aria-label="Settings" title="Settings" aria-haspopup="menu" aria-expanded="false"></button>
@@ -242,7 +275,10 @@
         <button role="menuitemradio" data-model="sonnet" aria-checked="false">Sonnet</button>
         <button role="menuitemradio" data-model="opus" aria-checked="false">Opus</button>
       </div></div>
-      <div class="prow"><span class="pl" id="positionLabel">Position</span><div class="posrow" role="group" aria-labelledby="positionLabel">
+      <div class="prow"><span class="pl" id="replyLabel">Reply in</span><div class="posrow reply" role="group" aria-labelledby="replyLabel">
+        <button role="menuitemcheckbox" data-auto aria-checked="false" title="Follow the chat's language when it's clear">Auto</button><span class="sep" aria-hidden="true"></span><span class="langs" id="langBtns"></span>
+      </div></div>
+      <div class="prow position"><span class="pl" id="positionLabel">Position</span><div class="posrow" role="group" aria-labelledby="positionLabel">
         <button role="menuitemradio" data-layout="automatic" aria-checked="true" title="Automatic" aria-label="Automatic">Auto</button>
         <button role="menuitemradio" data-layout="below" aria-checked="false" title="Below Teams" aria-label="Below Teams">↓</button>
         <button role="menuitemradio" data-layout="above" aria-checked="false" title="Above Teams" aria-label="Above Teams">↑</button>
@@ -296,7 +332,7 @@ function post(msg) {
 
 // The stand-in bridge, for a browser with no shell: a made-up chat and a made-up last message, and a
 // send that succeeds after a moment without sending anything. The query string picks a case to
-// try: ?teams=closed|nochat  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
+// try: ?teams=closed|nochat  ?chat=pt|new  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
 // ?send=draft|no-teams|no-chat|not-front|mismatch|not-sent|chat-changed|no-paste|not-own-server|no-access
 const qp = new URLSearchParams(location.search);
 const PREVIEW_DICTATION = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.".split(" ");
@@ -306,7 +342,10 @@ function previewTeams() {
   if (t === "closed") return { open: false, chat: null, from: null, last: null, draft: false, shape: "ok" };
   const shape = ["unknown", "several"].includes(qp.get("shape")) ? qp.get("shape") : "ok";
   if (t === "nochat") return { open: true, chat: null, from: null, last: null, draft: false, shape };
-  return { open: true, chat: "Priya Raman", from: "Priya Raman", last: "Could you send me the budget numbers before Thursday?", draft: qp.get("draft") === "1", shape };
+  // ?chat=pt: the last message is in Portuguese; ?chat=new: a chat with no message yet.
+  if (qp.get("chat") === "new") return { open: true, chat: "Daniel Okafor", from: null, last: null, draft: qp.get("draft") === "1", shape };
+  const last = qp.get("chat") === "pt" ? "Você consegue revisar o orçamento até quinta?" : "Could you send me the budget numbers before Thursday?";
+  return { open: true, chat: "Priya Raman", from: "Priya Raman", last, draft: qp.get("draft") === "1", shape };
 }
 function standIn(msg) {
   if (msg.type === "ready") {
@@ -383,7 +422,10 @@ window.strip = {
 
 // ------------------------------------------------------------------------------ the server
 let srv = null;       // { translator, settings, … } from /api/state
-const settings = () => (srv && srv.settings) || { model: "haiku", mode: "send" };
+const DEFAULT_SETTINGS = { model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], dictation: "es-MX" };
+const settings = () => Object.assign({}, DEFAULT_SETTINGS, srv && srv.settings);
+// Each language's code, for the boxes' and the buttons' lang attribute (spelling and voices).
+const LANG_CODES = { English: "en", "Español": "es", "Português": "pt", "Français": "fr", Deutsch: "de", Italiano: "it", Nederlands: "nl", Polski: "pl", Svenska: "sv", "Türkçe": "tr", "日本語": "ja", "한국어": "ko", "中文": "zh" };
 
 let source, lastBeat = Date.now(), backoff = 1000, reconnectTimer = 0;
 function connect() {
@@ -429,9 +471,10 @@ async function ask(path, body, id) {
 // When the footers don't fit (a narrow Teams window, a long notice), they give way in steps, the
 // fewest that make each fit. The chat's name shortens first, down to its 96 px (that's its flex
 // shrink). Then the shortcut hints leave the buttons (the keys still work, and the titles say
-// them), then Adjust keeps only its pencil, then the notice's words end in an ellipsis (its title
+// them), then Adjust keeps only its pencil, then the language button drops its "Auto · " (the name
+// stays, and its title says how it was chosen), then the notice's words end in an ellipsis (its title
 // holds them, and its buttons stay whole), then the chat's name goes below 96 px, then it leaves
-// the row, and last the notice's words leave too. (Flex shrink alone takes a fraction of a pixel
+// the row, then the language button leaves, and last the notice's words leave too. (Flex shrink alone takes a fraction of a pixel
 // from the notice, which is enough to cut its last letters: so the notice can't shrink until then.)
 function fitFooter() {
   // The preview note shows only in a browser, gives way to what the dictation label says, and leaves
@@ -444,7 +487,14 @@ function fitFooter() {
 function fitSteps() {
   const row = $("tagrow"), acts = $("actions"), status = $("status");
   const en = box.querySelector(".f.en .foot"), es = box.querySelector(".f.es .foot");
-  const over = (f) => f.scrollWidth > f.clientWidth + 1;
+  // In the column the English footer wraps instead of overflowing: there, it doesn't fit when the language,
+  // the name, Send and the gear no longer share one line.
+  const col = window.innerHeight >= window.innerWidth;
+  const line = () => {
+    const tops = ["lang", "to", "send", "more"].map((id) => $(id)).filter((e) => e.offsetWidth > 0).map((e) => e.getBoundingClientRect());
+    return tops.some((r) => Math.abs(r.top + r.height / 2 - (tops[tops.length - 1].top + tops[tops.length - 1].height / 2)) > 4);
+  };
+  const over = (f) => f.scrollWidth > f.clientWidth + 1 || (col && f === en && line());
   const fit = [];
   const step = (s) => { fit.push(s); box.dataset.fit = fit.join(" "); };
   const notice = (dot) => {
@@ -461,14 +511,38 @@ function fitSteps() {
   if (over(en) || over(es)) step("keys");
   // The English footer, in its order. Every step is undone on the next paint or resize.
   if (over(en)) step("pencil");
+  if (over(en) && !$("lang").hidden && !$("lang").querySelector(".auto").hidden) step("lang");   // "Auto · " leaves; the title still says it
   if (over(en)) notice(true);          // the notice shortens down to its dot; its buttons stay whole
   if (over(en)) step("name");
   if (over(en)) step("noname");
+  if (over(en) && !$("lang").hidden) step("nolang");   // a notice with its buttons wins over the language, for now
   if (over(en)) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
   // The Spanish footer: Normal and Formal step aside last, only while a dictation label needs the room.
   if (over(es)) step("tone");
 }
 window.addEventListener("resize", () => fitFooter());
+
+// The menu's Reply in row: Auto, then one button per language in the settings, the target pressed.
+// The buttons are rebuilt only when the list changes, so one under the pointer isn't replaced.
+let langsDrawn = "";
+function paintReplyIn() {
+  const s = settings(), langs = Array.isArray(s.languages) && s.languages.length ? s.languages : [s.target];
+  const sig = JSON.stringify(langs);
+  if (sig !== langsDrawn) {
+    langsDrawn = sig;
+    $("langBtns").replaceChildren(...langs.map((name) => {
+      const b = document.createElement("button");
+      b.setAttribute("role", "menuitemradio");
+      b.dataset.target = name; b.textContent = name; b.lang = LANG_CODES[name] || "";
+      return b;
+    }));
+  }
+  menu.querySelector("[data-auto]").setAttribute("aria-checked", String(!!s.auto));
+  for (const b of menu.querySelectorAll("[data-target]")) {
+    b.setAttribute("aria-checked", String(b.dataset.target === s.target));
+    if (b.dataset.target === s.target) b.title = "Your target language"; else b.removeAttribute("title");
+  }
+}
 
 let drawn = "";
 function paint() {
@@ -493,6 +567,20 @@ function paint() {
   for (const b of menu.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === settings().mode);
   for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
   for (const b of menu.querySelectorAll("[data-layout]")) b.setAttribute("aria-checked", b.dataset.layout === st.layout);
+  paintReplyIn();
+
+  // The translation box waits for the target; the language button names what the translation is in.
+  const target = settings().target, lv = SS.langView(st, target), lb = $("lang");
+  enOut.placeholder = target;
+  enOut.lang = LANG_CODES[(lv && lv.name) || target] || "";
+  lb.hidden = !lv;
+  if (lv) {
+    lb.querySelector(".auto").hidden = !lv.auto;
+    $("langName").textContent = lv.name;
+    $("langName").lang = LANG_CODES[lv.name] || "";
+    lb.title = lv.title;
+    lb.setAttribute("aria-disabled", String(!SS.canRetarget(st, f, target)));
+  }
 
   $("adjustBtn").style.display = SS.canAdjust(st, f) && !open ? "" : "none";
   $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
@@ -557,8 +645,9 @@ function paint() {
 }
 
 // ------------------------------------------------------------------------------ translating and adjusting
-async function translate() {
-  const go = SS.translateStart(st, fields());
+// target: a one-time language for this translation only (the language button's click).
+async function translate(target) {
+  const go = SS.translateStart(st, fields(), { auto: settings().auto, target: typeof target === "string" ? target : undefined });
   if (!go) return;
   clearTimeout(fadeTimer);
   commit(go.st);
@@ -577,7 +666,7 @@ function openAdjust() {
 function closeAdjust(focusBack) { commit(SS.setAdjustOpen(st, false)); paint(); if (focusBack) esIn.focus(); }
 
 async function adjust(note) {
-  const go = SS.adjustStart(st, fields(), note);
+  const go = SS.adjustStart(st, fields(), note, settings().target);
   if (!go) return;
   commit(go.st);
   paint();
@@ -626,7 +715,8 @@ function onSent(m) {
 
 // ------------------------------------------------------------------------------ dictation
 function startDictation() {
-  const go = SS.dictStart(st, fields());
+  const loc = settings().dictation, opt = ((srv && srv.options && srv.options.dictation) || []).find((d) => d && d.id === loc);
+  const go = SS.dictStart(st, fields(), loc, opt ? opt.name : "");
   if (!go) return;
   commit(go.st); paint(); esIn.focus();
   post(go.msg);
@@ -696,6 +786,8 @@ $("adjustBtn").onclick = openAdjust;
 $("chip").onclick = () => adjust($("chip").dataset.quick);
 $("send").onclick = () => send(false);
 $("translate").onclick = () => { if (st.dict === "on") stopDictation(translate); else translate(); esIn.focus(); };
+// The language isn't the target: write this one in the target (Auto off, for this translation only).
+$("lang").onclick = () => { const target = settings().target; if (SS.canRetarget(st, fields(), target)) translate(target); };
 $("accessBtn").onclick = () => post({ type: "open", what: "accessibility" });
 for (const b of document.querySelectorAll("#tone button")) b.onclick = () => setRegister(b.dataset.register);
 
@@ -735,6 +827,8 @@ menu.addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.mode) setSettings({ mode: b.dataset.mode });
+  else if ("auto" in b.dataset) setSettings({ auto: !settings().auto });
+  else if (b.dataset.target) setSettings({ target: b.dataset.target });
   else if (b.dataset.model) setSettings({ model: b.dataset.model });
   // The shell moves the strip and says the new setting back (window.strip.layout).
   else if (b.dataset.layout) { post({ type: "layout", value: b.dataset.layout }); commit(SS.shellLayout(st, { value: b.dataset.layout })); paint(); }

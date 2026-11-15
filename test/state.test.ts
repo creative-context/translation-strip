@@ -42,7 +42,7 @@ function ready(es = ES, en = EN, teams: any = PRIYA, lint: any[] = []): S {
   let s = type(start(teams), es);
   const go = SS.translateStart(s.st, s.f);
   s = applied(s, go.st);
-  return applied(s, SS.translateDone(s.st, s.f, { english: en, lint }));
+  return applied(s, SS.translateDone(s.st, s.f, { text: en, language: "English", from: "target", lint }));
 }
 const view = (s: S, srv: any = null) => SS.view(s.st, srv);
 const tagOf = (s: S, srv: any = null) => { const v = view(s, srv); return v.tag ? `${v.tag.kind}: ${v.tag.text}` : null; };
@@ -92,11 +92,11 @@ describe("translating", () => {
   });
 
   const answers: [string, any, string, string][] = [
-    ["English", { english: EN, lint: [] }, "ready", EN],
+    ["English", { text: EN, language: "English", from: "target", lint: [] }, "ready", EN],
     ["a question", { question: "This Thursday or next week's?" }, "question", "This Thursday or next week's?"],
     ["an error", { error: "offline" }, "error", ""],
     ["nothing usable", {}, "error", ""],
-    ["blank English", { english: "  " }, "error", ""],
+    ["blank English", { text: "  " }, "error", ""],
   ];
   for (const [name, d, phase, en] of answers) {
     test(`the answer is ${name}`, () => {
@@ -121,12 +121,12 @@ describe("translating", () => {
     let s = type(start(), ES);
     s = applied(s, SS.translateStart(s.st, s.f).st);
     const changed = { ...s.f, es: ES + "!" };
-    expect(SS.translateDone(s.st, changed, { english: EN }).phase).toBe("idle");
+    expect(SS.translateDone(s.st, changed, { text: EN, language: "English", from: "target" }).phase).toBe("idle");
   });
 
   test("findings that aren't {message} are dropped", () => {
     const s = ready(ES, EN, PRIYA, []);
-    const t = SS.translateDone({ ...s.st, phase: "translating" }, s.f, { english: EN, lint: [{ level: "warning", message: "Stiff" }, { level: "x" }, null, { message: "" }] });
+    const t = SS.translateDone({ ...s.st, phase: "translating" }, s.f, { text: EN, language: "English", from: "target", lint: [{ level: "warning", message: "Stiff" }, { level: "x" }, null, { message: "" }] });
     expect(t.lint).toEqual([{ level: "warning", message: "Stiff" }]);
   });
 
@@ -422,7 +422,7 @@ describe("a translation remembers its chat", () => {
     const go = SS.translateStart(s.st, s.f);
     s = applied(s, go.st);
     expect(go.body.context.chat).toBe("Daniel Okafor");
-    s = applied(s, SS.translateDone(s.st, s.f, { english: "Thanks, see you then." }));
+    s = applied(s, SS.translateDone(s.st, s.f, { text: "Thanks, see you then.", language: "English", from: "target" }));
     expect(s.st.chatFor).toBe("Daniel Okafor");
     expect(tagOf(s)).toBeNull();
     expect(canSend(s)).toBe(true);
@@ -433,7 +433,7 @@ describe("a translation remembers its chat", () => {
     s = applied(s, SS.translateStart(s.st, s.f).st);
     s = withTeams(s, DANIEL);
     expect(tagOf(s)).toBeNull();   // nothing to be written for yet
-    s = applied(s, SS.translateDone(s.st, s.f, { english: EN }));
+    s = applied(s, SS.translateDone(s.st, s.f, { text: EN, language: "English", from: "target" }));
     expect(tagOf(s)).toBe("error: Written for Priya Raman");
     expect(canSend(s)).toBe(false);
   });
@@ -505,7 +505,7 @@ describe("a translation remembers its chat", () => {
     const go = SS.adjustStart(s.st, s.f, "más corto");
     s = applied(s, go.st);
     s = withTeams(s, DANIEL);
-    const r = SS.adjustDone(s.st, s.f, { english: "Can you check the budget before Thursday?" });
+    const r = SS.adjustDone(s.st, s.f, { text: "Can you check the budget before Thursday?", language: "English", from: "target" });
     expect(tagOf({ ...s, st: r.st })).toBe("error: Written for Priya Raman");
     expect(r.st.chatFor).toBe("Priya Raman");
   });
@@ -516,11 +516,11 @@ describe("adjusting", () => {
   test("a note starts a request with the English on show; Undo brings the earlier one back", () => {
     let s = ready();
     const go = SS.adjustStart(s.st, s.f, "  más corto ");
-    expect(go.body).toEqual({ text: ES, english: EN, note: "más corto", register: "normal", context: { chat: "Priya Raman", from: "Priya Raman", last: PRIYA.last } });
+    expect(go.body).toEqual({ text: ES, current: EN, note: "más corto", register: "normal", context: { chat: "Priya Raman", from: "Priya Raman", last: PRIYA.last }, language: "English" });
     expect(go.st.phase).toBe("adjusting");
     expect(tagOf({ ...s, st: go.st })).toBe("working: Adjusting…");
     s = applied(s, go.st);
-    const r = SS.adjustDone(s.st, s.f, { english: "Can you check the budget before Thursday?" });
+    const r = SS.adjustDone(s.st, s.f, { text: "Can you check the budget before Thursday?", language: "English", from: "target" });
     expect(r.focus).toBe(true);
     s = applied(s, r.st);
     expect(s.st.phase).toBe("ready");
@@ -544,7 +544,7 @@ describe("adjusting", () => {
   test("an answer for Spanish changed since leaves the translation out of date", () => {
     const s = ready();
     const go = SS.adjustStart(s.st, s.f, "corto");
-    expect(SS.adjustDone(go.st, { ...s.f, es: ES + "!" }, { english: "x" }).st.phase).toBe("stale");
+    expect(SS.adjustDone(go.st, { ...s.f, es: ES + "!" }, { text: "x" }).st.phase).toBe("stale");
   });
 
   const replies: [string, any, string | null, string[]][] = [
@@ -696,7 +696,7 @@ describe("dictation's states", () => {
 
   test("start says so to the shell and listens", () => {
     const { s, go } = listening();
-    expect(go.msg).toEqual({ type: "dictation", action: "start" });
+    expect(go.msg).toEqual({ type: "dictation", action: "start", locale: "es-MX" });
     expect(s.st.dict).toBe("on");
     expect(SS.dictLabel(s.st)).toEqual({ kind: "listening" });
   });
@@ -733,9 +733,9 @@ describe("dictation's states", () => {
     let s = start();
     s = applied(s, SS.dictStart(s.st, s.f).st);
     s = applied(s, SS.onDictation(s.st, { state: "preparing" }, s.f).st);
-    expect(SS.dictLabel(s.st)).toEqual({ kind: "prep", text: "Getting Spanish dictation ready…" });
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "prep", text: "Getting dictation ready…" });
     s = applied(s, SS.onDictation(s.st, { state: "preparing", progress: 0.55 }, s.f).st);
-    expect(SS.dictLabel(s.st)).toEqual({ kind: "prep", text: "Getting Spanish dictation ready… 55%" });
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "prep", text: "Getting dictation ready… 55%" });
     s = applied(s, SS.onDictation(s.st, { state: "preparing" }, s.f).st);   // no number: keeps the last one
     expect(SS.dictLabel(s.st)?.text).toContain("55%");
     s = applied(s, SS.onDictation(s.st, { state: "on", text: "" }, s.f).st);
@@ -797,8 +797,15 @@ describe("dictation's states", () => {
     let { s } = listening();
     s = applied(s, SS.onDictation(s.st, { state: "unavailable" }, s.f).st);
     expect(s.st.dict).toBe("off");
-    expect(SS.dictLabel(s.st)).toEqual({ kind: "note", text: "Spanish dictation isn't available on this Mac" });
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "note", text: "Dictation isn't available on this Mac" });
     expect(SS.dictStart(s.st, s.f)).not.toBeNull();   // it may try again
+  });
+
+  test("'unavailable' names the dictation language when the page gave it", () => {
+    let s = start();
+    s = applied(s, SS.dictStart(s.st, s.f, "pt-BR", "Português (Brasil)").st);
+    s = applied(s, SS.onDictation(s.st, { state: "unavailable" }, s.f).st);
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "note", text: "Dictation in Português (Brasil) isn't available on this Mac" });
   });
 
   test("the microphone denied in the system ends a dictation and blocks the next; allowed again, it is off", () => {
@@ -844,5 +851,171 @@ describe("what the shell says", () => {
     SS.setRegister(s.st, "formal", s.f);
     SS.adjustStart(s.st, s.f, "corto");
     expect(JSON.stringify(s.st)).toBe(frozen);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- the reply's language
+describe("the language a translation is in", () => {
+  const PT = "Sim, vou revisar hoje e te mando comentários amanhã.";
+  // Translate with Auto on or off, and get back text in `language`, chosen `from` the chat or the target.
+  function inLang(language: string, from: string, auto: boolean, teams: any = PRIYA): S {
+    let s = type(start(teams), ES);
+    const go = SS.translateStart(s.st, s.f, { auto });
+    s = applied(s, go.st);
+    return applied(s, SS.translateDone(s.st, s.f, { text: language === "English" ? EN : PT, language, from, lint: [] }));
+  }
+
+  test("the state keeps the translation's language and where it came from", () => {
+    const s = inLang("Português", "chat", true);
+    expect(s.st.language).toBe("Português");
+    expect(s.st.from).toBe("chat");
+    expect(s.st.langAuto).toBe(true);
+    expect(s.st.langWho).toBe("Priya Raman");
+    expect(s.f.en).toBe(PT);
+    // Anything but "chat" reads as the target.
+    expect(inLang("English", "x", true).st.from).toBe("target");
+  });
+
+  test("a request with no one-time target carries no target; the setting goes with the server's settings", () => {
+    const s = type(start(), ES);
+    expect("target" in SS.translateStart(s.st, s.f, { auto: true }).body).toBe(false);
+    expect("target" in SS.translateStart(s.st, s.f).body).toBe(false);
+  });
+
+  test("a one-time target goes in the request and turns Auto off for this translation", () => {
+    const s = inLang("Português", "chat", true);
+    expect(SS.canRetarget(s.st, s.f, "English")).toBe(true);
+    const go = SS.translateStart(s.st, s.f, { auto: true, target: "English" });
+    expect(go.body).toEqual({ text: ES, register: "normal", context: { chat: "Priya Raman", from: "Priya Raman", last: PRIYA.last }, target: "English" });
+    expect(go.st.langAuto).toBe(false);
+    expect(go.st.language).toBe("");
+    let t = applied(s, go.st);
+    t = applied(t, SS.translateDone(t.st, t.f, { text: EN, language: "English", from: "target", lint: [] }));
+    expect(SS.langView(t.st, "English")).toEqual({ auto: false, name: "English", title: "Your target language.", other: false });
+    expect(SS.canRetarget(t.st, t.f, "English")).toBe(false);
+  });
+
+  const views: [string, () => S, string, any][] = [
+    ["Auto took the chat's language", () => inLang("Português", "chat", true), "English",
+      { auto: true, name: "Português", title: "The language of Priya Raman's last message. Click to send this one in English.", other: true }],
+    ["Auto took the chat's language, which is the target", () => inLang("English", "chat", true), "English",
+      { auto: true, name: "English", title: "The language of Priya Raman's last message.", other: false }],
+    ["Auto couldn't tell", () => inLang("English", "target", true), "English",
+      { auto: true, name: "English", title: "The chat has no clear language, so your target.", other: false }],
+    ["Auto off", () => inLang("English", "target", false), "English",
+      { auto: false, name: "English", title: "Your target language.", other: false }],
+    ["Auto off, and the target changed since", () => inLang("English", "target", false), "Português",
+      { auto: false, name: "English", title: "Click to send this one in Português.", other: true }],
+    ["the chat's language with no author known", () => inLang("Português", "chat", true, { ...PRIYA, from: null }), "English",
+      { auto: true, name: "Português", title: "The language of the other person's last message. Click to send this one in English.", other: true }],
+  ];
+  for (const [name, mk, target, want] of views) test(`the language button: ${name}`, () => expect(SS.langView(mk().st, target)).toEqual(want));
+
+  const hidden: [string, () => S][] = [
+    ["nothing translated yet", () => start()],
+    ["translating", () => { const s = type(start(), ES); return applied(s, SS.translateStart(s.st, s.f, { auto: true }).st); }],
+    ["a question", () => { const s = type(start(), ES); const go = SS.translateStart(s.st, s.f); const t = applied(s, go.st); return applied(t, SS.translateDone(t.st, t.f, { question: "Which one?" })); }],
+    ["a reply with no language", () => { const s = type(start(), ES); const t = applied(s, SS.translateStart(s.st, s.f).st); return applied(t, SS.translateDone(t.st, t.f, { text: EN })); }],
+    ["after Esc", () => { const s = inLang("Português", "chat", true); return applied(s, SS.clearAll(s.st).st); }],
+    ["after a send", () => sendAnd(inLang("Português", "chat", true), { ok: true })],
+  ];
+  for (const [name, mk] of hidden) test(`no language button on ${name}`, () => expect(SS.langView(mk().st, "English")).toBeNull());
+
+  test("it stays while the English is out of date, adjusting or sending, but only a ready one switches", () => {
+    let s = inLang("Português", "chat", true);
+    const stale = type(s, ES + "!");
+    expect(SS.langView(stale.st, "English")?.name).toBe("Português");
+    expect(SS.canRetarget(stale.st, stale.f, "English")).toBe(false);
+    const adj = applied(s, SS.adjustStart(s.st, s.f, "corto").st);
+    expect(SS.langView(adj.st, "English")?.name).toBe("Português");
+    expect(SS.canRetarget(adj.st, adj.f, "English")).toBe(false);
+    const sending = applied(s, SS.sendStart(s.st, s.f, false, "send").st);
+    expect(SS.langView(sending.st, "English")?.name).toBe("Português");
+    expect(SS.canRetarget(sending.st, sending.f, "English")).toBe(false);
+    expect(SS.canRetarget(s.st, s.f, "")).toBe(false);
+  });
+
+  test("an adjust sends the current text and its language, and keeps how the language was chosen", () => {
+    let s = inLang("Português", "chat", true);
+    const go = SS.adjustStart(s.st, s.f, "más corto", "English");
+    expect(go.body.current).toBe(PT);
+    expect(go.body.language).toBe("Português");
+    expect("english" in go.body).toBe(false);
+    s = applied(s, go.st);
+    s = applied(s, SS.adjustDone(s.st, s.f, { text: "Sim, reviso hoje.", language: "Português", from: "target", lint: [] }).st);
+    expect(s.f.en).toBe("Sim, reviso hoje.");
+    expect(SS.langView(s.st, "English")).toEqual({ auto: true, name: "Português", title: "The language of Priya Raman's last message. Click to send this one in English.", other: true });
+    // A reply in another language than asked is named as it is, a plain target.
+    const t = applied(s, SS.adjustStart(s.st, s.f, "corto", "English").st);
+    const u = applied(t, SS.adjustDone(t.st, t.f, { text: EN, language: "English", from: "target", lint: [] }).st);
+    expect(SS.langView(u.st, "English")).toEqual({ auto: false, name: "English", title: "Your target language.", other: false });
+  });
+
+  test("an adjust on a state with no language sends the target's", () => {
+    let s = type(start(), ES);
+    s = applied(s, SS.translateStart(s.st, s.f).st);
+    s = applied(s, SS.translateDone(s.st, s.f, { text: EN }));
+    expect(SS.adjustStart(s.st, s.f, "corto", "Português").body.language).toBe("Português");
+    expect(SS.adjustStart(s.st, s.f, "corto").body.language).toBe("English");
+  });
+});
+
+describe("dictation's language", () => {
+  test("the start message carries the settings' locale, es-MX when there is none", () => {
+    const s = start();
+    expect(SS.dictStart(s.st, s.f, "pt-BR").msg).toEqual({ type: "dictation", action: "start", locale: "pt-BR" });
+    expect(SS.dictStart(s.st, s.f, "").msg.locale).toBe("es-MX");
+    expect(SS.dictStart(s.st, s.f, null).msg.locale).toBe("es-MX");
+  });
+});
+
+describe("undo and the one-time target keep the language right", () => {
+  const PT = "Sim, vou revisar hoje e te mando comentários amanhã.";
+  function inLang(language: string, from: string, auto: boolean): S {
+    let s = type(start(PRIYA), ES);
+    s = applied(s, SS.translateStart(s.st, s.f, { auto }).st);
+    return applied(s, SS.translateDone(s.st, s.f, { text: language === "English" ? EN : PT, language, from, lint: [] }));
+  }
+
+  test("undo after an adjust that changed the language brings the language back with the text", () => {
+    let s = inLang("English", "target", false);
+    s = applied(s, SS.adjustStart(s.st, s.f, "en francés", "English").st);
+    s = applied(s, SS.adjustDone(s.st, s.f, { text: "Pouvez-vous regarder le budget avant jeudi ?", language: "Français", from: "target", lint: [] }).st);
+    expect(s.st.language).toBe("Français");
+    s = applied(s, SS.undo(s.st));
+    expect(s.f.en).toBe(EN);
+    expect(s.st.language).toBe("English");
+    expect(SS.langView(s.st, "English").other).toBe(false);
+    // The next adjust asks in the language on show again.
+    expect(SS.adjustStart(s.st, s.f, "corto", "English").body.language).toBe("English");
+  });
+
+  test("undo after an adjust over Auto keeps how the language was chosen", () => {
+    let s = inLang("Português", "chat", true);
+    s = applied(s, SS.adjustStart(s.st, s.f, "in English", "English").st);
+    s = applied(s, SS.adjustDone(s.st, s.f, { text: EN, language: "English", from: "target", lint: [] }).st);
+    s = applied(s, SS.undo(s.st));
+    expect([s.st.language, s.st.from, s.st.langAuto]).toEqual(["Português", "chat", true]);
+  });
+
+  test("the one-time target holds through a register switch and a retry, and not for new text", () => {
+    let s = inLang("Português", "chat", true);
+    const go = SS.translateStart(s.st, s.f, { auto: true, target: "English" });
+    s = applied(s, go.st);
+    s = applied(s, SS.translateDone(s.st, s.f, { text: EN, language: "English", from: "target", lint: [] }));
+    // Formal: the same Spanish goes again, still in English.
+    const r = SS.setRegister(s.st, "formal", s.f);
+    expect(r.again).toBe(true);
+    s = applied(s, r.st);
+    const again = SS.translateStart(s.st, s.f, { auto: true });
+    expect(again.body.target).toBe("English");
+    expect(again.st.langAuto).toBe(false);
+    s = applied(s, again.st);
+    s = applied(s, SS.translateDone(s.st, s.f, { text: EN, language: "English", from: "target", lint: [] }));
+    // New Spanish: Auto again.
+    s = type(s, "Otra cosa: ¿nos vemos mañana?");
+    const fresh = SS.translateStart(s.st, s.f, { auto: true });
+    expect("target" in fresh.body).toBe(false);
+    expect(fresh.st.langAuto).toBe(true);
   });
 });

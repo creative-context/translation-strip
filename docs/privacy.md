@@ -6,8 +6,9 @@ The app and its server run on your Mac, and the server listens on `127.0.0.1` on
 
 Through the hidden Claude Code session on your plan:
 
-- What you write, the register and, for Adjust, the current English and your note.
-- For context, the open chat's name, the author of its last message and that message. The session treats it as quoted text and never follows instructions in it.
+- What you write, the register and, for Adjust, the current reply and your note.
+- Your language settings: the target language, whether Auto is on and, if you wrote any, your notes for each language (the text you typed in Settings). The notes go with every request, and only the ones you filled in.
+- For context, the open chat's name, the author of its last message and that message. The session treats it as quoted text and never follows instructions in it. With Auto on, it reads that message to see which language it's in, and nothing more is kept about it.
 - Your voice guide's text, as the session's instructions. The app reads it from your file when the session starts and never writes it anywhere.
 
 Every message goes to a fresh session, so none of them sees what you wrote before, to whom, or what they wrote you.
@@ -22,17 +23,17 @@ Through Accessibility, about once a second while the strip is on screen: the win
 
 To paste, the app borrows the clipboard for a moment and puts back what was there once Teams has taken the paste, unless you copied something else meanwhile. It marks what it puts there as temporary and private, so clipboard managers that respect those marks don't keep your message.
 
-The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in Mexican Spanish (or US or Spain Spanish), and the audio never leaves it. The first time, macOS downloads that model from Apple.
+The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in the language you chose in Settings (Mexican Spanish unless you pick another), and the audio never leaves it. The first time for each language, macOS downloads that model from Apple.
 
 ## What it keeps
 
 In `~/.translation-strip`:
 
-- `settings.json`: the paths of your guide and linter, the model and what ⌘⏎ does.
+- `settings.json`: the paths of your guide and linter, the model, what ⌘⏎ does, your target language, whether Auto is on, your languages, your notes for each language (the text you typed) and the dictation language. It holds no chat names and no per-chat languages.
 - `server.log`: when the server and the translator started, errors, and outcomes such as "send: not sent (mismatch)". It never holds message text or chat names.
 - `translator/`: the hidden session's working folder. The app never reads anything back from it.
 
-The app's preferences keep where the strip last sat. For the linter, each reply goes to a temporary file that the app deletes right after.
+The app's preferences keep where the strip last sat and where the Settings window was. For the linter, each reply goes to a temporary file that the app deletes right after.
 
 ## What it sends on its own
 

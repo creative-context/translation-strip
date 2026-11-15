@@ -1,18 +1,23 @@
 // A stand-in for `claude -p --input-format stream-json --output-format stream-json`, for the
 // tests. It speaks the same stream-json as Claude Code 2.1 (the shapes seen in real runs: a
 // system init on each turn, assistant messages with text blocks, a rate_limit_event, a result)
-// and answers by content, with made-up English and the request's id:
+// and answers by content, with made-up text and the request's id, in the reply's shape
+// { id, text, language, from }. The language is the turn's target ("from": "target"), except that
+// with "auto" on and a context whose last message starts "PT:" it is "Português" ("from": "chat").
+// Text in a language other than English is the made-up English with "[<language>] " in front.
+// The markers:
 //   "UNCLEAR" → a question; "LIMIT" → the usage-limit error with a reset time; "CRASH" → exits;
 //   "SLOW" → answers after 1.5 s; "HANG" → never answers (the server's timeout ends it); "KINDLY" → English the stand-in linter flags;
 //   "CHATTY" → the JSON object with words around it; "WRONGID" → a reply carrying another id;
+//   "NOLANG" → a reply that names no language; "SHOUTLANG" → names it in capitals ("PORTUGUÊS");
 //   "MEMORY" → English that says how many turns this process has seen and the texts before this one;
 //   "EXIT-LOGIN", "EXIT-UPDATE", "EXIT-OFFLINE", "EXIT-LIMIT" → made-up Claude Code words on stderr, then exits 1;
-//   an adjust whose note names «kindly» (the server's linter fix) → the English without "kindly", or unchanged with "STUBBORN";
+//   an adjust whose note names «kindly» (the server's linter fix) → the current text without "kindly", or unchanged with "STUBBORN";
 //   "PROMPT-ONCE" → the first session that sees it can't read its system prompt (Claude Code's words on stderr)
 //   and exits 1, and the next one answers; "HANG-ONCE" → the first never answers, the next one does;
 //   "WRONGID-ONCE" → the first answers with another request's id, the next one answers right.
 // `--version` prints a made-up version. Each start appends a line to $STRIP_DIR/fake-starts.jsonl with
-// what it was started with, and each turn a line to fake-turns.jsonl (its pid, task, id and turn number).
+// what it was started with, and each turn a line to fake-turns.jsonl (its pid, task, id, turn number, target, auto, notes and the keys it carried).
 // When $STRIP_DIR/fake-exit-at-start exists, a start prints its text on stderr and exits 1 at once.
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +56,7 @@ appendFileSync(
     model,
     cwd: process.cwd(),
     args: args.filter((a) => a !== system),
-    systemHasProtocol: system.includes('"english":') && system.includes('Copy it, unchanged, into your reply'),
+    systemHasProtocol: system.includes('"language":') && system.includes('Copy it, unchanged, into your reply'),
     systemGuide: system.split("# The user's voice guide")[1]?.split("# Before you reply")[0].trim() ?? null,
     systemHasCheck: system.includes("# Before you reply"),
     disableClaudeMds: process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS ?? null,
@@ -82,7 +87,7 @@ async function turn(content: string) {
   } catch {}
   const text: string = req.text ?? "";
   turns++;
-  appendFileSync(join(DIR, "fake-turns.jsonl"), JSON.stringify({ pid: process.pid, task: req.task ?? null, id: req.id ?? null, turn: turns }) + "\n");
+  appendFileSync(join(DIR, "fake-turns.jsonl"), JSON.stringify({ pid: process.pid, task: req.task ?? null, id: req.id ?? null, turn: turns, target: req.target ?? null, auto: req.auto ?? null, notes: req.notes ?? null, keys: Object.keys(req) }) + "\n");
   const before = [...seen];
   seen.push(text);
   init();
@@ -98,7 +103,7 @@ async function turn(content: string) {
     appendFileSync(join(DIR, `fake-once-${once[1]}`), "1");
     if (once[1] === "HANG") return new Promise<void>(() => {});
     if (once[1] === "WRONGID") {
-      const wrong = JSON.stringify({ id: "zzzzzzzz", english: "Can you send me the slides before lunch?" });
+      const wrong = JSON.stringify({ id: "zzzzzzzz", text: "Can you send me the slides before lunch?", language: "English", from: "target" });
       assistant(wrong);
       return result(wrong);
     }
@@ -117,13 +122,19 @@ async function turn(content: string) {
   }
   let reply: string;
   const id = text.includes("WRONGID") && !once ? "zzzzzzzz" : req.id;
+  const fromChat = req.task !== "adjust" && req.auto === true && /^PT:/.test(String(req.context?.last ?? ""));
+  const language: string = fromChat ? "Português" : String(req.target ?? "English");
+  const from = fromChat ? "chat" : "target";
+  const inLanguage = (english: string) => (language === "English" ? english : `[${language}] ${english}`);
+  const answer = (message: string) => JSON.stringify({ id, text: message, ...(text.includes("NOLANG") ? {} : { language: text.includes("SHOUTLANG") ? language.toUpperCase() : language }), from });
+  const current = String(req.current ?? "");
   if (text.includes("UNCLEAR")) reply = JSON.stringify({ id, question: "Which report do you mean, the weekly one or the budget one?" });
   // The server's linter fix: an adjust whose note names «kindly» drops the word, unless the text says STUBBORN.
-  else if (req.task === "adjust" && /«kindly»/.test(String(req.note))) reply = JSON.stringify({ id, english: text.includes("STUBBORN") ? String(req.english) : String(req.english).replace(/\bkindly /i, "") });
-  else if (req.task === "adjust") reply = JSON.stringify({ id, english: `${String(req.english).replace(/[.!]$/, "")}, thanks!` });
-  else if (text.includes("KINDLY")) reply = JSON.stringify({ id, english: "Could you kindly send me the slides before lunch?" });
-  else if (text.includes("MEMORY")) reply = JSON.stringify({ id, english: `Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}` });
-  else reply = JSON.stringify({ id, english: req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?" });
+  else if (req.task === "adjust" && /«kindly»/.test(String(req.note))) reply = answer(text.includes("STUBBORN") ? current : current.replace(/\bkindly /i, ""));
+  else if (req.task === "adjust") reply = answer(`${current.replace(/[.!]$/, "")}, thanks!`);
+  else if (text.includes("KINDLY")) reply = answer(inLanguage("Could you kindly send me the slides before lunch?"));
+  else if (text.includes("MEMORY")) reply = answer(`Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}`);
+  else reply = answer(inLanguage(req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?"));
   if (text.includes("CHATTY")) reply = `Here it is:\n${reply}\nHope that helps.`;
   assistant(reply);
   rateLimit("allowed", LIMIT_RESETS_AT);

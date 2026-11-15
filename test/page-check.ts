@@ -3,8 +3,8 @@
 //
 //   bun test/page-check.ts
 //
-// It needs the page mock already running (bun test/page-mock.ts, on 127.0.0.1:4813) and Playwright with
-// WebKit. Playwright is read from PLAYWRIGHT_DIR, or from the sibling folder mac-app-design/node_modules.
+// It needs the page mock already running (bun test/page-mock.ts, on 127.0.0.1:4813, or PAGE_MOCK=<its address>
+// with the mock on STRIP_MOCK_PORT) and Playwright with WebKit. Playwright is read from PLAYWRIGHT_DIR, or from the sibling folder mac-app-design/node_modules.
 // The window is a typical strip, 1200 x 145 (the strip is 145 tall and as wide as Teams), dark, device scale 2, in a browser (no shell), so the
 // page uses its stand-in bridge: nothing is ever sent. Made-up text only.
 //
@@ -13,6 +13,7 @@
 //
 // Captures go to .local/page-check/ (kept out of git). The eight frames are saved by their state name:
 //   01-idle  02-ready-long  03-adjust-open  04-menu-open  05-send-error-long-chat  06-first-run  07-dictation-preparing  08-written-for
+//   09-auto-portuguese  10-menu-narrow
 // and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
 //   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
@@ -100,18 +101,28 @@ async function translateFlow(t: T, text = ES) {
   await waitState(t.p, "ready");
 }
 
-// The mock keeps the settings between pages: put them back to what the page starts with.
+// The mock keeps the settings between pages: put them back to what the page starts with (the mock's
+// defaults: English the target, Auto off, English and Português as your languages, dictation in es-MX).
+const MOCK_LANGS = ["English", "Português"];
 async function resetSettings() {
   const s = await (await fetch(`${BASE}/api/state`)).json();
   const patch: any = {};
   if (s.settings.model !== "haiku") patch.model = "haiku";
   if (s.settings.mode !== "send") patch.mode = "send";
+  if (s.settings.target !== "English") patch.target = "English";
+  if (s.settings.auto !== false) patch.auto = false;
+  if (JSON.stringify(s.settings.languages) !== JSON.stringify(MOCK_LANGS)) patch.languages = MOCK_LANGS;
+  if (s.settings.dictation !== "es-MX") patch.dictation = "es-MX";
   if (Object.keys(patch).length) {
     await fetch(`${BASE}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
     await new Promise((r) => setTimeout(r, patch.model ? 1800 : 100));
   }
 }
 const setMode = (mode: string) => fetch(`${BASE}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
+const putSettings = async (patch: any) => {
+  const r = await fetch(`${BASE}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+  if (r.status !== 200) throw new Fail(`the mock refused ${JSON.stringify(patch)} (${r.status})`);
+};
 
 // ---------------------------------------------------------------------------------------- layout
 // Nothing may overflow the 145 px height or the window's width, nothing may sit outside the panel it
@@ -197,7 +208,7 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
       if (o < 0.99) issues.push(`a shortcut glyph "${k.textContent}" is translucent (opacity ${o.toFixed(2)})`);
     }
     // Each control stays in its own panel and doesn't sit on its neighbor.
-    const sels = [".tone", ".preview", ".dict-label", ".mic", "#translate", "#status", "#actions .btn", "#adjustBtn", "#more", ".to", "#send", ".adjust-row .field", "#chip"];
+    const sels = [".tone", ".preview", ".dict-label", ".mic", "#translate", "#status", "#actions .btn", "#adjustBtn", "#more", "#lang", ".to", "#send", ".adjust-row .field", "#chip"];
     const items: Element[] = [];
     for (const s of sels) for (const el of strip.querySelectorAll(s)) if (shown(el)) items.push(el);
     for (const el of items) {
@@ -217,6 +228,9 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
       const m = menu.getBoundingClientRect();
       if (m.left < -0.5 || m.right > Wd + 0.5 || m.top < -0.5 || m.bottom > Ht + 0.5)
         issues.push(`the menu sticks out of the window (${Math.round(m.left)},${Math.round(m.top)} to ${Math.round(m.right)},${Math.round(m.bottom)})`);
+      const g = document.getElementById("more")!.getBoundingClientRect();
+      if (!(m.right <= g.left || m.bottom <= g.top || m.left >= g.right || m.top >= g.bottom)) issues.push("the menu covers the gear");
+      for (const e of menu.querySelectorAll("button, .pl")) if (shown(e) && e.scrollWidth > (e as HTMLElement).clientWidth + 1) issues.push(`${name(e)} is cut in the menu`);
       if (col) {
         const en = strip.querySelector(".f.en")!.getBoundingClientRect();
         if (m.left < en.left - 0.5 || m.right > en.right + 0.5 || m.top < en.top - 0.5 || m.bottom > en.bottom + 0.5) issues.push("the menu isn't over the English module");
@@ -245,8 +259,8 @@ const colCheck = (group: string, name: string, fn: () => Promise<string | void>)
 const narrowCheck = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "narrow" });
 // The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
 // about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
-const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout"]);
-const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are three labeled rows/, /^a long message scrolls inside its box/];
+const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language"]);
+const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are four labeled rows/, /^a long message scrolls inside its box/, /^a short strip/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
 // ===================================================================================== typing and keys
@@ -499,7 +513,9 @@ check("Adjust", "note + ⏎ adjusts (request, Adjusting…, new English, Adjuste
   eq(r.length, 1, "adjust requests");
   eq(r[0].body.note, "más formal", "note");
   eq(r[0].body.text, ES, "text");
-  eq(r[0].body.english, before, "english sent");
+  eq(r[0].body.current, before, "the current text sent");
+  eq(r[0].body.language, "English", "the current text's language sent");
+  ok(!("english" in r[0].body), "the old field 'english' is gone");
   has(await val(t.p, "en"), "(adjusted)", "English");
   eq(await t.p.locator("#strip").getAttribute("data-adjust"), "", "adjust still open");
   eq(await tagText(t.p), "Adjusted", "tag");
@@ -591,7 +607,7 @@ check("Settings menu", "the button opens the menu with its two columns; outside 
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "menu visible");
   eq(await t.p.locator("#more").getAttribute("aria-expanded"), "true", "aria-expanded");
-  eq(await t.p.locator("#menu button").count(), 12, "menu items");
+  eq(await t.p.locator("#menu button").count(), 15, "menu items (2 + 3 + Auto and 2 languages + 5 + 2 commands)");
   await t.p.click("#es", { position: { x: 100, y: 20 } });
   ok(!(await vis(t.p, "#menu")), "outside click should close the menu");
   await t.p.fill("#es", "texto");
@@ -603,11 +619,14 @@ check("Settings menu", "the button opens the menu with its two columns; outside 
   await t.p.click("#more");
   ok(!(await vis(t.p, "#menu")), "a second click on the button should close it");
 });
-check("Settings menu", "the settings are three labeled rows (On ⌘⏎, Model, Position) with no title row above them; every command is in primary text; the gear is the footer's last control, 28 × 28", async () => {
+check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On ⌘⏎ and Model, then Reply in and Position) with no title row above them; every command is in primary text; the gear is the footer's last control, 28 × 28", async () => {
   const t = await open();
   await ready(t);
   await t.p.click("#more");
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Position", "the rows' labels");
+  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the rows' labels");
+  const g = await t.p.evaluate(() => [...document.querySelectorAll("#menu .prow")].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
+  ok(g[0][1] === g[1][1] && g[2][1] === g[3][1] && g[2][1] > g[0][1], `two rows of two: ${JSON.stringify(g)}`);
+  ok(g[0][0] === g[2][0] && g[1][0] === g[3][0] && g[1][0] > g[0][0], `two columns: ${JSON.stringify(g)}`);
   eq(await t.p.locator("#menu .mh").count(), 0, "title rows");
   const tops = await t.p.evaluate(() => [document.querySelector("#menu .prow")!, document.querySelector("#menu [data-do]")!].map((e) => Math.round(e.getBoundingClientRect().top)));
   ok(Math.abs(tops[0] - tops[1]) <= 2, `the first row and the first command should start on one line (${tops.join(", ")})`);
@@ -701,6 +720,281 @@ check("Settings menu", "Restart translator: posts the restart and closes the men
   await new Promise((r) => setTimeout(r, 1800));
 });
 
+
+// ===================================================================================== the language (0.8.0)
+// The mock writes in the target, or with Auto on in the stand-in chat's language when it's clear: ?chat=pt gives a
+// Portuguese last message, ?chat=new a chat with none. Every check here puts the settings back (the runner does too).
+const PT_NORMAL = "Você consegue dar uma olhada no orçamento antes de quinta?";
+const langOf = (p: any) => p.evaluate(() => {
+  const b = document.getElementById("lang")!;
+  const shown = !b.hidden && getComputedStyle(b).display !== "none";
+  return { shown, text: (b.textContent || "").replace(/\s+/g, " ").trim(), visibleText: (b as HTMLElement).innerText.replace(/\s+/g, " ").trim(),
+    title: b.title, disabled: b.getAttribute("aria-disabled"), auto: !(b.querySelector(".auto") as HTMLElement).hidden, lang: document.getElementById("langName")!.lang };
+});
+check("Language", "Auto off: the button before 'To' names the target, 'English', titled 'Your target language.'; a click asks nothing", async () => {
+  const t = await open();
+  ok(!(await langOf(t.p)).shown, "no language button before a translation");
+  await ready(t);
+  const l = await langOf(t.p);
+  ok(l.shown, "the language button should show");
+  eq(l.visibleText, "English", "its words");
+  ok(!l.auto, "no 'Auto ·' with Auto off");
+  eq(l.title, "Your target language.", "its title");
+  eq(l.disabled, "true", "a click has nothing to switch");
+  const order = await t.p.evaluate(() => [...document.querySelector(".f.en .foot")!.children].map((c) => c.id || c.className.split(" ")[0]).join(","));
+  has(order, "lang,to,send,more", "the footer's order");
+  await t.p.click("#lang", { force: true });   // aria-disabled: Playwright would wait for it to turn on
+  await settle(t.p, 250);
+  eq(reqsTo(t, "/api/translate").length, 1, "translate requests after the click");
+  eq(await state(t.p), "ready", "state");
+  await expectLayout(t.p);
+});
+check("Language", "Auto on, the chat in Portuguese (?chat=pt): 'Auto · Português' titled with the person and the target, the text in Portuguese", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("chat=pt");
+    await ready(t);
+    const l = await langOf(t.p);
+    eq(l.visibleText, "Auto · Português", "its words");
+    eq(l.title, "The language of Priya Raman's last message. Click to send this one in English.", "its title");
+    eq(l.disabled, "false", "it can switch to the target");
+    eq(l.lang, "pt", "the name's lang");
+    has(await val(t.p, "en"), PT_NORMAL, "the translation");
+    eq(await t.p.locator("#en").getAttribute("lang"), "pt", "the box's lang");
+    eq(reqsTo(t, "/api/translate")[0].body.target, undefined, "no one-time target on a plain translation");
+    await expectLayout(t.p);
+  } finally { await resetSettings(); }
+});
+check("Language", "a click on it translates the same Spanish again with the one-time target; the button then says the target and Auto stays on", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("chat=pt");
+    await ready(t);
+    await t.p.click("#lang");
+    await waitState(t.p, "translating");
+    await waitState(t.p, "ready");
+    const r = reqsTo(t, "/api/translate");
+    eq(r.length, 2, "translate requests");
+    eq(r[1].body.target, "English", "the one-time target");
+    eq(r[1].body.text, ES, "the same Spanish");
+    has(await val(t.p, "en"), EN_NORMAL, "the translation in English");
+    const l = await langOf(t.p);
+    eq(l.visibleText, "English", "its words after the click");
+    eq(l.title, "Your target language.", "its title after the click");
+    eq(l.disabled, "true", "nothing left to switch");
+    eq(reqsTo(t, "/api/settings").length, 0, "the click changes no setting");
+    eq((await (await fetch(`${BASE}/api/state`)).json()).settings.auto, true, "Auto stays on");
+    // The next translation follows the chat again.
+    await t.p.click("#es"); await t.p.keyboard.press("End"); await t.p.keyboard.type(" Gracias.");
+    await t.p.keyboard.press("Enter");
+    await waitState(t.p, "ready");
+    eq(reqsTo(t, "/api/translate")[2].body.target, undefined, "the next request has no one-time target");
+    eq((await langOf(t.p)).visibleText, "Auto · Português", "the next translation follows the chat");
+  } finally { await resetSettings(); }
+});
+check("Language", "Auto on, a chat with no message (?chat=new): 'Auto · English', titled 'The chat has no clear language, so your target.'", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("chat=new");
+    await ready(t);
+    const l = await langOf(t.p);
+    eq(l.visibleText, "Auto · English", "its words");
+    eq(l.title, "The chat has no clear language, so your target.", "its title");
+    eq(l.disabled, "true", "it's already the target");
+    await expectLayout(t.p);
+  } finally { await resetSettings(); }
+});
+check("Language", "Auto on, the chat in English: 'Auto · English', titled with the person's last message and no click", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open();
+    await ready(t);
+    const l = await langOf(t.p);
+    eq(l.visibleText, "Auto · English", "its words");
+    eq(l.title, "The language of Priya Raman's last message.", "its title");
+    eq(l.disabled, "true", "it's already the target");
+  } finally { await resetSettings(); }
+});
+check("Language", "a new target: the placeholder is its name, the box is named 'Translation', and an English text can be sent in it with one click", async () => {
+  try {
+    const t = await open();
+    eq(await t.p.locator("#en").getAttribute("placeholder"), "English", "placeholder");
+    eq(await t.p.locator("#en").getAttribute("aria-label"), "Translation", "accessible name");
+    await ready(t);
+    await t.p.click("#more");
+    await t.p.click('#menu [data-target="Português"]');
+    await settle(t.p, 300);
+    await t.p.keyboard.press("Escape");
+    eq(await t.p.locator("#en").getAttribute("placeholder"), "Português", "placeholder after the target changed");
+    const l = await langOf(t.p);
+    eq(l.visibleText, "English", "the translation on show is still English");
+    eq(l.title, "Click to send this one in Português.", "its title");
+    eq(l.disabled, "false", "it can switch");
+    await t.p.click("#lang");
+    await waitState(t.p, "translating");
+    await waitState(t.p, "ready");
+    eq(reqsTo(t, "/api/translate")[1].body.target, "Português", "the one-time target");
+    eq((await langOf(t.p)).visibleText, "Português", "its words after the click");
+    await t.p.keyboard.press("Escape");
+    eq(await val(t.p, "en"), "", "Esc clears");
+    ok(!(await langOf(t.p)).shown, "and the language button leaves");
+  } finally { await resetSettings(); }
+});
+check("Language", "an adjust sends the current text and its language, and the button keeps 'Auto · Português'", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("chat=pt");
+    await ready(t);
+    const before = await val(t.p, "en");
+    await t.p.keyboard.press("Meta+k");
+    await t.p.click("#chip");
+    await waitState(t.p, "adjusting");
+    eq((await langOf(t.p)).visibleText, "Auto · Português", "the button while adjusting");
+    await waitState(t.p, "ready");
+    const r = reqsTo(t, "/api/adjust");
+    eq(r[0].body.current, before, "the current text");
+    eq(r[0].body.language, "Português", "its language");
+    has(await val(t.p, "en"), "Consegue ver o orçamento", "the shorter Portuguese");
+    eq((await langOf(t.p)).visibleText, "Auto · Português", "the button after the adjust");
+  } finally { await resetSettings(); }
+});
+check("Language", "the button stays while sending and leaves with the sent message", async () => {
+  const t = await open();
+  await ready(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  ok((await langOf(t.p)).shown, "it shows while sending");
+  await waitState(t.p, "sent");
+  ok(!(await langOf(t.p)).shown, "it leaves with the sent message");
+});
+check("Settings menu", "Reply in: Auto, a thin line, then your languages, the target pressed; Auto posts { auto }, a language posts { target }", async () => {
+  try {
+    const t = await open();
+    await t.p.click("#more");
+    const row = await t.p.evaluate(() => {
+      const r = document.querySelector("#menu [data-auto]")!.closest(".posrow")!;
+      return [...r.querySelectorAll("button, .sep")].map((e) => ({ role: e.getAttribute("role"), text: (e.textContent || "").trim(), checked: e.getAttribute("aria-checked"), sep: e.classList.contains("sep"), w: e.getBoundingClientRect().width, top: Math.round(e.getBoundingClientRect().top) }));
+    });
+    eq(row.map((b) => b.sep ? "|" : b.text).join(" "), "Auto | English Português", "the row");
+    eq(row[0].role, "menuitemcheckbox", "Auto's role");
+    eq(row[0].checked, "false", "Auto off at the start");
+    ok(row[1].w === 1, `the divider is thin (${row[1].w} px)`);
+    eq(row.slice(2).map((b) => `${b.role}:${b.checked}`).join(" "), "menuitemradio:true menuitemradio:false", "the languages, the target pressed");
+    ok(new Set(row.map((b) => b.top)).size <= 2, "one row");
+    eq(await t.p.locator('#menu [data-target="Português"]').getAttribute("lang"), "pt", "a language button's lang");
+    await t.p.click("#menu [data-auto]");
+    await settle(t.p, 300);
+    eq(JSON.stringify(reqsTo(t, "/api/settings")[0]?.body), JSON.stringify({ auto: true }), "Auto's request");
+    eq(await t.p.locator("#menu [data-auto]").getAttribute("aria-checked"), "true", "Auto pressed");
+    await t.p.click("#menu [data-auto]");
+    await settle(t.p, 300);
+    eq(JSON.stringify(reqsTo(t, "/api/settings")[1]?.body), JSON.stringify({ auto: false }), "Auto off again");
+    eq(await t.p.locator("#menu [data-auto]").getAttribute("aria-checked"), "false", "Auto not pressed");
+    await t.p.click('#menu [data-target="Português"]');
+    await settle(t.p, 300);
+    eq(JSON.stringify(reqsTo(t, "/api/settings")[2]?.body), JSON.stringify({ target: "Português" }), "a language's request");
+    eq(await t.p.locator('#menu [data-target="Português"]').getAttribute("aria-checked"), "true", "Português pressed");
+    eq(await t.p.locator('#menu [data-target="English"]').getAttribute("aria-checked"), "false", "English no longer pressed");
+    ok(await vis(t.p, "#menu"), "the menu stays open");
+    await expectLayout(t.p);
+    // Your languages come from Settings: a third one shows as a third button.
+    await putSettings({ languages: ["English", "Português", "Français"] });
+    await t.p.waitForFunction(() => document.querySelectorAll("#menu [data-target]").length === 3, null, { timeout: 3000 }).catch(() => { throw new Fail("a third language didn't show"); });
+    await expectLayout(t.p);
+  } finally { await resetSettings(); }
+});
+check("Settings menu", "eight languages: the menu stays inside the window, clear of the gear, with every language reachable, at 145 and 110 tall", async () => {
+  await putSettings({ languages: ["English", "Português", "Español", "Français", "Deutsch", "Italiano", "Nederlands", "日本語"] });
+  try {
+    for (const [w, h] of [[1200, 145], [1200, 110], [640, 145], [640, 110]]) {
+      const t = await open();
+      await t.p.setViewportSize({ width: w, height: h });
+      await settle(t.p, 150);
+      await t.p.click("#more");
+      const r = await t.p.evaluate(() => {
+        const m = document.getElementById("menu")!.getBoundingClientRect(), g = document.getElementById("more")!.getBoundingClientRect();
+        const row = document.querySelector("#menu [data-auto]")!.closest(".posrow") as HTMLElement;
+        const last = [...document.querySelectorAll("#menu [data-target]")].pop() as HTMLElement;
+        row.scrollLeft = row.scrollWidth;
+        const lr = last.getBoundingClientRect(), rr = row.getBoundingClientRect();
+        return { l: m.left, t: m.top, r: m.right, b: m.bottom, W: innerWidth, H: innerHeight, covers: !(m.right <= g.left || m.bottom <= g.top || m.left >= g.right || m.top >= g.bottom),
+          reach: lr.left >= rr.left - 0.5 && lr.right <= rr.right + 0.5 && lr.right <= m.right };
+      });
+      ok(r.l >= 0 && r.t >= 0 && r.r <= r.W && r.b <= r.H, `${w} × ${h}: the menu leaves the window (${Math.round(r.l)},${Math.round(r.t)} to ${Math.round(r.r)},${Math.round(r.b)})`);
+      ok(!r.covers, `${w} × ${h}: the menu covers the gear`);
+      ok(r.reach, `${w} × ${h}: the last language can't be reached`);
+      await t.p.click('#menu [data-target="日本語"]');
+      await settle(t.p, 250);
+      eq(await t.p.locator('#menu [data-target="日本語"]').getAttribute("aria-checked"), "true", `${w} × ${h}: the last language pressed`);
+      await putSettings({ target: "English" });
+      for (const x of contexts.splice(0)) { try { await x.close(); } catch {} }
+    }
+  } finally { await resetSettings(); }
+});
+narrowCheck("Settings menu", "under 720 wide, Position leaves the menu: On ⌘⏎, Model and Reply in stack in one column beside the commands; at 720 it's back", async () => {
+  const t = await open();
+  await ready(t, LONG_EN);
+  await t.p.click("#more");
+  await settle(t.p, 150);
+  ok(!(await vis(t.p, "#menu [data-layout]")), "Position should leave the menu");
+  eq((await t.p.locator("#menu .pl").evaluateAll((ls: any[]) => ls.filter((l) => l.getBoundingClientRect().width > 0).map((l) => l.textContent))).join(", "), "On ⌘⏎, Model, Reply in", "the rows");
+  const g = await t.p.evaluate(() => [...document.querySelectorAll("#menu .prow")].filter((e) => e.getBoundingClientRect().width > 0).map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
+  ok(g.length === 3 && g.every((x) => x[0] === g[0][0]) && g[0][1] < g[1][1] && g[1][1] < g[2][1], `one column of three: ${JSON.stringify(g)}`);
+  const cmd = await rect(t.p, "#menu [data-do=guide]"), prefs = await rect(t.p, "#menu .col.prefs");
+  ok(cmd.l >= prefs.r, "the commands sit beside the settings");
+  await expectLayout(t.p);
+  await t.p.setViewportSize({ width: 720, height: 145 });
+  await settle(t.p, 150);
+  ok(await vis(t.p, "#menu [data-layout]"), "at 720 Position is back");
+  await expectLayout(t.p);
+  await t.p.setViewportSize({ width: 719, height: 110 });
+  await settle(t.p, 150);
+  ok(!(await vis(t.p, "#menu [data-layout]")), "at 719 × 110 Position leaves too");
+  const m = await rect(t.p, "#menu"), gear = await rect(t.p, "#more");
+  ok(m.l >= 0 && m.t >= 0 && m.r <= 719 && m.b <= 110, `at 719 × 110 the menu leaves the window (${JSON.stringify(m)})`);
+  ok(m.r <= gear.l || m.b <= gear.t, "at 719 × 110 the menu covers the gear");
+});
+narrowCheck("Language", "the language button gives way after the hints and Adjust's word: 'Auto ·' leaves before the chat's name drops below 96 px", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("chat=pt");
+    await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?" });
+    await ready(t);
+    await settle(t.p, 150);
+    let fit = await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit);
+    const l = await langOf(t.p);
+    ok(l.shown, "the language button shows");
+    const to = await t.p.evaluate(() => document.getElementById("to")!.clientWidth);
+    ok(to >= 96 || /\blang\b/.test(fit), `the name went below 96 px (${to}) before the button gave way (${fit})`);
+    if (/\bname\b/.test(fit)) ok(/keys pencil lang/.test(fit), `the steps' order: ${fit}`);
+    await expectLayout(t.p);
+    // A long notice too: the steps keep their order, and the language's name stays.
+    await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?", shape: "several" });
+    await settle(t.p, 150);
+    fit = await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit);
+    has(fit, "keys pencil lang", "steps with a notice");
+    eq((await langOf(t.p)).visibleText, "Português", "the name stays when 'Auto ·' leaves");
+    eq((await langOf(t.p)).title, "The language of Priya Raman's last message. Click to send this one in English.", "its title keeps the words");
+    await expectLayout(t.p);
+    return `steps: ${fit}`;
+  } finally { await resetSettings(); }
+});
+check("Mic", "the dictation start message carries the settings' locale (es-MX, then pt-BR)", async () => {
+  try {
+    let t = await open();
+    await t.p.click("#mic");
+    await settle(t.p, 100);
+    eq((await t.msgs()).find((m: any) => m.type === "dictation" && m.action === "start")?.locale, "es-MX", "the default locale");
+    await t.p.click("#mic");
+    await putSettings({ dictation: "pt-BR" });
+    t = await open();
+    await t.p.click("#mic");
+    await settle(t.p, 100);
+    eq((await t.msgs()).find((m: any) => m.type === "dictation" && m.action === "start")?.locale, "pt-BR", "the settings' locale");
+    await t.p.click("#mic");
+  } finally { await resetSettings(); }
+});
+
 // ===================================================================================== Send
 check("Send", "Send is off before there is English", async () => {
   const t = await open();
@@ -748,7 +1042,9 @@ check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams
   try {
     const t = await open();
     await translateFlow(t);
-    eq((await t.p.locator("#send").innerText()).replace(/\s+/g, " "), "Put in Teams ⌘⏎", "button label");
+    eq((await t.p.locator("#send").textContent()).replace(/\s+/g, " ").trim(), "Put in Teams ⌘⏎", "button label");
+    // The hint may leave only as the footer's first give-way step (in the column, beside the language and the name).
+    if (!(await vis(t.p, "#send kbd"))) has(await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit), "keys", "the hint left as a fit step");
     await t.p.click("#send");
     await waitState(t.p, "sending");
     eq(await tagText(t.p), "Putting in Teams…", "tag while sending");
@@ -1184,7 +1480,8 @@ check("Replies", "LOGIN: 'Sign in to Claude Code' in gray, Try again asks again"
   eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
   eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
   await t.p.click("#actions [data-act=retry]");
-  await waitState(t.p, "translating");
+  // The mock answers LOGIN at once, so "translating" may be over before it's seen: wait for the second request.
+  for (let i = 0; i < 40 && reqsTo(t, "/api/translate").length < 2; i++) await settle(t.p, 100);
   await waitState(t.p, "login");
   eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
 });
@@ -1198,7 +1495,8 @@ check("Replies", "UPDATE: 'Claude Code needs an update' in gray, Try again asks 
   eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
   eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
   await t.p.click("#actions [data-act=retry]");
-  await waitState(t.p, "translating");
+  // The mock answers UPDATE at once, so "translating" may be over before it's seen: wait for the second request.
+  for (let i = 0; i < 40 && reqsTo(t, "/api/translate").length < 2; i++) await settle(t.p, 100);
   await waitState(t.p, "update");
   eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
 });
@@ -1307,11 +1605,11 @@ check("Translate button", "pressing it while dictating stops the mic and transla
 });
 
 // ===================================================================================== dictation states
-check("Dictation", "?dict=prep: 'Getting Spanish dictation ready…', then Listening with the dot, then the words", async () => {
+check("Dictation", "?dict=prep: 'Getting dictation ready…', then Listening with the dot, then the words", async () => {
   const t = await open("dict=prep");
   await t.p.click("#mic");
-  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting Spanish dictation ready"), null, { timeout: 1200 })
-    .catch(() => { throw new Fail("no 'Getting Spanish dictation ready…' label"); });
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting dictation ready"), null, { timeout: 1200 })
+    .catch(() => { throw new Fail("no 'Getting dictation ready…' label"); });
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "true", "mic pressed while preparing");
   ok(!(await vis(t.p, "#dictLabel .sdot")), "no listening dot while preparing");
   eq(await val(t.p, "es"), "", "Spanish box while preparing");
@@ -1329,19 +1627,19 @@ check("Dictation", "?dict=prep: 'Getting Spanish dictation ready…', then Liste
 check("Dictation", "?dict=prep: stopping while it prepares listens to nothing", async () => {
   const t = await open("dict=prep");
   await t.p.click("#mic");
-  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting Spanish"), null, { timeout: 1200 });
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting dictation"), null, { timeout: 1200 });
   await t.p.click("#mic");
   await settle(t.p, 2200);
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic pressed");
   eq(await val(t.p, "es"), "", "Spanish box");
   eq(await t.p.locator("#dictLabel").innerText(), "", "label");
 });
-check("Dictation", "?dict=unavailable: 'Spanish dictation isn't available on this Mac', mic off, nothing typed, fits", async () => {
+check("Dictation", "?dict=unavailable: 'Dictation in Español (México) isn't available on this Mac', mic off, nothing typed, fits", async () => {
   const t = await open("dict=unavailable");
   await t.p.click("#mic");
   await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("isn't available"), null, { timeout: 2000 })
     .catch(() => { throw new Fail("no 'isn't available' label"); });
-  eq(await t.p.locator("#dictLabel").innerText(), "Spanish dictation isn't available on this Mac", "label");
+  eq(await t.p.locator("#dictLabel").innerText(), "Dictation in Español (México) isn't available on this Mac", "label");
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic pressed");
   eq(await val(t.p, "es"), "", "Spanish box");
   await settle(t.p);
@@ -1440,15 +1738,16 @@ check("Design", "the caret is the accent, and the ready English box takes a focu
   await t.p.click("#es"); await settle(t.p, 400);
   eq(await bg(), off, "English surface after focus leaves");
 });
-check("Design", "the chat's name keeps 16 px from Send, and Adjust keeps 24 px from the name, with a long chat too", async () => {
+check("Design", "the chat's name keeps 16 px from Send, the language button 16 px from 'To', and Adjust 24 px from the language, with a long chat too", async () => {
   for (const chat of ["Priya Raman", LONG_CHAT]) {
     const t = await open();
     await setTeams(t.p, { ...PRIYA_TEAMS, chat });
     await ready(t);
     await settle(t.p, 150);
-    const g = await t.p.evaluate(() => { const r = (id: string) => document.getElementById(id)!.getBoundingClientRect(); return { toSend: r("send").left - r("to").right, adjTo: r("to").left - r("adjustBtn").right }; });
+    const g = await t.p.evaluate(() => { const r = (id: string) => document.getElementById(id)!.getBoundingClientRect(); return { toSend: r("send").left - r("to").right, langTo: r("to").left - r("lang").right, adjLang: r("lang").left - r("adjustBtn").right }; });
     ok(Math.abs(g.toSend - 16) <= 0.5, `${chat}: the name is ${g.toSend} px from Send, not 16`);
-    ok(Math.abs(g.adjTo - 24) <= 0.5, `${chat}: Adjust is ${g.adjTo} px from the name, not 24`);
+    ok(Math.abs(g.langTo - 16) <= 0.5, `${chat}: the language is ${g.langTo} px from 'To', not 16`);
+    ok(Math.abs(g.adjLang - 24) <= 0.5, `${chat}: Adjust is ${g.adjLang} px from the language, not 24`);
   }
 });
 check("Design", "the English footer: notice and Adjust buttons 24 px at 12 px, Send 28, the gear last and 28 × 28", async () => {
@@ -1549,14 +1848,19 @@ const layoutCases: [string, () => Promise<T>][] = [
   ["not-own-server notice + long chat", async () => { const t = await open("send=not-own-server"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 }); return t; }],
   ["no chat", async () => open("teams=nochat")],
   ["preview note, long Spanish", async () => { const t = await open(); await t.p.fill("#es", ES + " " + ES + " " + ES); return t; }],
+  ["Auto in Portuguese + long chat", async () => { await putSettings({ auto: true }); const t = await open("chat=pt"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?" }); await ready(t, LONG_EN); return t; }],
+  ["Auto in Portuguese, a send error notice", async () => { await putSettings({ auto: true }); const t = await open("chat=pt&send=not-front"); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 }); return t; }],
+  ["menu open, Auto on, three languages", async () => { await putSettings({ auto: true, languages: ["English", "Português", "Français"] }); const t = await open(); await ready(t); await t.p.click("#more"); return t; }],
 ];
 const LAYOUT_CASES = new Set(layoutCases.map(([n]) => n));
 for (const [name, mk] of layoutCases) {
   check("Layout", name, async () => {
-    const t = await mk();
-    await settle(t.p);
-    const info = await expectLayout(t.p);
-    return info.length ? info.join("; ") : undefined;
+    try {
+      const t = await mk();
+      await settle(t.p);
+      const info = await expectLayout(t.p);
+      return info.length ? info.join("; ") : undefined;
+    } finally { await resetSettings(); }
   });
 }
 // A failed translation leaves the English box empty: its notice and button take the box's middle,
@@ -1673,7 +1977,7 @@ check("Page", "no script errors or console errors in any run", async () => {
 });
 
 // ===================================================================================== frames
-type Frame = { file: string; query?: string; make: (t: T) => Promise<void> };
+type Frame = { file: string; query?: string; size?: { w: number; h: number }; before?: () => Promise<unknown>; make: (t: T) => Promise<void> };
 const frames: Frame[] = [
   { file: "01-idle", make: async () => {} },
   { file: "02-ready-long", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#es"); } },
@@ -1688,12 +1992,16 @@ const frames: Frame[] = [
   { file: "06-first-run", query: "access=0", make: async () => {} },
   { file: "07-dictation-preparing", query: "dict=prep", make: async (t) => {
       await t.p.click("#mic");
-      await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting Spanish"), null, { timeout: 1200 });
+      await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting dictation"), null, { timeout: 1200 });
   } },
   { file: "08-written-for", make: async (t) => { await ready(t, LONG_EN); await setTeams(t.p, DANIEL_TEAMS); } },
+  { file: "09-auto-portuguese", query: "chat=pt", before: () => putSettings({ auto: true }), make: async (t) => { await ready(t); } },
+  { file: "10-menu-narrow", size: { w: 640, h: 145 }, before: () => putSettings({ auto: true }), make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
 ];
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
+    if (f.before) await f.before();
+    if (f.size) ({ w: W, h: H } = f.size);
     const t = await open(f.query ?? "");
     await f.make(t);
     await t.p.mouse.move(W / 2, 0);
@@ -1836,12 +2144,12 @@ colCheck("Column", "the settings menu stacks its two groups in one column over t
   const cols = await t.p.evaluate(() => [...document.querySelectorAll("#menu .col")].map((c) => { const r = c.getBoundingClientRect(); return [r.left, r.top, r.bottom]; }));
   eq(cols.length, 2, "groups");
   ok(cols.every((c, i) => c[0] === cols[0][0] && (i === 0 || c[1] >= cols[i - 1][2])), `the groups aren't stacked: ${JSON.stringify(cols)}`);
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Position", "the settings' rows");
+  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the settings' rows");
   const lefts = await t.p.evaluate(() => [...document.querySelectorAll("#menu .pl, #menu [data-do]")].map((e) => { const rg = document.createRange(); rg.selectNodeContents(e); return Math.round(rg.getBoundingClientRect().left); }));
   ok(new Set(lefts).size === 1, `the labels and the commands should start in one line: ${lefts.join(", ")}`);
   const dividers = await t.p.evaluate(() => [...document.querySelectorAll("#menu hr")].map((h) => { const r = h.getBoundingClientRect(); return [r.width, r.height]; }));
   ok(dividers.length === 1 && dividers.every(([w, h]) => w > 100 && h === 1), `the divider should run across: ${JSON.stringify(dividers)}`);
-  eq(await t.p.locator("#menu button").count(), 12, "items");
+  eq(await t.p.locator("#menu button").count(), 15, "items");
   await expectLayout(t.p);
   await t.p.click("#menu [data-mode=leave]");
   await settle(t.p, 250);

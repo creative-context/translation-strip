@@ -1,22 +1,53 @@
-// Dictation in Spanish, on this Mac only. On macOS 26 and later it uses the system's dictation
-// model (DictationTranscriber), Mexican Spanish first, then US and Spain Spanish, and asks
-// macOS to download that model the first time. Older systems use the Speech recognizer on the
-// Mac, when one is installed. Audio never leaves the Mac, and nothing heard is kept or logged.
+// Dictation in the language chosen in Settings (the start message's locale, Mexican Spanish when
+// it has none), on this Mac only. On macOS 26 and later it uses the system's dictation model
+// (DictationTranscriber): the chosen locale first, then the other locales of its language
+// (DictationLocales), and asks macOS to download that model the first time. Older systems use
+// the Speech recognizer on the Mac, when one is installed. Audio never leaves the Mac, and
+// nothing heard is kept or logged.
 
 import AVFoundation
 import AppKit
 import Speech
 
+// Which locales to try for a dictation, in order: the chosen one, then the others of the same
+// language the app offers (es-MX, es-US, es-ES; en-US, en-GB; pt-BR, pt-PT). A missing or
+// malformed id means es-MX, as before 0.8.0. Pure, so the swift check can test it.
+enum DictationLocales {
+    static let fallback = "es-MX"
+    // The ids Settings offers (src/languages.ts, DICTATION), in its order.
+    static let known = ["es-MX", "es-US", "es-ES", "en-US", "en-GB", "pt-BR", "pt-PT", "fr-FR", "de-DE", "it-IT"]
+
+    // "es-mx" or "es_MX" read as "es-MX"; anything that isn't a language and a region reads as nil.
+    static func normalized(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let parts = raw.trimmingCharacters(in: .whitespaces).split(whereSeparator: { $0 == "-" || $0 == "_" })
+        guard parts.count == 2, parts[0].count == 2, parts[1].count == 2,
+              parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isLetter } }) else { return nil }
+        return parts[0].lowercased() + "-" + parts[1].uppercased()
+    }
+
+    static func candidates(_ raw: String?) -> [String] {
+        let chosen = normalized(raw) ?? fallback
+        let language = chosen.prefix(2)
+        return [chosen] + known.filter { $0 != chosen && $0.hasPrefix(language + "-") }
+    }
+
+    // The language's name for the log, never anything heard.
+    static func language(_ id: String) -> String {
+        Locale(identifier: "en").localizedString(forLanguageCode: String(id.prefix(2))) ?? String(id.prefix(2))
+    }
+}
+
 @MainActor
 final class Dictation {
     // state "on" | "off" | "denied" | "preparing" | "unavailable", and the whole transcript so far.
     var onUpdate: (_ state: String, _ text: String?) -> Void = { _, _ in }
-    // While macOS downloads the Spanish model: how much is done, from 0 to 1, in whole percents.
+    // While macOS downloads the dictation model: how much is done, from 0 to 1, in whole percents.
     var onProgress: (Double) -> Void = { _ in }
     var log: (String) -> Void = { _ in }
     private var lastPercent = -1
 
-    static let locales = ["es-MX", "es-US", "es-ES"]
+    private var locales = DictationLocales.candidates(nil) // this dictation's, in order
 
     // For the page's access message.
     static var microphone: String {
@@ -47,8 +78,10 @@ final class Dictation {
     private var task: SFSpeechRecognitionTask?
     private var finishLater: DispatchWorkItem?
 
-    func start() {
+    // `locale`: the start message's, from Settings; es-MX when it has none.
+    func start(locale: String? = nil) {
         guard !running, !starting else { return }
+        locales = DictationLocales.candidates(locale)
         starting = true
         cancelled = false
         authorize { ok in
@@ -121,15 +154,16 @@ final class Dictation {
     @available(macOS 26.0, *)
     private func beginDictation() async {
         var found: Locale?
-        for id in Self.locales {
+        for id in locales {
             if let l = await DictationTranscriber.supportedLocale(equivalentTo: Locale(identifier: id)) { found = l; break }
         }
-        guard let locale = found else { return unavailable("no Spanish dictation model for this Mac") }
+        let name = DictationLocales.language(locales[0])
+        guard let locale = found else { return unavailable("no \(name) dictation model for this Mac (\(locales.joined(separator: ", ")))") }
         let transcriber = DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
         let id = locale.identifier(.bcp47)
         if !(await DictationTranscriber.installedLocales.contains { $0.identifier(.bcp47) == id }) {
             onUpdate("preparing", nil)
-            log("dictation: getting the Spanish model (\(id))")
+            log("dictation: getting the \(name) model (\(id))")
             do {
                 if let install = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
                     // The download's progress, read twice a second and sent when the whole percent changes.
@@ -142,13 +176,13 @@ final class Dictation {
                     try await install.downloadAndInstall()
                 }
             } catch {
-                return unavailable("couldn't get the Spanish model (\((error as NSError).domain) \((error as NSError).code))")
+                return unavailable("couldn't get the \(name) model (\((error as NSError).domain) \((error as NSError).code))")
             }
-            log("dictation: Spanish model ready")
+            log("dictation: \(name) model ready (\(id))")
         }
         guard !cancelled else { starting = false; return }
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
-            return unavailable("no audio format for the Spanish model")
+            return unavailable("no audio format for the \(name) model")
         }
 
         let input = engine.inputNode
@@ -164,7 +198,7 @@ final class Dictation {
         do {
             try await analyzer.start(inputSequence: stream)
         } catch {
-            return unavailable("the Spanish model didn't start (\((error as NSError).domain) \((error as NSError).code))")
+            return unavailable("the \(name) model didn't start (\((error as NSError).domain) \((error as NSError).code))")
         }
         guard !cancelled else {
             feed.finish()
@@ -263,9 +297,9 @@ final class Dictation {
 
     // MARK: older systems: the Speech recognizer on the Mac
 
-    // The first Spanish recognizer that works on this Mac without the network.
+    // The first recognizer for this dictation's locales that works on this Mac without the network.
     private func pick() -> SFSpeechRecognizer? {
-        for id in Self.locales {
+        for id in locales {
             guard let r = SFSpeechRecognizer(locale: Locale(identifier: id)) else { continue }
             if r.supportsOnDeviceRecognition && r.isAvailable { return r }
         }
@@ -274,7 +308,7 @@ final class Dictation {
 
     private func beginRecognizer() {
         guard let r = pick() else {
-            return unavailable("no on-device Spanish recognizer (\(Self.locales.joined(separator: ", "))); add one in Keyboard settings, Dictation")
+            return unavailable("no on-device \(DictationLocales.language(locales[0])) recognizer (\(locales.joined(separator: ", "))); add one in Keyboard settings, Dictation")
         }
         recognizer = r
         let req = SFSpeechAudioBufferRecognitionRequest()

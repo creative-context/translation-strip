@@ -23,6 +23,12 @@
       en: "", enSeq: 0,  // the English the state last wrote to its box (the box may hold the user's edits)
       esText: "", esSeq: 0, // the Spanish the state last wrote to its box (dictation, cleared after sending)
       lint: [],          // findings on the English: [{ level, message }]
+      language: "",      // the language the translation is in (one of the server's languages, in its own name)
+      from: "",          // "chat" when Auto took the language from the other person's last message, else "target"
+      langAuto: false,   // Auto was on for the request that wrote it (a one-time target turns it off)
+      langWho: "",       // whose last message Auto read: the context's author when it was asked for
+      once: "", onceFor: "", // the language button's one-time target, and the Spanish it holds for
+      prevLang: null,    // the language the English had before an adjust: { language, from, langAuto }, for undo
       prev: "", prevLint: [], adjusted: false, adjustOpen: false, lastNote: "", adjText: "",
       err: null,         // { kind, until, what } when phase is "error"
       notice: null,      // a tag over a ready translation: { kind, text, actions, env? }
@@ -31,6 +37,7 @@
       req: 0,            // bumps whenever an answer in flight stops mattering
       dict: "off",       // off on denied
       dictBase: "", dictStopping: false, dictPrep: false, dictProgress: null, dictNote: null,
+      dictName: "",      // the dictation language's name, as the settings' options say it (for "Dictation in … isn't available")
       teams: null,       // the shell's last word on Teams: { open, chat, from, last, draft, shape? }
       layout: "automatic", // the shell's position setting: automatic, below, above, left, right
       access: { accessibility: null, microphone: "unknown" },
@@ -124,7 +131,7 @@
 
   // The words beside the mic: null when there is nothing to say.
   function dictLabel(st) {
-    if (st.dict === "on" && st.dictPrep) return { kind: "prep", text: "Getting Spanish dictation ready…" + (st.dictProgress == null ? "" : ` ${Math.round(st.dictProgress * 100)}%`) };
+    if (st.dict === "on" && st.dictPrep) return { kind: "prep", text: "Getting dictation ready…" + (st.dictProgress == null ? "" : ` ${Math.round(st.dictProgress * 100)}%`) };
     if (st.dict === "on") return { kind: "listening" };
     if (st.dictNote) return { kind: "note", text: st.dictNote };
     if (st.dict === "denied") return { kind: "denied" };
@@ -142,6 +149,23 @@
   // where "Sent to …" shows. A failed adjust keeps the English, so its notice stays in the footer.
   const centerNotice = (st, f) => st.phase === "error" && !trim(f.en);
 
+  // The language button beside "To <chat>": what the translation on show is written in, and how it
+  // was chosen. null when there's no translation with a language. target is the settings' target.
+  // { auto, name, title, other }: auto shows "Auto · " before the name; other says the language isn't
+  // the target, so a click translates the same Spanish again in the target (canRetarget).
+  const LANG_PHASES = ["ready", "draft", "adjusting", "sending", "stale"];
+  function langView(st, target) {
+    if (!st.language || !LANG_PHASES.includes(st.phase)) return null;
+    const other = !!target && st.language !== target;
+    const click = other ? ` Click to send this one in ${target}.` : "";
+    let title;
+    if (st.from === "chat") title = `The language of ${st.langWho ? `${st.langWho}'s` : "the other person's"} last message.${click}`;
+    else if (st.langAuto) title = `The chat has no clear language, so your target.${click}`;
+    else title = other ? click.trim() : "Your target language.";
+    return { auto: st.langAuto || st.from === "chat", name: st.language, title, other };
+  }
+  const canRetarget = (st, f, target) => st.phase === "ready" && !!st.language && !!target && st.language !== target && canTranslate(st, f);
+
   // ---------------------------------------------------------------------------- what can be done
   // The Translate button and ⏎ ask the same thing.
   const canTranslate = (st, f) => !!trim(f.es) && !BUSY.includes(st.phase) && !st.dictStopping;
@@ -154,14 +178,22 @@
 
   // ---------------------------------------------------------------------------- translating and adjusting
   // Each start returns { st, body } (the request to make) or null when there is nothing to start.
-  function translateStart(st, f) {
+  // opts: { auto } (the setting, as the request goes out) and target, a one-time language for this
+  // request only (the click on the language button): it writes in it with Auto off.
+  function translateStart(st, f, opts) {
+    opts = opts || {};
     if (!canTranslate(st, f)) return null;
     const text = trim(f.es);
     if (st.phase === "translating" && text === st.es) return null;
     const ctx = context(st.teams);
-    const n = next(st, { req: st.req + 1, es: text, prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "translating", chatFor: (ctx && ctx.chat) || "" });
+    // A one-time target holds for the same Spanish (a register switch or a retry), not for new text.
+    const target = hasText(opts.target) ? opts.target : st.once && st.onceFor === text ? st.once : "";
+    const n = next(st, { req: st.req + 1, es: text, prev: "", prevLint: [], prevLang: null, notice: null, err: null, adjusted: false, adjustOpen: false, phase: "translating", chatFor: (ctx && ctx.chat) || "",
+      language: "", from: "", langAuto: !!opts.auto && !target, langWho: (ctx && ctx.from) || "", once: target, onceFor: target ? text : "" });
     writeEnglish(n, "", []);
-    return { st: n, body: { text, register: st.register, context: ctx } };
+    const body = { text, register: st.register, context: ctx };
+    if (target) body.target = target;
+    return { st: n, body };
   }
   // The answer to the current request (the page drops the ones that no longer count).
   function translateDone(st, f, d) {
@@ -169,24 +201,31 @@
     if (trim(f.es) !== st.es) return next(st, { phase: "idle" });
     const n = next(st);
     if (hasText(d.question)) { writeEnglish(n, d.question, []); n.phase = "question"; }
-    else if (hasText(d.english)) { writeEnglish(n, d.english, cleanLint(d.lint)); n.phase = "ready"; }
+    else if (hasText(d.text)) { writeEnglish(n, d.text, cleanLint(d.lint)); n.phase = "ready"; n.language = hasText(d.language) ? d.language : ""; n.from = d.from === "chat" ? "chat" : "target"; }
     else { n.err = { kind: d.error || "failed", until: d.until, what: "translate" }; n.phase = "error"; }
     return n;
   }
 
-  function adjustStart(st, f, note) {
+  // An adjust keeps the text's language: `language` is the current text's (the target, if the state
+  // never heard one).
+  function adjustStart(st, f, note, target) {
     note = trim(note);
     if (!note || !canAdjust(st, f)) return null;
-    const text = trim(f.es), english = trim(f.en);
-    const n = next(st, { req: st.req + 1, prev: f.en, prevLint: st.lint, lastNote: note, en: f.en, notice: null, adjustOpen: false, phase: "adjusting", adjText: text });
-    return { st: n, body: { text, english, note, register: st.register, context: context(st.teams) } };
+    const text = trim(f.es), current = trim(f.en);
+    const n = next(st, { req: st.req + 1, prev: f.en, prevLint: st.lint, prevLang: { language: st.language, from: st.from, langAuto: st.langAuto }, lastNote: note, en: f.en, notice: null, adjustOpen: false, phase: "adjusting", adjText: text });
+    return { st: n, body: { text, current, note, register: st.register, context: context(st.teams), language: st.language || target || "English" } };
   }
   // { st, focus }: focus says the Spanish box takes the keyboard back (a new English came back).
   function adjustDone(st, f, d) {
     d = d && typeof d === "object" ? d : {};
     if (trim(f.es) !== st.adjText) return { st: next(st, { phase: "stale" }), focus: false };
     const n = next(st, { phase: "ready" });
-    if (hasText(d.english)) { writeEnglish(n, d.english, cleanLint(d.lint)); n.adjusted = true; return { st: n, focus: true }; }
+    if (hasText(d.text)) {
+      writeEnglish(n, d.text, cleanLint(d.lint)); n.adjusted = true;
+      // The same language keeps how it was chosen (Auto from the chat stays so); another one is a plain target.
+      if (hasText(d.language) && d.language !== st.language) { n.language = d.language; n.from = "target"; n.langAuto = false; }
+      return { st: n, focus: true };
+    }
     if (hasText(d.question)) {
       // The English stays as it was; the question is shown over it.
       n.notice = { kind: "asks", text: d.question };
@@ -201,6 +240,7 @@
     if (st.phase !== "ready" || !st.adjusted) return st;
     const n = next(st, { adjusted: false });
     writeEnglish(n, st.prev, st.prevLint);
+    if (st.prevLang) Object.assign(n, st.prevLang); // the language goes back with the text
     return n;
   }
 
@@ -234,7 +274,7 @@
 
   // Esc: everything back to the start. { st, stopDictation }.
   function clearAll(st) {
-    const n = next(st, { req: st.req + 1, es: "", prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "idle", chatFor: "", dictStopping: false });
+    const n = next(st, { req: st.req + 1, es: "", prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "idle", chatFor: "", dictStopping: false, language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null });
     writeSpanish(n, ""); writeEnglish(n, "", []);
     const stop = st.dict === "on";
     if (stop) n.dict = "off";
@@ -264,7 +304,7 @@
     if (st.phase !== "sending") return st;
     m = m || {};
     if (m.ok) {
-      const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", phase: st.sendMode === "leave" ? "leave" : "sent" });
+      const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
       writeEnglish(n, "", []); writeSpanish(n, "");
       return n;
     }
@@ -300,10 +340,11 @@
 
   // ---------------------------------------------------------------------------- dictation
   // Start: { st, msg } or null. Dictation adds to what's in the box.
-  function dictStart(st, f) {
+  // locale: the settings' dictation language (es-MX when there is none); name: its name, for the notes.
+  function dictStart(st, f, locale, name) {
     if (st.dict !== "off" || st.dictStopping || ["sending", "translating", "adjusting"].includes(st.phase)) return null;
-    const n = next(st, { dictBase: trim(f.es) ? trim(f.es) + " " : "", dict: "on", dictPrep: false, dictProgress: null, dictNote: null });
-    return { st: n, msg: { type: "dictation", action: "start" } };
+    const n = next(st, { dictBase: trim(f.es) ? trim(f.es) + " " : "", dict: "on", dictPrep: false, dictProgress: null, dictNote: null, dictName: hasText(name) ? name : "" });
+    return { st: n, msg: { type: "dictation", action: "start", locale: hasText(locale) ? locale : "es-MX" } };
   }
   // Stop: listening ends now, and the last words may still come in (dictStopping) until dictFinish.
   // null when it wasn't listening, so whatever was to follow can run at once.
@@ -322,7 +363,7 @@
       return { st: next(st, { dictPrep: true, dictProgress: typeof m.progress === "number" ? m.progress : st.dictProgress == null ? null : st.dictProgress }), done: false };
     }
     if (m.state === "unavailable") {
-      return { st: next(st, { dict: "off", dictPrep: false, dictStopping: false, dictNote: "Spanish dictation isn't available on this Mac" }), done: false };
+      return { st: next(st, { dict: "off", dictPrep: false, dictStopping: false, dictNote: st.dictName ? `Dictation in ${st.dictName} isn't available on this Mac` : "Dictation isn't available on this Mac" }), done: false };
     }
     let n = next(st);
     if (m.state === "on" || m.state === "off") { n.dictPrep = false; n.dictProgress = null; }
@@ -355,7 +396,7 @@
   }
 
   const api = {
-    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, doneView, centerNotice, untilText, clock,
+    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, doneView, centerNotice, langView, canRetarget, untilText, clock,
     canTranslate, canAdjust, canSend,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,

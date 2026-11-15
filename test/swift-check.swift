@@ -1,7 +1,8 @@
 // Checks of the shell's pure parts, with made-up screens, frames, titles and trees: where the strip
 // docks (Dock.swift), how Teams' titles, headings and message box are read and how its window is
 // walked for the box and the last message, on a made-up tree (Teams.swift), and the send's
-// decisions: the paste watch and the own server (Send.swift). Built and run by test/swift-check.sh. Prints one line per case; exits 1 when one fails. A case marked known is a
+// decisions: the paste watch and the own server (Send.swift), and which locales a dictation tries
+// (DictationLocales, in Dictation.swift). Built and run by test/swift-check.sh. Prints one line per case; exits 1 when one fails. A case marked known is a
 // behavior the check expects to change: it prints KNOWN while it's wrong and PASS once it's fixed.
 
 import AppKit
@@ -31,8 +32,24 @@ enum SwiftCheck {
         tree()
         paste()
         ownServer()
+        dictationLocales()
         print("\(failures == 0 ? "ok" : "FAILED"): \(failures) failed, \(known) known")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    // The start message's locale, from Settings: the chosen one first, then its language's others; es-MX when missing.
+    static func dictationLocales() {
+        check("dictation: no locale is Mexican Spanish, then US and Spain", DictationLocales.candidates(nil), ["es-MX", "es-US", "es-ES"])
+        check("dictation: es-ES first, then the other Spanish ones", DictationLocales.candidates("es-ES"), ["es-ES", "es-MX", "es-US"])
+        check("dictation: en-GB, then en-US", DictationLocales.candidates("en-GB"), ["en-GB", "en-US"])
+        check("dictation: pt-BR, then pt-PT", DictationLocales.candidates("pt-BR"), ["pt-BR", "pt-PT"])
+        check("dictation: fr-FR alone", DictationLocales.candidates("fr-FR"), ["fr-FR"])
+        check("dictation: an id outside the list is still tried", DictationLocales.candidates("es-AR"), ["es-AR", "es-MX", "es-US", "es-ES"])
+        check("dictation: lower case and an underscore read as the id", DictationLocales.candidates("de_de"), ["de-DE"])
+        check("dictation: an empty locale is es-MX", DictationLocales.candidates(""), ["es-MX", "es-US", "es-ES"])
+        check("dictation: a malformed locale is es-MX", DictationLocales.candidates("spanish; rm"), ["es-MX", "es-US", "es-ES"])
+        check("dictation: a language alone is es-MX", DictationLocales.candidates("en"), ["es-MX", "es-US", "es-ES"])
+        check("dictation: the log names the language in English", DictationLocales.language("pt-BR"), "Portuguese")
     }
 
     // Made-up screens, in AppKit's coordinates (bottom-left origin). The main one is 1500 x 900,

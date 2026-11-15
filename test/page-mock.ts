@@ -1,7 +1,13 @@
 // A stand-in server for trying the page before the real one is joined: it serves public/ on
-// 127.0.0.1:4813 and answers the contract's routes with canned replies. Made-up text only.
+// 127.0.0.1:4813 (STRIP_MOCK_PORT changes it) and answers the contract's routes with canned replies.
+// Made-up text only.
 //
 //   bun test/page-mock.ts
+//
+// Languages: with Auto on, a reply follows the stand-in chat's last message when it's clearly in one
+// language (the page's ?chat=pt gives a Portuguese one; the default is English; ?chat=new has none, so
+// the target); a request's `target` writes in it with Auto off. Replies exist in English, Português,
+// Español and Français; any other language gets the English text, named as that language.
 //
 // What the Spanish text can say to make it answer differently (case doesn't matter):
 //   UNCLEAR   a question instead of a polish        OFFLINE   error "offline"      LIMIT   error "limit" (until in 2 h)
@@ -13,22 +19,34 @@
 // ?send=no-paste or ?send=not-own-server (and the other send reasons), ?teams=closed|nochat, ?draft=1, ?access=0, ?mic=denied.
 import { join } from "node:path";
 
-const PORT = 4813;
+const PORT = Number(process.env.STRIP_MOCK_PORT) || 4813;
 const PUBLIC = join(import.meta.dir, "..", "public");
 const DELAY = 700;
 
-type Settings = { model: "haiku" | "sonnet" | "opus"; mode: "send" | "leave" };
-const settings: Settings = { model: "haiku", mode: "send" };
+const LANGUAGES = ["English", "Español", "Português", "Français", "Deutsch", "Italiano", "Nederlands", "Polski", "Svenska", "Türkçe", "日本語", "한국어", "中文"];
+const DICTATION = [
+  { id: "es-MX", name: "Español (México)" }, { id: "es-US", name: "Español (EE. UU.)" }, { id: "es-ES", name: "Español (España)" },
+  { id: "en-US", name: "English (US)" }, { id: "en-GB", name: "English (UK)" }, { id: "pt-BR", name: "Português (Brasil)" },
+  { id: "pt-PT", name: "Português (Portugal)" }, { id: "fr-FR", name: "Français" }, { id: "de-DE", name: "Deutsch" }, { id: "it-IT", name: "Italiano" },
+];
+type Settings = { model: "haiku" | "sonnet" | "opus"; mode: "send" | "leave"; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string };
+// The mock starts with two languages, so the menu's Reply in row has a choice (the app's default is English alone).
+const MOCK_DEFAULTS: Settings = { model: "haiku", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX" };
+const settings: Settings = structuredClone(MOCK_DEFAULTS);
 const translator = { status: "ready" as "starting" | "ready" | "busy" | "error", error: null as string | null, until: null as string | null, guide: "ok", linter: "ok" };
 let version = 0;
 const busyCount = new Map<string, number>();
+
+// The settings as the state carries them: with the guide's and the linter's file names (made up), never a path.
+const fullSettings = () => ({ ...settings, files: { voiceGuide: "voice-guide.md", linter: "voice-lint.mjs" } });
 
 function state() {
   return JSON.stringify({
     now: Date.now(),
     server: { version: "mock", pid: process.pid },
     translator: { ...translator, model: settings.model },
-    settings,
+    settings: fullSettings(),
+    options: { languages: LANGUAGES, dictation: DICTATION },
   });
 }
 
@@ -80,10 +98,39 @@ async function trigger(text: string): Promise<Response | null> {
   return null;
 }
 
-const POLISH = {
-  normal: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call.",
-  formal: "Would you be able to review the budget before Thursday? If necessary, we can discuss it during the call.",
+const POLISH: Record<string, { normal: string; formal: string; shorter: string }> = {
+  English: {
+    normal: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call.",
+    formal: "Would you be able to review the budget before Thursday? If necessary, we can discuss it during the call.",
+    shorter: "Can you check the budget before Thursday? We can cover it on the call.",
+  },
+  "Português": {
+    normal: "Você consegue dar uma olhada no orçamento antes de quinta? Se precisar, vemos na chamada.",
+    formal: "O senhor poderia revisar o orçamento antes de quinta-feira? Se necessário, podemos conversar na chamada.",
+    shorter: "Consegue ver o orçamento até quinta? Falamos na chamada.",
+  },
+  "Español": {
+    normal: "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.",
+    formal: "¿Podría revisar el presupuesto antes del jueves? Si es necesario, lo vemos en la llamada.",
+    shorter: "¿Revisas el presupuesto antes del jueves? Lo vemos en la llamada.",
+  },
+  "Français": {
+    normal: "Tu peux jeter un œil au budget avant jeudi ? Si besoin, on en parle pendant l'appel.",
+    formal: "Pourriez-vous examiner le budget avant jeudi ? Si nécessaire, nous en parlerons pendant l'appel.",
+    shorter: "Tu regardes le budget avant jeudi ? On en parle à l'appel.",
+  },
 };
+const polishIn = (language: string) => POLISH[language] ?? POLISH.English;
+// The language a last message is clearly in, or null: a few made-up markers per language are enough here.
+function chatLanguage(last: unknown): string | null {
+  const t = typeof last === "string" ? last.toLowerCase() : "";
+  if (!t.trim()) return null;
+  if (/você|ção|ã|õ|obrigad/.test(t)) return "Português";
+  if (/vous|merci|peux|ç|è|ê/.test(t)) return "Français";
+  if (/[¿¡ñ]|puedes|gracias/.test(t)) return "Español";
+  if (/\b(the|you|could|please|thanks|send)\b/.test(t)) return "English";
+  return null;
+}
 const lintFor = (english: string, text: string) =>
   /kindly/i.test(text) || /kindly/i.test(english) ? [{ level: "warning", message: "\"Kindly\" sounds stiff" }] : [];
 
@@ -95,20 +142,60 @@ async function translate(body: any) {
   if (hit) return hit;
   await sleep(DELAY);
   const register = body?.register === "formal" ? "formal" : "normal";
-  const english = /kindly/i.test(text) ? "Kindly review the budget before Thursday." : POLISH[register];
-  return json({ english, lint: lintFor(english, text) });
+  // A one-time target writes in it with Auto off; else Auto follows the chat when it's clear.
+  const override = typeof body?.target === "string" ? body.target : null;
+  if (override !== null && !LANGUAGES.includes(override)) return json({ error: "target" }, 400);
+  const fromChat = override === null && settings.auto ? chatLanguage(body?.context?.last) : null;
+  const language = override ?? fromChat ?? settings.target;
+  const out = /kindly/i.test(text) ? "Kindly review the budget before Thursday." : polishIn(language)[register];
+  return json({ text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text) });
 }
 
 async function adjust(body: any) {
   const note = String(body?.note ?? "");
-  const english = String(body?.english ?? "");
+  const current = String(body?.current ?? "");
   const text = String(body?.text ?? "");
+  // An adjust keeps the current text's language.
+  const language = LANGUAGES.includes(body?.language) ? body.language : settings.target;
   const hit = await trigger(note);
   if (hit) return hit;
   await sleep(DELAY);
-  const out = /cort|short|breve/i.test(note) ? "Can you check the budget before Thursday? We can cover it on the call." : `${english.replace(/ \(adjusted\)$/, "")} (adjusted)`;
-  return json({ english: out, lint: lintFor(out, text) });
+  const out = /cort|short|breve/i.test(note) ? polishIn(language).shorter : `${current.replace(/ \(adjusted\)$/, "")} (adjusted)`;
+  return json({ text: out, language, from: "target", lint: lintFor(out, text) });
 }
+
+// POST /api/settings, with the contract's rules: anything outside them is 400 { error: "settings" } and changes nothing.
+function applySettings(body: any): boolean {
+  const next = structuredClone(settings);
+  const has = (k: string) => body && Object.prototype.hasOwnProperty.call(body, k);
+  if (has("model")) { if (!["haiku", "sonnet", "opus"].includes(body.model)) return false; next.model = body.model; }
+  if (has("mode")) { if (!["send", "leave"].includes(body.mode)) return false; next.mode = body.mode; }
+  if (has("target")) { if (!LANGUAGES.includes(body.target)) return false; next.target = body.target; }
+  if (has("auto")) { if (typeof body.auto !== "boolean") return false; next.auto = body.auto; }
+  if (has("languages")) {
+    const l = body.languages;
+    if (!Array.isArray(l) || l.length < 1 || l.length > 8 || new Set(l).size !== l.length || !l.every((x: any) => LANGUAGES.includes(x))) return false;
+    next.languages = [...l];
+  }
+  if (has("notes")) {
+    const n = body.notes;
+    if (!n || typeof n !== "object" || Array.isArray(n)) return false;
+    for (const [k, v] of Object.entries(n)) {
+      if (!LANGUAGES.includes(k) || typeof v !== "string" || v.trim().length > 600) return false;
+      if (v === "") delete next.notes[k]; else next.notes[k] = v;
+    }
+  }
+  if (has("dictation")) { if (!DICTATION.some((d) => d.id === body.dictation)) return false; next.dictation = body.dictation; }
+  // A target that isn't one of your languages joins them; with eight already, the server refuses it.
+  if (!next.languages.includes(next.target)) { if (next.languages.length >= 8) return false; next.languages = [...next.languages, next.target]; }
+  // Notes belong to a language on the list, as on the server.
+  for (const k of Object.keys(next.notes)) if (!next.languages.includes(k)) delete next.notes[k];
+  const restart = next.model !== settings.model;
+  Object.assign(settings, next);
+  if (restart) restartSoon();
+  return true;
+}
+const restartSoon = () => restart(1500);
 
 Bun.serve({
   hostname: "127.0.0.1",
@@ -136,14 +223,9 @@ Bun.serve({
       if (p === "/api/translate") return translate(body);
       if (p === "/api/adjust") return adjust(body);
       if (p === "/api/settings") {
-        if (body?.model === "haiku" || body?.model === "sonnet" || body?.model === "opus") {
-          const changed = body.model !== settings.model;
-          settings.model = body.model;
-          if (changed) restart(1500);
-        }
-        if (body?.mode === "send" || body?.mode === "leave") settings.mode = body.mode;
+        if (!applySettings(body)) return json({ error: "settings" }, 400);
         broadcast();
-        return json({ settings });
+        return json({ settings: fullSettings() });
       }
       if (p === "/api/translator/restart") { restart(1500); return json({}); }
       return json({ error: "not found" }, 404);

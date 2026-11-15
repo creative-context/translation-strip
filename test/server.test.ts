@@ -10,7 +10,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, un
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { classify, errorFor, stderrWord } from "../src/errors";
-import { parseReply, requestTurn } from "../src/protocol";
+import { DICTATION, LANGUAGES } from "../src/languages";
+import { answerFor, parseReply, requestTurn, systemPrompt } from "../src/protocol";
+import { checkChange, loadSettings } from "../src/settings";
+import { DEFAULT_SETTINGS } from "../src/state";
 
 const ROOT = resolve(import.meta.dir, "..");
 const PORT = 4811;
@@ -112,11 +115,78 @@ describe("pure parts", () => {
   });
 
   test("a reply counts only with the request's id", () => {
-    expect(parseReply('{"id": "a1b2c3d4", "english": "See you at ten."}', "a1b2c3d4")).toEqual({ english: "See you at ten." });
+    expect(parseReply('{"id": "a1b2c3d4", "text": "See you at ten.", "language": "English", "from": "target"}', "a1b2c3d4")).toEqual({ text: "See you at ten.", language: "English", from: "target" });
     expect(parseReply('{"id": "a1b2c3d4", "question": "Which file?"}', "a1b2c3d4")).toEqual({ question: "Which file?" });
-    expect(parseReply('{"id": "zzzzzzzz", "english": "See you at ten."}', "a1b2c3d4")).toBeNull();
-    expect(parseReply('{"english": "See you at ten."}', "a1b2c3d4")).toBeNull(); // no id at all
-    expect(JSON.parse(requestTurn("a1b2c3d4", { task: "polish", text: "nos vemos a las diez", register: "normal" }))).toEqual({ id: "a1b2c3d4", task: "polish", text: "nos vemos a las diez", register: "normal" });
+    expect(parseReply('{"id": "zzzzzzzz", "text": "See you at ten."}', "a1b2c3d4")).toBeNull();
+    expect(parseReply('{"text": "See you at ten."}', "a1b2c3d4")).toBeNull(); // no id at all
+    expect(parseReply('{"id": "a1b2c3d4", "text": "See you at ten."}', "a1b2c3d4")).toEqual({ text: "See you at ten.", language: null, from: null });
+  });
+
+  test("the turn carries the target, Auto and only non-empty notes, in the protocol's order", () => {
+    const polish = requestTurn("a1b2c3d4", { task: "polish", text: "nos vemos a las diez", register: "normal", target: "English", auto: true });
+    expect(JSON.parse(polish)).toEqual({ id: "a1b2c3d4", task: "polish", text: "nos vemos a las diez", register: "normal", target: "English", auto: true });
+    const adjust = requestTurn("a1b2c3d4", { task: "adjust", text: "nos vemos", register: "formal", target: "Français", auto: false, notes: { Français: "Formal uses vous." }, context: { chat: "Launch plan", from: "Noor Haddad", last: "Ten works." }, current: "À dix heures.", note: "shorter" });
+    expect(Object.keys(JSON.parse(adjust))).toEqual(["id", "task", "text", "register", "target", "auto", "notes", "context", "current", "note"]);
+    expect(Object.keys(JSON.parse(requestTurn("a1b2c3d4", { task: "polish", text: "hola", register: "normal", target: "English", auto: false, notes: {} })))).not.toContain("notes");
+  });
+
+  test("a reply's language: one of the list, whatever its case; its own name otherwise; the target when missing. From chat only with Auto on", () => {
+    const req = { target: "English", auto: true };
+    expect(answerFor({ text: "Olá", language: "português", from: "chat" }, req)).toEqual({ text: "Olá", language: "Português", from: "chat" });
+    expect(answerFor({ text: "Hej", language: "Dansk", from: "chat" }, req)).toEqual({ text: "Hej", language: "Dansk", from: "chat" });
+    // The list's name, however the reply wrote it: no accents, in English, with a region.
+    for (const said of ["Portuguese", "portugues", "Português (Brasil)", "PORTUGUÊS", "Brazilian Portuguese"]) expect(answerFor({ text: "Olá", language: said, from: "chat" }, req).language).toBe("Português");
+    expect(answerFor({ text: "Hola", language: "Spanish", from: "chat" }, req).language).toBe("Español");
+    expect(answerFor({ text: "Merci", language: "francais", from: "chat" }, req).language).toBe("Français");
+    expect(answerFor({ text: "你好", language: "Chinese (Simplified)", from: "chat" }, req).language).toBe("中文");
+    expect(answerFor({ text: "Hi", language: "English (US)", from: "chat" }, req).language).toBe("English");
+    expect(answerFor({ text: "Hi", language: null, from: null }, req)).toEqual({ text: "Hi", language: "English", from: "target" });
+    expect(answerFor({ text: "Olá", language: "Português", from: "chat" }, { target: "English", auto: false }).from).toBe("target");
+    expect(answerFor({ text: "Hi", language: "English", from: "something" }, req).from).toBe("target");
+  });
+
+  test("the protocol names every language and keeps the add-nothing rule and the final check", () => {
+    const p = systemPrompt("GUIDE-TEXT");
+    for (const l of LANGUAGES) expect(p).toContain(l);
+    expect(p).toContain("Add nothing the user didn't write");
+    expect(p.indexOf("GUIDE-TEXT")).toBeLessThan(p.indexOf("# Before you reply"));
+    expect(p.slice(p.indexOf("# Before you reply"))).toContain('confirm the message is in the language your "language" names');
+  });
+
+  test("settings.json read by hand: wrong values fall back, the target is always in the languages", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "strip-settings-")), "settings.json");
+    expect(loadSettings(f)).toEqual(DEFAULT_SETTINGS);
+    writeFileSync(f, JSON.stringify({ target: "Deutsch", auto: "yes", languages: ["English", "Klingon", "English", "Italiano"], notes: { Italiano: "  Informal uses tu. ", Klingon: "x", Deutsch: "", Polski: 3 }, dictation: "xx-XX" }));
+    expect(loadSettings(f)).toMatchObject({ target: "Deutsch", auto: false, languages: ["English", "Italiano", "Deutsch"], notes: { Italiano: "Informal uses tu." }, dictation: "es-MX" });
+    writeFileSync(f, JSON.stringify({ target: "中文", languages: LANGUAGES.slice(0, 8) }));
+    const full = loadSettings(f).languages;
+    expect(full.length).toBe(8);
+    expect(full.at(-1)).toBe("中文");
+  });
+
+  test("a settings change: each key checked, the target kept in the languages, notes merged", () => {
+    const now = { ...DEFAULT_SETTINGS, languages: ["English", "Español"], notes: { Español: "Formal uses usted." } };
+    expect(checkChange({ target: "Español", auto: true, dictation: "pt-BR" }, now)).toEqual({ target: "Español", auto: true, dictation: "pt-BR" });
+    expect(checkChange({ target: "Français" }, now)).toEqual({ target: "Français", languages: ["English", "Español", "Français"] });
+    expect(checkChange({ languages: ["Español"] }, now)).toEqual({ languages: ["Español", "English"] }); // the target comes back
+    expect(checkChange({ notes: { Español: "", Deutsch: "Formal uses Sie." } }, { ...now, languages: [...now.languages, "Deutsch"] })).toEqual({ notes: { Deutsch: "Formal uses Sie." } });
+    // Notes belong to a language on the list: others aren't kept, and removing a language removes its notes.
+    expect(checkChange({ notes: { Deutsch: "Formal uses Sie." } }, now)).toEqual({ notes: { Español: "Formal uses usted." } });
+    expect(checkChange({ languages: ["English"] }, now)).toEqual({ languages: ["English"], notes: {} });
+    expect(checkChange({ notes: { English: "x".repeat(600) + "   " } }, now)).not.toBeNull(); // the limit counts the trimmed text
+    expect(checkChange({ notes: { Español: "   " } }, now)).toEqual({ notes: {} });
+    for (const bad of [
+      { target: "Klingon" }, { target: "english" }, { target: 3 },
+      { auto: "true" }, { auto: 1 },
+      { languages: [] }, { languages: "English" }, { languages: ["English", "English"] }, { languages: ["English", "Klingon"] }, { languages: [...LANGUAGES.slice(0, 9)] },
+      { notes: [] }, { notes: "x" }, { notes: { Klingon: "x" } }, { notes: { English: 3 } }, { notes: { English: null } }, { notes: { English: "x".repeat(601) } },
+      { dictation: "es" }, { dictation: "xx-XX" },
+      { model: "gpt" }, { mode: "shout" },
+    ]) expect(checkChange(bad, now)).toBeNull();
+    expect(checkChange({ notes: { English: "x".repeat(600) } }, now)).not.toBeNull();
+    // A ninth language, by way of a new target, breaks the 1 to 8 rule.
+    expect(checkChange({ target: "中文" }, { ...now, languages: LANGUAGES.slice(0, 8) as unknown as string[] })).toBeNull();
+    expect(DICTATION.map((d) => d.id)).toEqual(["es-MX", "es-US", "es-ES", "en-US", "en-GB", "pt-BR", "pt-PT", "fr-FR", "de-DE", "it-IT"]);
   });
 
   test("run by hand, the server's port is 4812, not the app's 4810", async () => {
@@ -130,8 +200,10 @@ describe("Translation Strip server", () => {
     const first = await until("the server", () => state());
     expect(["starting", "ready"]).toContain(first.translator.status);
     expect(first.server.version).toBe(require("../package.json").version);
-    expect(first.settings).toEqual({ model: "haiku", mode: "send" });
+    expect(first.settings).toEqual({ model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX", files: { voiceGuide: "guide.md", linter: "fake-lint.ts" } });
+    expect(first.options).toEqual({ languages: [...LANGUAGES], dictation: DICTATION.map((d) => ({ id: d.id, name: d.name })) });
     expect(JSON.stringify(first)).not.toContain(DIR); // no paths reach the page
+    expect(JSON.stringify(first)).not.toContain(ROOT);
     const s = await statusIs("ready");
     expect(s.translator).toMatchObject({ error: null, model: "haiku", guide: "ok", linter: "ok" });
   });
@@ -154,9 +226,10 @@ describe("Translation Strip server", () => {
   test("polishes a message", async () => {
     const r = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: { chat: "Design review", from: "Sam Lee", last: "I'll share the deck later." } });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ english: "Can you send me the slides before lunch?", lint: [] });
+    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [] });
     const f = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "formal" });
-    expect(f.body.english).toBe("Could you please send me the slides before lunch?");
+    expect(f.body.text).toBe("Could you please send me the slides before lunch?");
+    expect(turns().at(-1)).toMatchObject({ target: "English", auto: false, notes: null });
   });
 
   test("each request goes to a new session, and the spare is ready for the next", async () => {
@@ -164,7 +237,7 @@ describe("Translation Strip server", () => {
     const n = (await settle(starts)).length;
     const spare = starts().at(-1).pid;
     const one = await post("/api/translate", { text: "MEMORY el reporte va el viernes", register: "normal", context: { chat: "Ops sync", from: "Kim Park", last: "When is it due?" } });
-    expect(one.body.english).toBe("Turns seen: 1. Before: nothing");
+    expect(one.body.text).toBe("Turns seen: 1. Before: nothing");
     const t1 = turns().at(-1);
     expect(t1).toMatchObject({ pid: spare, task: "polish", turn: 1 });
     expect(t1.id).toMatch(/^[0-9a-f]{8}$/);
@@ -175,7 +248,7 @@ describe("Translation Strip server", () => {
     const next = starts().at(-1).pid;
     expect(next).not.toBe(spare);
     const two = await post("/api/translate", { text: "MEMORY otra cosa para otro chat", register: "normal", context: { chat: "Budget", from: "Ana Ruiz", last: "Any news?" } });
-    expect(two.body.english).toBe("Turns seen: 1. Before: nothing"); // nothing of the first request
+    expect(two.body.text).toBe("Turns seen: 1. Before: nothing"); // nothing of the first request
     const t2 = turns().at(-1);
     expect(t2).toMatchObject({ pid: next, turn: 1 });
     expect(t2.id).not.toBe(t1.id);
@@ -191,20 +264,20 @@ describe("Translation Strip server", () => {
 
   test("a reply with another request's id, once: the fresh session's answer goes through", async () => {
     const r = await post("/api/translate", { text: "WRONGID-ONCE ¿me mandas las slides?", register: "normal" });
-    expect(r).toEqual({ status: 200, body: { english: "Can you send me the slides before lunch?", lint: [] } });
+    expect(r).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [] } });
     await statusIs("ready");
   });
 
   test("takes the reply's JSON even with words around it", async () => {
     const r = await post("/api/translate", { text: "CHATTY ¿me mandas las slides?", register: "normal" });
-    expect(r.body.english).toBe("Can you send me the slides before lunch?");
+    expect(r.body.text).toBe("Can you send me the slides before lunch?");
   });
 
   test("a linter error gets one fix before the page sees it: an adjust whose note names the error", async () => {
     const before = turns().length;
     const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ english: "Could you send me the slides before lunch?", lint: [] });
+    expect(r.body).toEqual({ text: "Could you send me the slides before lunch?", language: "English", from: "target", lint: [] });
     const t = turns().slice(before);
     expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]); // the fix ran on a fresh session of its own
     expect(t[0].pid).not.toBe(t[1].pid);
@@ -214,7 +287,7 @@ describe("Translation Strip server", () => {
     const before = turns().length;
     const r = await post("/api/translate", { text: "KINDLY STUBBORN ¿me mandas las slides?", register: "normal" });
     expect(r.status).toBe(200);
-    expect(r.body.english).toBe("Could you kindly send me the slides before lunch?");
+    expect(r.body.text).toBe("Could you kindly send me the slides before lunch?");
     expect(r.body.lint).toEqual([{ level: "error", message: "Sounds stiff: «kindly»" }]);
     expect(turns().length - before).toBe(2); // one fix, never a loop
   });
@@ -225,15 +298,19 @@ describe("Translation Strip server", () => {
     expect(r.body).toEqual({ question: "Which report do you mean, the weekly one or the budget one?" });
   });
 
-  test("adjusts the English with a note", async () => {
-    const r = await post("/api/adjust", { text: "¿me mandas las slides?", english: "Can you send me the slides before lunch?", note: "add thanks", register: "normal" });
+  test("adjusts the current text with a note", async () => {
+    const r = await post("/api/adjust", { text: "¿me mandas las slides?", current: "Can you send me the slides before lunch?", note: "add thanks", register: "normal", language: "English" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ english: "Can you send me the slides before lunch?, thanks!", lint: [] });
+    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [] });
+    expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "English", auto: false });
+    expect(turns().at(-1).keys).not.toContain("english");
   });
 
   test("rejects bad requests", async () => {
     expect((await post("/api/translate", { text: "  " })).status).toBe(400);
-    expect((await post("/api/adjust", { text: "hola", english: "Hi" })).status).toBe(400);
+    expect((await post("/api/adjust", { text: "hola", current: "Hi" })).status).toBe(400);
+    expect((await post("/api/adjust", { text: "hola", english: "Hi", note: "shorter" })).status).toBe(400); // the old field name
+    for (const target of ["Klingon", "english", 3, null, ""]) expect(await post("/api/translate", { text: "hola", target })).toEqual({ status: 400, body: { error: "target" } });
   });
 
   test("one request at a time: a second one gets 409 busy", async () => {
@@ -269,7 +346,7 @@ describe("Translation Strip server", () => {
     const before = (await settle(starts)).length;
     const r = await post("/api/translate", { text: "PROMPT-ONCE ¿me mandas las slides?", register: "normal" });
     expect(r.status).toBe(200);
-    expect(r.body.english).toBeTruthy();
+    expect(r.body.text).toBeTruthy();
     await until("the second try's session and the next spare", async () => starts().length === before + 2);
     await statusIs("ready");
   });
@@ -290,6 +367,101 @@ describe("Translation Strip server", () => {
       expect((await post("/api/translate", { text: "¿me mandas las slides?" })).status).toBe(200);
       expect((await state()).translator).toMatchObject({ status: "ready", error: null });
     }
+  });
+
+  test("settings: the language keys are checked, written, sent to the page, and never restart the translator", async () => {
+    await statusIs("ready");
+    const before = (await settle(starts)).length;
+    const r = await post("/api/settings", { target: "Español", auto: true, languages: ["English", "Français"], notes: { Français: "Formal uses vous." }, dictation: "fr-FR" });
+    expect(r.status).toBe(200);
+    const want = { target: "Español", auto: true, languages: ["English", "Français", "Español"], notes: { Français: "Formal uses vous." }, dictation: "fr-FR" };
+    expect(r.body.settings).toMatchObject(want); // the target was added to the languages
+    expect(JSON.parse(readFileSync(SETTINGS, "utf8"))).toMatchObject({ ...want, voiceGuide: GUIDE, model: "haiku" }); // the paths stay
+    const s = await state();
+    expect(s.settings).toMatchObject(want);
+    expect(s.settings.files).toEqual({ voiceGuide: "guide.md", linter: "fake-lint.ts" }); // names only
+    expect(JSON.stringify(s)).not.toContain(DIR);
+    await Bun.sleep(400);
+    expect(starts().length).toBe(before); // no restart: these go with each request
+
+    // Anything outside the rules: 400 settings, and nothing written.
+    const file = readFileSync(SETTINGS, "utf8");
+    for (const bad of [{ target: "Klingon" }, { auto: "no" }, { languages: [] }, { languages: ["English", "English"] }, { languages: [...LANGUAGES.slice(0, 9)] }, { notes: { Klingon: "x" } }, { notes: { English: "x".repeat(601) } }, { notes: ["x"] }, { dictation: "en-AU" }, { target: "Deutsch", mode: "shout" }]) {
+      expect(await post("/api/settings", bad)).toEqual({ status: 400, body: { error: "settings" } });
+    }
+    expect(readFileSync(SETTINGS, "utf8")).toBe(file);
+
+    // A list without the target gets it back; "" removes a language's notes.
+    expect((await post("/api/settings", { languages: ["Deutsch"] })).body.settings.languages).toEqual(["Deutsch", "Español"]);
+    const cleared = await post("/api/settings", { notes: { Français: "" } });
+    expect(cleared.body.settings.notes).toEqual({});
+    expect(JSON.parse(readFileSync(SETTINGS, "utf8")).notes).toBeUndefined();
+
+    const back = await post("/api/settings", { target: "English", auto: false, languages: ["English"], dictation: "es-MX" });
+    expect(back.body.settings).toMatchObject({ target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX" });
+    expect(starts().length).toBe(before);
+  });
+
+  test("Auto: the chat's language when its last message is clear, the target when it isn't; the notes go with each turn", async () => {
+    expect((await post("/api/settings", { auto: true, languages: ["English", "Português"], notes: { Português: "Formal uses o senhor." } })).status).toBe(200);
+    const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
+    const a = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: pt });
+    expect(a.body).toEqual({ text: "[Português] Can you send me the slides before lunch?", language: "Português", from: "chat", lint: [] });
+    expect(turns().at(-1)).toMatchObject({ task: "polish", target: "English", auto: true, notes: { Português: "Formal uses o senhor." } });
+
+    // No clear language in the chat: the target.
+    const en = await post("/api/translate", { text: "¿me mandas las slides?", context: { chat: "Field trip", from: "Rui Costa", last: "Can you send them?" } });
+    expect(en.body).toMatchObject({ language: "English", from: "target" });
+    const none = await post("/api/translate", { text: "¿me mandas las slides?" });
+    expect(none.body).toMatchObject({ text: "Can you send me the slides before lunch?", language: "English", from: "target" });
+
+    // The one-time override: this request in that language, with Auto off; the settings stay.
+    const once = await post("/api/translate", { text: "¿me mandas las slides?", context: pt, target: "English" });
+    expect(once.body).toMatchObject({ text: "Can you send me the slides before lunch?", language: "English", from: "target" });
+    expect(turns().at(-1)).toMatchObject({ target: "English", auto: false });
+    expect((await state()).settings).toMatchObject({ target: "English", auto: true });
+
+    // A reply that names its language in capitals reads as the list's name.
+    expect((await post("/api/translate", { text: "SHOUTLANG ¿me mandas las slides?", context: pt })).body).toMatchObject({ language: "Português", from: "chat" });
+
+    // Auto off: always the target, whatever the chat.
+    expect((await post("/api/settings", { target: "Español", auto: false })).status).toBe(200);
+    const es = await post("/api/translate", { text: "¿me mandas las slides?", context: pt });
+    expect(es.body).toEqual({ text: "[Español] Can you send me the slides before lunch?", language: "Español", from: "target", lint: [] });
+    expect(turns().at(-1)).toMatchObject({ target: "Español", auto: false });
+    const de = await post("/api/translate", { text: "¿me mandas las slides?", target: "Deutsch" });
+    expect(de.body).toMatchObject({ text: "[Deutsch] Can you send me the slides before lunch?", language: "Deutsch", from: "target" });
+    // A reply that names no language: the language it was asked for.
+    expect((await post("/api/translate", { text: "NOLANG ¿me mandas las slides?" })).body).toMatchObject({ language: "Español", from: "target" });
+
+    // No notes: the turn carries none.
+    await post("/api/settings", { notes: { Português: "" } });
+    await post("/api/translate", { text: "¿me mandas las slides?" });
+    expect(turns().at(-1).keys).not.toContain("notes");
+    await post("/api/settings", { target: "English", languages: ["English"] });
+  });
+
+  test("an adjust keeps the current text's language, with Auto off", async () => {
+    expect((await post("/api/settings", { auto: true })).status).toBe(200);
+    const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
+    const r = await post("/api/adjust", { text: "¿me mandas las slides?", current: "[Deutsch] Can you send me the slides.", note: "add thanks", register: "normal", context: pt, language: "Deutsch" });
+    expect(r.body).toEqual({ text: "[Deutsch] Can you send me the slides, thanks!", language: "Deutsch", from: "target", lint: [] });
+    expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "Deutsch", auto: false });
+    // A language the list doesn't have is kept as its own name.
+    expect((await post("/api/adjust", { text: "x", current: "Hej.", note: "add thanks", language: "Dansk" })).body).toMatchObject({ language: "Dansk", from: "target" });
+    // No language given: the target.
+    expect((await post("/api/adjust", { text: "x", current: "Hi.", note: "add thanks" })).body).toMatchObject({ language: "English", from: "target" });
+  });
+
+  test("the linter's fix keeps the reply's language", async () => {
+    const before = turns().length;
+    const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
+    const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal", context: pt });
+    expect(r.body).toEqual({ text: "[Português] Could you send me the slides before lunch?", language: "Português", from: "chat", lint: [] });
+    const t = turns().slice(before);
+    expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]);
+    expect(t[1]).toMatchObject({ target: "Português", auto: false });
+    expect((await post("/api/settings", { auto: false })).status).toBe(200);
   });
 
   test("a POST needs JSON and the server's own Origin", async () => {
@@ -321,7 +493,9 @@ describe("Translation Strip server", () => {
 
     const before = (await settle(starts)).length;
     const r = await post("/api/settings", { voiceGuide: other });
-    expect(r).toEqual({ status: 200, body: { settings: { model: "haiku", mode: "send" } } }); // no paths in the reply
+    expect(r.status).toBe(200);
+    expect(r.body.settings).toMatchObject({ model: "haiku", mode: "send", files: { voiceGuide: "other-guide.md", linter: "fake-lint.ts" } });
+    expect(JSON.stringify(r.body)).not.toContain(DIR); // no paths in the reply
     expect(JSON.parse(readFileSync(SETTINGS, "utf8"))).toMatchObject({ voiceGuide: other, model: "haiku", mode: "send" });
     await until("a spare with the other guide", async () => starts().length > before && starts().at(-1).systemGuide === "Plain words.\nNo filler.\nOne idea per line.");
 
@@ -338,21 +512,22 @@ describe("Translation Strip server", () => {
   test("settings: writes the file, and a new model restarts the translator", async () => {
     const before = starts().length;
     const r = await post("/api/settings", { mode: "leave" });
-    expect(r).toEqual({ status: 200, body: { settings: { model: "haiku", mode: "leave" } } });
+    expect(r.status).toBe(200);
+    expect(r.body.settings).toMatchObject({ model: "haiku", mode: "leave" });
     expect(starts().length).toBe(before); // mode alone doesn't restart
 
     const m = await post("/api/settings", { model: "sonnet" });
-    expect(m.body.settings).toEqual({ model: "sonnet", mode: "leave" });
+    expect(m.body.settings).toMatchObject({ model: "sonnet", mode: "leave" });
     const file = JSON.parse(readFileSync(SETTINGS, "utf8"));
     expect(file).toMatchObject({ model: "sonnet", mode: "leave", voiceGuide: GUIDE }); // the paths stay
     await until("a sonnet start", async () => starts().at(-1)?.model === "sonnet");
     const s = await statusIs("ready");
     expect(s.translator.model).toBe("sonnet");
-    expect(s.settings).toEqual({ model: "sonnet", mode: "leave" });
+    expect(s.settings).toMatchObject({ model: "sonnet", mode: "leave" });
     expect(starts().at(-1).args).not.toContain("--effort"); // Sonnet keeps Claude Code's default effort
 
     // Opus runs at low effort.
-    expect((await post("/api/settings", { model: "opus" })).body.settings).toEqual({ model: "opus", mode: "leave" });
+    expect((await post("/api/settings", { model: "opus" })).body.settings).toMatchObject({ model: "opus", mode: "leave" });
     await until("an opus start", async () => starts().at(-1)?.model === "opus");
     const args = starts().at(-1).args;
     expect(args[args.indexOf("--effort") + 1]).toBe("low");

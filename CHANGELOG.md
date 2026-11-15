@@ -1,9 +1,22 @@
 # Changelog
 
+## 0.8.0
+
+- Languages besides English. In Settings (⌘, or Settings… in the app menu) you pick a target language: English, Español, Português, Français, Deutsch, Italiano, Nederlands, Polski, Svenska, Türkçe, 日本語, 한국어 or 中文.
+- Auto: the reply is in the language of the other person's last message when it's clear, and in your target when it isn't.
+- Your languages: a short list in Settings, up to eight, with optional notes for each (for example which form of "you" Formal uses). Your target is always on it, and removing a language removes its notes.
+- One voice guide for every language. A rule in it about one language applies only to replies in that language, and the notes for a language apply to replies in it.
+- A language button before "To <chat>" says what the reply is in and how it was chosen. When it isn't your target, one click writes the same message in your target, for that message only.
+- The gear's menu has a Reply in row: Auto and your languages. In a strip narrower than 720 px, Position leaves that menu to make room and stays in the app menu's Layout.
+- Settings is a window of its own. Choose Voice Guide… and Choose Voice Linter… moved into it, as Choose… beside Guide and Linter.
+- Dictation has a language setting: Español (México), (EE. UU.) or (España), English (US) or (UK), Português (Brasil) or (Portugal), Français, Deutsch or Italiano. It starts as Español (México), and it still runs on your Mac.
+- Adjust and the linter's fix keep the reply's language. The translation box is named after your target.
+- The settings file keeps your target, Auto, your languages, your notes and the dictation language. Still no chat names.
+
 ## 0.7.4
 
 - The README's animation has round corners, drawn on GitHub's page color in both its light and dark themes.
-- The release zip is built on GitHub's macOS 26 image, whose Xcode has the dictation the app uses. 0.7.3's build stopped there, so 0.7.4 is the first release with a download.
+- The release zip is built on GitHub's macOS 26 image, whose Xcode has the dictation the app uses. 0.7.3's build stopped there.
 - Two tests no longer depend on the time of day or a fast machine.
 - A little more room between "To" and the chat's name.
 

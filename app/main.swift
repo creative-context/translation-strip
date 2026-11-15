@@ -2,8 +2,9 @@
 // it when there's no room below (the Layout setting, Dock.swift). The page
 // (http://127.0.0.1:4810/, served by the app's own copy of the server) fills it; the shell
 // keeps it with Teams as Teams moves, tells the page which chat is open, puts the English
-// into that chat (Send.swift), dictates Spanish (Dictation.swift) and answers a global
-// shortcut (Hotkey.swift). The bridge is in docs/contract.md, "Page ↔ shell".
+// into that chat (Send.swift), dictates in the language chosen in Settings (Dictation.swift),
+// answers a global shortcut (Hotkey.swift) and opens the Settings window (SettingsWindow.swift).
+// The bridge is in docs/contract.md, "Page ↔ shell".
 
 import AppKit
 import ApplicationServices
@@ -15,6 +16,7 @@ let port = 4810
 let pageURL = URL(string: "http://127.0.0.1:\(port)/")!
 let stateURL = URL(string: "http://127.0.0.1:\(port)/api/state")!
 let settingsURL = URL(string: "http://127.0.0.1:\(port)/api/settings")!
+let settingsPageURL = URL(string: "http://127.0.0.1:\(port)/settings.html")!
 let pageOrigin = "http://127.0.0.1:\(port)" // the Origin the server takes POSTs from
 let stripCornerRadius: CGFloat = 10 // the page's --radius-raised, which its .strip uses
 
@@ -112,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var checkedServers: [pid_t: Bool] = [:]
 
     let dictation = Dictation()
+    let settingsWindow = SettingsWindow(url: settingsPageURL, port: port)
     let shortcut = GlobalShortcut()
     var lastAccess: (accessibility: Bool, microphone: String)?
     var accessTimer: Timer?
@@ -144,6 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
         dictation.onProgress = { [weak self] fraction in
             self?.call("dictation", ["state": "preparing", "progress": fraction])
+        }
+        settingsWindow.log = { ShellLog.write($0) }
+        settingsWindow.onChoose = { [weak self] what, w in
+            if what == "linter" { self?.chooseLinter(sheet: w) } else { self?.chooseGuide(sheet: w) }
         }
         GlobalShortcut.pressed = { [weak self] in self?.shortcutPressed() }
         if let why = shortcut.register() { ShellLog.write("shortcut: \(why)") }
@@ -515,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         case "layout":
             if let l = (m["value"] as? String).flatMap(DockLayout.init(rawValue:)) { setLayout(l) }
         case "dictation":
-            if (m["action"] as? String) == "start" { dictation.start() } else { dictation.stop() }
+            if (m["action"] as? String) == "start" { dictation.start(locale: m["locale"] as? String) } else { dictation.stop() }
         case "open":
             open(m["what"] as? String ?? "")
         default:
@@ -659,15 +666,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     // MARK: settings
 
-    @objc func chooseGuide() {
-        choose("voiceGuide", message: "The voice guide the translator follows.")
+    @objc func openSettings() { settingsWindow.show() }
+
+    // From the Settings page (a sheet on its window) or the strip's "open guide" (a panel of its own).
+    func chooseGuide(sheet: NSWindow? = nil) {
+        choose("voiceGuide", message: "The voice guide the translator follows, for every language.", sheet: sheet)
     }
 
-    @objc func chooseLinter() {
-        choose("linter", message: "The voice linter that checks each English reply.")
+    func chooseLinter(sheet: NSWindow? = nil) {
+        choose("linter", message: "The voice linter that checks each reply.", sheet: sheet)
     }
 
-    func choose(_ key: String, message: String) {
+    func choose(_ key: String, message: String, sheet: NSWindow? = nil) {
         NSApp.activate()
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -678,10 +688,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         if let current = readSettings()[key] as? String, !current.isEmpty {
             panel.directoryURL = URL(fileURLWithPath: current).deletingLastPathComponent()
         }
-        panel.begin { response in
+        let done = { (response: NSApplication.ModalResponse) in
             guard response == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated { self.postSetting(key, url.path) }
         }
+        if let sheet, sheet.isVisible { panel.beginSheetModal(for: sheet, completionHandler: done) } else { panel.begin(completionHandler: done) }
     }
 
     // The app folder's settings.json, read only for the chooser's starting folder: the server
@@ -746,8 +757,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         appMenu.items = [
             item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
             .separator(),
-            item("Choose Voice Guide…", #selector(chooseGuide), ""),
-            item("Choose Voice Linter…", #selector(chooseLinter), ""),
+            item("Settings…", #selector(openSettings), ","),
             .separator(),
             layoutItem(),
             .separator(),

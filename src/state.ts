@@ -1,10 +1,26 @@
 // The shared state the page sees, and the version that bumps on each change.
+import { basename } from "node:path";
+import { DICTATION, LANGUAGES } from "./languages";
+
 export type Model = "haiku" | "sonnet" | "opus";
 export type Mode = "send" | "leave";
 export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "failed";
 export type Status = "starting" | "ready" | "busy" | "error";
 
-export type Settings = { voiceGuide: string | null; linter: string | null; model: Model; mode: Mode };
+// notes: each language's own notes, only non-empty ones, keyed by the language's name.
+export type Settings = {
+  voiceGuide: string | null;
+  linter: string | null;
+  model: Model;
+  mode: Mode;
+  target: string;
+  auto: boolean;
+  languages: string[];
+  notes: Record<string, string>;
+  dictation: string;
+};
+
+export const DEFAULT_SETTINGS: Settings = { voiceGuide: null, linter: null, model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX" };
 
 export const state = {
   translator: {
@@ -15,7 +31,7 @@ export const state = {
     guide: "missing" as "ok" | "missing",
     linter: "missing" as "ok" | "missing",
   },
-  settings: { voiceGuide: null, linter: null, model: "haiku", mode: "send" } as Settings,
+  settings: { ...DEFAULT_SETTINGS } as Settings,
   version: 0,
 };
 
@@ -32,11 +48,29 @@ export function bump() {
   } catch {}
 }
 
+// The settings the page and Settings see: never a path, only the guide's and the linter's file names.
+export function publicSettings(s: Settings = state.settings) {
+  return {
+    model: s.model,
+    mode: s.mode,
+    target: s.target,
+    auto: s.auto,
+    languages: [...s.languages],
+    notes: { ...s.notes },
+    dictation: s.dictation,
+    files: { voiceGuide: s.voiceGuide ? basename(s.voiceGuide) : null, linter: s.linter ? basename(s.linter) : null },
+  };
+}
+
+// The choices Settings and the menu offer.
+const OPTIONS = { languages: [...LANGUAGES], dictation: DICTATION.map((d) => ({ id: d.id, name: d.name })) };
+
 // What the page gets: never the paths in the settings.
 export function snapshot() {
   return {
     now: Date.now(),
     translator: { ...state.translator },
-    settings: { model: state.settings.model, mode: state.settings.mode },
+    settings: publicSettings(),
+    options: OPTIONS,
   };
 }

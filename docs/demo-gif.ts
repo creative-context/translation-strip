@@ -1,22 +1,35 @@
 // Records docs/demo-dark.gif and docs/demo-light.gif: how the strip is used, with made-up text. A simplified chat window sits
 // on top (a generic chat, not any real app's look) and the strip is docked under it, as wide, as
-// in the app. The story: you write in Spanish, ⏎ translates, ⌘⏎ sends, and the message shows in
-// the chat. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
+// in the app. The story, with Auto on: in a chat in English you write in Spanish, ⏎ translates, ⌘⏎
+// sends, and the message shows in the chat; then a chat in Portuguese, where the same steps give
+// Portuguese. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
 // window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
 // theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
-// Needs the page mock (`bun test/page-mock.ts`, port 4813), Playwright (PLAYWRIGHT_DIR, by default
-// the one in ../mac-app-design) and ffmpeg. Run from the repo: `bun docs/demo-gif.ts`.
+// Starts its own page mock (port 4816) and answers the translations itself, so each one fits its
+// Spanish. Needs Playwright (PLAYWRIGHT_DIR, by default the one in ../mac-app-design) and ffmpeg.
+// Run from the repo: `bun docs/demo-gif.ts`.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
-const BASE = process.env.PAGE_MOCK ?? "http://127.0.0.1:4813";
+const MOCK_PORT = 4816;
+const BASE = `http://127.0.0.1:${MOCK_PORT}`;
 const PW = process.env.PLAYWRIGHT_DIR ?? resolve(ROOT, "..", "mac-app-design", "node_modules", "playwright");
 const { webkit } = await import(PW);
 
 const W = 880, CHAT_H = 300, STRIP_H = 145;
-const ES = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.";
+// The two chats, each with what you write and what comes out. Made up.
+const CHATS = [
+  { id: "en", name: "Priya Raman", initials: "PR", color: "#3d5a80", language: "English",
+    msgs: ["Morning! I'm back from the offsite.", "Anything you need from me this week?"],
+    es: "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.",
+    out: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call." },
+  { id: "pt", name: "Rafael Costa", initials: "RC", color: "#5a7d4f", language: "Português",
+    msgs: ["Oi! Tudo bem por aí?", "Você consegue me mandar a apresentação até amanhã?"],
+    es: "Claro, te la mando hoy antes de las 6.",
+    out: "Claro, te envio hoje antes das 6." },
+];
 
 // The scene: the chat window, the strip in a frame under it, and the key hint.
 const SCENE = `<!doctype html><html><head><meta charset="utf-8">
@@ -25,7 +38,9 @@ const SCENE = `<!doctype html><html><head><meta charset="utf-8">
   html, body { margin: 0; background: transparent; width: ${W}px; height: ${CHAT_H + STRIP_H}px; overflow: hidden; }
   body { font-family: -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   .win { position: absolute; left: 0; top: 0; width: ${W}px; height: ${CHAT_H}px; box-sizing: border-box; border-radius: 12px 12px 0 0;
-    background: #17181b; display: grid; grid-template-rows: 44px 1fr 56px; overflow: hidden; }
+    background: #17181b; overflow: hidden; }
+  .chat { position: absolute; inset: 0; display: grid; grid-template-rows: 44px 1fr 56px; opacity: 0; transition: opacity 200ms ease-out; }
+  .chat.on { opacity: 1; }
   .bar { display: flex; align-items: center; gap: 10px; padding: 0 16px; background: #1d1e22; }
   .dots { display: flex; gap: 8px; margin-right: 10px; } .dots i { width: 12px; height: 12px; border-radius: 50%; background: #3a3b40; display: block; }
   .av { width: 26px; height: 26px; border-radius: 50%; background: #3d5a80; color: #e8eef6; font-size: 11px; font-weight: 600; display: grid; place-items: center; flex: none; }
@@ -47,22 +62,41 @@ const SCENE = `<!doctype html><html><head><meta charset="utf-8">
   .hint.on { opacity: 1; transform: translateX(-50%) scale(1); }
   .hint kbd { font: inherit; margin-right: 6px; }
 </style></head><body>
-<div class="win">
-  <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="av">PR</div><div class="name">Priya Raman</div></div>
-  <div class="msgs">
-    <div class="row"><div class="av">PR</div><div><div class="meta">Priya Raman · 10:38 AM</div><div class="bub">Morning! I'm back from the offsite.</div></div></div>
-    <div class="row"><div class="av" style="visibility:hidden">PR</div><div><div class="bub">Anything you need from me this week?</div></div></div>
-    <div class="row me" id="mine"><div><div class="meta" style="text-align:right">10:42 AM</div><div class="bub" id="mineText"></div></div></div>
-  </div>
-  <div class="compose">Type a message</div>
+<div class="win">${CHATS.map((c, i) => `
+  <div class="chat${i === 0 ? " on" : ""}" id="chat-${c.id}">
+    <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="av" style="background:${c.color}">${c.initials}</div><div class="name">${c.name}</div></div>
+    <div class="msgs">
+      <div class="row"><div class="av" style="background:${c.color}">${c.initials}</div><div><div class="meta">${c.name} · 10:38 AM</div><div class="bub">${c.msgs[0]}</div></div></div>
+      <div class="row"><div class="av" style="visibility:hidden">${c.initials}</div><div><div class="bub">${c.msgs[1]}</div></div></div>
+      <div class="row me" id="mine-${c.id}"><div><div class="meta" style="text-align:right">10:42 AM</div><div class="bub"></div></div></div>
+    </div>
+    <div class="compose">Type a message</div>
+  </div>`).join("")}
 </div>
 <div class="dock"><iframe id="strip" src="${BASE}/"></iframe></div>
 <div class="hint" id="hint"></div>
 </body></html>`;
 
+// Its own mock, with Auto on, so the page check's mock (4813) keeps its settings.
+const mock = Bun.spawn(["bun", "test/page-mock.ts"], { cwd: ROOT, env: { ...process.env, STRIP_MOCK_PORT: String(MOCK_PORT) }, stdout: "ignore", stderr: "inherit" });
+process.on("exit", () => mock.kill());
+for (let i = 0; ; i++) {
+  try { if ((await fetch(`${BASE}/api/state`)).ok) break; } catch {}
+  if (i > 80) throw new Error(`the page mock didn't start on ${BASE}`);
+  await Bun.sleep(100);
+}
+const set = await fetch(`${BASE}/api/settings`, { method: "POST", headers: { "content-type": "application/json", origin: BASE }, body: JSON.stringify({ auto: true, target: "English", languages: ["English", "Português"] }) });
+if (!set.ok) throw new Error(`the mock refused the settings: ${set.status}`);
+
 const browser = await webkit.launch();
 const context = await browser.newContext({ viewport: { width: W, height: CHAT_H + STRIP_H }, deviceScaleFactor: 2, colorScheme: "dark", timezoneId: "UTC" });
 await context.clock.setFixedTime(new Date("2026-03-03T10:42:00Z"));
+// Each translation fits its Spanish: the chat's language, chosen by Auto.
+let current = CHATS[0];
+await context.route(`${BASE}/api/translate`, async (route: any) => {
+  await new Promise((r) => setTimeout(r, 700));
+  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: current.out, language: current.language, from: "chat", lint: [] }) });
+});
 const page = await context.newPage();
 await page.setContent(SCENE);
 const frame = await (async () => {
@@ -100,30 +134,47 @@ const until = async (state: string, ms: number) => {
   for (let i = first; i < frames.length; i++) frames[i].ms = Math.max(40, Math.round(ms / Math.max(1, n)));
 };
 
+// Teams opens a chat: the window shows it, and the strip hears about it as the app would tell it.
+const openChat = async (c: (typeof CHATS)[number]) => {
+  current = c;
+  await page.evaluate((id: string) => { for (const e of document.querySelectorAll(".chat")) e.classList.toggle("on", e.id === `chat-${id}`); }, c.id);
+  await frame.evaluate((c: any) => (window as any).strip.teams({ open: true, chat: c.name, from: c.name, last: c.msgs[1], draft: false, shape: "ok" }), c);
+};
+// One message, start to end: type the Spanish, ⏎, read it, ⌘⏎, and it shows in the chat.
+const tell = async (c: (typeof CHATS)[number]) => {
+  await frame.click("#es");
+  await snap(250);
+  for (let i = 2; i <= c.es.length; i += 2) { await frame.fill("#es", c.es.slice(0, i)); await snap(55); }
+  await frame.fill("#es", c.es);
+  await snap(600);
+
+  await hint("<kbd>⏎</kbd>Translate");
+  await snap(450);
+  await frame.press("#es", "Enter");
+  await snap(250);
+  await hint("");
+  await until("ready", 800);
+  await snap(2000);
+
+  await hint("<kbd>⌘⏎</kbd>Send");
+  await snap(450);
+  await frame.press("#es", "Meta+Enter");
+  await snap(200);
+  await hint("");
+  await until("sent", 600);
+  await page.evaluate((c: any) => { const m = document.getElementById(`mine-${c.id}`)!; m.querySelector(".bub")!.textContent = c.out; m.classList.add("in"); }, c);
+  await record(400, 60);
+};
+
+await openChat(CHATS[0]);
+await frame.waitForTimeout(300);
 await snap(1200); // the chat, and the strip waiting
-await frame.click("#es");
-await snap(250);
-for (let i = 2; i <= ES.length; i += 2) { await frame.fill("#es", ES.slice(0, i)); await snap(55); }
-await frame.fill("#es", ES);
-await snap(700);
-
-await hint("<kbd>⏎</kbd>Translate");
-await snap(450);
-await frame.press("#es", "Enter");
-await snap(250);
-await hint("");
-await until("ready", 800);
-await snap(1900);
-
-await hint("<kbd>⌘⏎</kbd>Send");
-await snap(450);
-await frame.press("#es", "Meta+Enter");
-await snap(200);
-await hint("");
-await until("sent", 600);
-await page.evaluate((t: string) => { document.getElementById("mineText")!.textContent = t; document.getElementById("mine")!.classList.add("in"); },
-  await frame.inputValue("#en").catch(() => "") || "Could you take a look at the budget before Thursday? If needed, we can go over it on the call.");
-await record(400, 60);
+await tell(CHATS[0]);
+await snap(1600);
+await openChat(CHATS[1]);
+await record(300, 60);
+await snap(900);
+await tell(CHATS[1]);
 await snap(2500);
 await browser.close();
 

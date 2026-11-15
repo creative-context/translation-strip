@@ -1,4 +1,4 @@
-// The voice linter: after every English reply, write it to a temp file, run
+// The voice linter: after every reply, in any language, write it to a temp file, run
 // `bun <linter> <file> --todo`, delete the file, and return the findings.
 // No linter set, or it fails: no findings, and the state says the linter is missing.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
