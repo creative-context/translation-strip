@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   app:
-    runs-on: macos-15
+    runs-on: macos-26   # Xcode 26: the app uses macOS 26 dictation (SpeechAnalyzer)
     timeout-minutes: 20
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
