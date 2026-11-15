@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/demo.gif" alt="The strip at work under a simplified chat window, with made-up text: a Spanish message is typed, Return turns it into English, Command-Return sends it, and it shows in the chat while the strip says Sent to Priya Raman" width="100%">
+</p>
+
 <h1 align="center">Translation Strip</h1>
 
 <p align="center">
@@ -10,177 +14,80 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.7.2-6FA6E8?labelColor=1A1D21" alt="Version 0.7.2">
+  <img src="https://img.shields.io/badge/version-0.7.3-6FA6E8?labelColor=1A1D21" alt="Version 0.7.3">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
 </p>
 
 <p align="center">
-  <a href="#overview"><b>Overview</b></a> ·
-  <a href="#getting-started"><b>Getting started</b></a> ·
-  <a href="#use-it"><b>Use it</b></a> ·
-  <a href="#privacy"><b>Privacy</b></a> ·
-  <a href="#how-it-works"><b>How it works</b></a> ·
-  <a href="#ai-assistants"><b>AI assistants</b></a> ·
+  <a href="#install"><b>Install</b></a> ·
+  <a href="docs/guide.md"><b>Guide</b></a> ·
+  <a href="docs/privacy.md"><b>Privacy</b></a> ·
   <a href="CHANGELOG.md"><b>Changelog</b></a>
 </p>
 
-<p align="center">
-  <img src="docs/demo.gif" alt="The strip at work under a simplified chat window, with made-up text: a Spanish message is typed, Return turns it into English, Command-Return sends it, and it shows in the chat while the strip says Sent to Priya Raman" width="100%">
-</p>
-
-## Overview
-
 Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. Press Return and the strip gives you the English, in the voice your guide describes. Press ⌘Return and it goes to the chat you have open in Teams, with no copying or pasting.
 
-**What it does differently:**
+## Features
 
-- **Your voice, not a word-for-word translation.** It carries the meaning in the voice your guide describes and adds nothing you didn't write: no greeting, name, thanks or closing line appears on its own.
-- **It sends where you're looking.** ⌘⏎ puts the English in the Teams chat you have open, checks the box holds exactly that text, and sends only if that chat is still the one the strip shows.
-- **Your Claude plan, no API key.** A hidden Claude Code session on your plan writes the English. Every message gets a fresh one, so none of them sees what you wrote before.
-- **Your linter has the last word.** When the voice linter you point it to finds an error, the app asks for one fix before you see the English. A warning shows above the text.
-- **It stays out of the way.** The strip docks on any side of Teams, follows it, and steps aside when Teams is minimized, hidden or on another desktop.
+- **Your voice, not a word-for-word translation.** It adds nothing you didn't write: no greeting, thanks or closing line on its own.
+- **Sends where you're looking.** ⌘⏎ puts the English in the open chat and sends it only if that chat is still the one the strip shows.
+- **Your Claude plan, no API key.** A hidden Claude Code session writes the English, a fresh one for every message.
+- **Your linter has the last word.** An error it finds gets fixed once before you see the English.
+- **Out of the way.** It docks on any side of Teams, follows it, and hides when Teams does.
 
-**Requirements:** macOS 14 or later, the new Microsoft Teams, and Claude Code signed in with a Claude plan. To build it, [Bun](https://bun.sh) and the Xcode Command Line Tools.
+## Requirements
+
+macOS 14 or later, the new Microsoft Teams, Claude Code signed in with a Claude plan, and [Bun](https://bun.sh), which runs the app's server. To build it yourself, the Xcode Command Line Tools too.
 
 **Status:** 0.x. It reads Teams through Accessibility, so a Teams update can change what it finds.
 
-> This is an independent project. It isn't made, endorsed or supported by Anthropic or Microsoft. Claude and Claude Code are trademarks of Anthropic, and Microsoft Teams is a trademark of Microsoft.
+## Install
 
-## Getting started
+Download the zip from the [latest release](https://github.com/creative-context/translation-strip/releases/latest), unzip it and move Translation Strip to Applications. Apple hasn't checked it, so the first time macOS won't open it: go to System Settings › Privacy & Security and choose Open Anyway.
 
-### Build and install
-
-1. Build the app and install it in `~/Applications`:
-   ```bash
-   sh app/build.sh --install
-   ```
-2. From the app menu, use Choose Voice Guide… to pick your guide, a Markdown file that describes how you write ([how to write one](#write-your-voice-guide)). Choose Voice Linter… is optional ([what it does](#a-voice-linter-optional)).
-3. Allow Accessibility when the strip asks. The app needs it to put the message in Teams and to see which chat is open.
-
-macOS ties the Accessibility permission to the app's signature. If your keychain has a code-signing identity named "Translation Strip Local Signing", `build.sh` signs with it and the permission stays after a rebuild. Without one, `build.sh` signs ad hoc and you allow each new build again.
-
-### Write your voice guide
-
-The guide is a Markdown file that tells the hidden session how you sound in English. It shapes how the English sounds, never what it says: the strip adds nothing you didn't write, even where your guide describes greetings or sign-offs for emails. The app only reads the file, and a new session picks up your changes on its own.
-
-1. Create a Markdown file anywhere on your Mac, for example `~/Documents/my-voice.md`.
-2. Say in a sentence or two how you sound. For example: "Warm and to the point. Plain words, short paragraphs, the occasional emoji."
-3. Describe your two registers, since the strip has Normal and Formal: how each one sounds and when you use it.
-4. List what you never write: words, phrases and punctuation, for example "per my last email", "circle back" or a row of exclamation marks. Before it answers, the strip rereads its English against this list, in Formal too.
-5. Add a few examples of what you write and what should come out:
-
-   | You write | It comes out |
-   |---|---|
-   | ¿Me pasas el reporte cuando puedas? | Could you send me the report when you get a chance? |
-   | Perdón, no llego a la de las 3, ¿la movemos? | Sorry, I can't make the 3 o'clock. Can we move it? |
-
-6. Note the names and terms that stay as they are: your products, acronyms and people's names.
-7. From the app menu, use Choose Voice Guide… and pick the file.
-
-A quick way to start: give Claude a handful of messages you've sent in English and ask it to draft a guide with these parts. Then read it and fix whatever doesn't sound like you.
-
-### A voice linter (optional)
-
-A linter checks each reply against your guide's rules with plain patterns, to catch what slips through. The app runs it as `bun <linter> <file> --todo`, where `<file>` holds the English, and reads one finding per line:
-
-```
-<file>:<line> error [<id>] <message>
-<file>:<line> warning [<id>] <message>
-```
-
-It exits with 0 when it found no errors and 1 when it did. When it finds an error, the app asks the translator for one fix before you see the English, and keeps the fix only if it's better. A warning shows above the English. Pick it with Choose Voice Linter… in the app menu.
+Then pick your voice guide with Choose Voice Guide… in the app menu, and allow Accessibility when the strip asks. To build it yourself, run `sh app/build.sh --install`. [The guide](docs/guide.md#install) has the details.
 
 ## Use it
 
-The strip docks under the Teams window, as wide as it, and moves with it. When there's no room under Teams, it becomes a column beside Teams, as tall as its window, with the English on top and your Spanish below. Position in the strip's settings menu (the gear), or Layout in the app menu, picks Automatic or a side: below, above, left or right of Teams. Drag the strip's outer edge to make it taller, or the column's to make it wider, and the app remembers the size. The strip steps out of the way when Teams is minimized, hidden or on another desktop.
+- **⏎** translates, **⇧⏎** starts a new line.
+- **⌘⏎** sends to the open chat. **⌘K** adjusts the English with a note. **⌘D** dictates in Spanish.
+- **⌃⌥T** brings up the strip from any app.
+- The gear picks what ⌘⏎ does, the model and where the strip sits.
 
-| Key | What it does |
-|---|---|
-| ⏎ | Translate |
-| ⇧⏎ | New line |
-| ⌘⏎ | Send to the open chat |
-| ⌘K | Adjust the English with a note, in Spanish or English. Undo puts it back |
-| ⌘D | Dictate in Spanish |
-| Esc | Clear |
-| ⌃⌥T | From any app, bring up the strip ready to type |
+All the keys, the positions and how sending works are in [the guide](docs/guide.md).
 
-Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku, Sonnet or Opus, which runs at low effort), opens your guide and restarts the translator.
+## Your voice guide
 
-### How it sends
-
-The app brings Teams forward, pastes the English into the message box, checks that the box holds exactly that text and then presses Return. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
+A Markdown file that says how you sound in English: your registers, what you never write, and a few examples. Start from [the example](docs/voice-guide-example.md) or [write your own](docs/guide.md#write-your-voice-guide). An optional [voice linter](docs/guide.md#a-voice-linter-optional) checks every reply against it.
 
 ## Privacy
 
-The app and its server run on your Mac, and the server listens on `127.0.0.1` only. The only thing that leaves your Mac is what the hidden session sends to Claude.
+- The app and its server run on your Mac and listen on `127.0.0.1` only.
+- What you write, the open chat's name and its last message go to Claude through a fresh Claude Code session on your plan, and nowhere else.
+- It keeps no message text: only your settings and a log of what happened.
 
-### What goes to Claude
+The whole list is in [docs/privacy.md](docs/privacy.md).
 
-Through the hidden Claude Code session on your plan:
+## Uninstall
 
-- What you write, the register and, for Adjust, the current English and your note.
-- For context, the open chat's name, the author of its last message and that message. The session treats it as quoted text and never follows instructions in it.
-- Your voice guide's text, as the session's instructions. The app reads it from your file when the session starts and never writes it anywhere.
-
-Every message goes to a fresh session, so none of them sees what you wrote before, to whom, or what they wrote you.
-
-Claude Code adds its own context, as it does in any session, such as details about your Mac and your account's email. The session runs with no tools, no MCP servers, no hooks and none of your settings or memory files, and it keeps no transcript.
-
-### What it reads from Teams
-
-Through Accessibility, about once a second while the strip is on screen: the window's position and size, its title for the chat's name, the message box to spot a draft and check what was pasted, and the latest messages in the open chat for context. It stores none of it.
-
-### The clipboard and the microphone
-
-To paste, the app borrows the clipboard for a moment and puts back what was there once Teams has taken the paste, unless you copied something else meanwhile. It marks what it puts there as temporary and private, so clipboard managers that respect those marks don't keep your message.
-
-The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in Mexican Spanish (or US or Spain Spanish), and the audio never leaves it. The first time, macOS downloads that model from Apple.
-
-### What it keeps
-
-In `~/.translation-strip`:
-
-- `settings.json`: the paths of your guide and linter, the model and what ⌘⏎ does.
-- `server.log`: when the server and the translator started, errors, and outcomes such as "send: not sent (mismatch)". It never holds message text or chat names.
-- `translator/`: the hidden session's working folder. The app never reads anything back from it.
-
-The app's preferences keep where the strip last sat. For the linter, each reply goes to a temporary file that the app deletes right after.
-
-### What it sends on its own
-
-Nothing. The hidden session connects to Anthropic the way Claude Code always does.
-
-## How it works
-
-1. The server (`server.ts` and `src/`, Bun) gives each request a fresh Claude Code session with your guide as its instructions, keeping the next one started so replies stay fast. It answers the page one request at a time, runs the linter on each reply, and takes requests only from the app's own page.
-2. The page (`public/index.html`, with its state in `public/strip-state.js`) is the strip itself. Its tokens, components and icons come from the family's design system, [mac-app-design](https://github.com/creative-context/mac-app-design), vendored next to it.
-3. The app (`app/`, Swift) holds the window under Teams, sending through Accessibility, reading the open chat, dictation and the shortcut. It runs its own copy of the server and stops it when it quits. Its shared parts come from the family's app kit, [mac-app-kit](https://github.com/creative-context/mac-app-kit).
-
-`docs/contract.md` is the contract between the three.
+1. Quit Translation Strip and delete it from `~/Applications`.
+2. Delete `~/.translation-strip` and its preferences: `defaults delete com.creativecontext.TranslationStrip`.
+3. Remove it from System Settings › Privacy & Security › Accessibility.
 
 ## Develop
 
 ```bash
-bun test                   # the server's tests and the vendored-files check, port 4811
-bun test test/vendored.test.ts  # the vendored files weren't edited
-sh test/swift-check.sh     # the docking math and the Teams helpers (needs the Xcode command line tools)
-bun test/page-mock.ts      # the page with canned replies, port 4813
-bun test/page-check.ts     # every control of the page in WebKit (needs the page mock and Playwright)
-bun server.ts              # the server on port 4812: in a browser, a preview that sends nothing
-sh app/build.sh            # build into build/
-sh app/build.sh --install  # build, copy to ~/Applications and open it
+bun test                # the server's tests
+bun test/page-check.ts  # every control of the page in WebKit
+sh app/build.sh         # build into build/
 ```
 
-`bun docs/demo-gif.ts` records `docs/demo.gif` from the page mock, with made-up text (it needs Playwright and ffmpeg).
-
-The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data.
-
-## AI assistants
-
-To work on this repository, an agent reads [`AGENTS.md`](AGENTS.md), which `CLAUDE.md` imports.
+How it's built and every command: [docs/architecture.md](docs/architecture.md). The rules for changing the code: [`AGENTS.md`](AGENTS.md).
 
 ## License
 
 [MIT](LICENSE).
+
+> This is an independent project. It isn't made, endorsed or supported by Anthropic or Microsoft. Claude and Claude Code are trademarks of Anthropic, and Microsoft Teams is a trademark of Microsoft.

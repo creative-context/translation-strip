@@ -1440,6 +1440,17 @@ check("Design", "the caret is the accent, and the ready English box takes a focu
   await t.p.click("#es"); await settle(t.p, 400);
   eq(await bg(), off, "English surface after focus leaves");
 });
+check("Design", "the chat's name keeps 16 px from Send, and Adjust keeps 24 px from the name, with a long chat too", async () => {
+  for (const chat of ["Priya Raman", LONG_CHAT]) {
+    const t = await open();
+    await setTeams(t.p, { ...PRIYA_TEAMS, chat });
+    await ready(t);
+    await settle(t.p, 150);
+    const g = await t.p.evaluate(() => { const r = (id: string) => document.getElementById(id)!.getBoundingClientRect(); return { toSend: r("send").left - r("to").right, adjTo: r("to").left - r("adjustBtn").right }; });
+    ok(Math.abs(g.toSend - 16) <= 0.5, `${chat}: the name is ${g.toSend} px from Send, not 16`);
+    ok(Math.abs(g.adjTo - 24) <= 0.5, `${chat}: Adjust is ${g.adjTo} px from the name, not 24`);
+  }
+});
 check("Design", "the English footer: notice and Adjust buttons 24 px at 12 px, Send 28, the gear last and 28 × 28", async () => {
   const t = await open("teams=closed");
   await translateFlow(t);

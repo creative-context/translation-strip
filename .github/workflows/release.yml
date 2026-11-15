@@ -1,0 +1,61 @@
+name: Release
+
+# When a release is published, tests the app on macOS, builds it universal and attaches the zip
+# to the release. Run it by hand to build a release's zip as a workflow artifact, and to replace
+# the one attached to the release if you tick "attach".
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, such as v0.7.3
+        required: true
+      attach:
+        description: Attach the zip to the release, replacing the one there
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun test
+      - run: sh test/swift-check.sh
+      - name: The version in Info.plist matches the tag
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" app/Info.plist)
+          [ "v$VERSION" = "$TAG" ] || { echo "app/Info.plist says $VERSION but the tag is $TAG"; exit 1; }
+      - run: sh app/build.sh --release
+      - name: The app is universal and carries its server and page
+        run: |
+          APP="build/Translation Strip.app"
+          lipo -archs "$APP/Contents/MacOS/TranslationStrip" | grep -q x86_64
+          lipo -archs "$APP/Contents/MacOS/TranslationStrip" | grep -q arm64
+          test -f "$APP/Contents/Resources/server/server.js"
+          test -f "$APP/Contents/Resources/public/index.html"
+          codesign --verify "$APP"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Translation-Strip-${{ env.TAG }}
+          path: build/Translation-Strip-*.zip
+      - name: Attach the zip to the release
+        if: github.event_name == 'release' || inputs.attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" build/Translation-Strip-*.zip --clobber

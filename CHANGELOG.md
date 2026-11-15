@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.3
+
+- A short README, like a normal Mac app's: what it does, install, a few lines of use, privacy in three points and how to uninstall. The manual moves to `docs/guide.md`, the whole privacy contract to `docs/privacy.md`, and how it's built to `docs/architecture.md`, word for word.
+- The README no longer links to repositories that aren't public.
+- An example voice guide, made up from start to finish, to copy and change: `docs/voice-guide-example.md`.
+- A download: every release has a zip of the app, built and tested on GitHub, so you don't need to build it.
+- More room between the chat's name and Send, and between Adjust and the name.
+
 ## 0.7.2
 
 - The README opens with an animation of the strip at work under a simplified chat window: a message typed in Spanish, translated with ⏎ and sent with ⌘⏎. It says what the app is in one line, a companion for your Teams.

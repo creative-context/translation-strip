@@ -46,7 +46,7 @@
   .status.tag { height: 20px; }
   .btn.adjust-btn, .actions .btn, #chip { height: 24px; font-size: var(--csm-text-body); }
   .adjust-btn { flex: none; }
-  #adjustBtn { margin-right: 8px; } /* 24 px to "To <chat>": Adjust edits, the name goes with Send */
+  #adjustBtn { margin-right: 16px; } /* 24 px to "To <chat>": Adjust edits, the name goes with Send */
   #pencil { display: inline-flex; }
   .btn kbd { font: inherit; }
   .adjust-btn svg.i { width: 12px; height: 12px; }
@@ -97,7 +97,7 @@
   .preview { color: var(--color-text-secondary); white-space: nowrap; }
   /* The chat's name gives way first, so a notice beside it stays whole. */
   /* The chat's name gives way first (down to about "To Castellan…"), so a notice beside it stays whole. */
-  .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; }
+  .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; margin-right: 8px; }   /* 16 px to Send: with it, not stuck to it */
   .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
   [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
   .more-btn { flex: none; width: 28px; height: 28px; }

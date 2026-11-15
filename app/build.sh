@@ -4,6 +4,7 @@
 #
 #   sh app/build.sh            build
 #   sh app/build.sh --install  build, copy to ~/Applications and open it
+#   sh app/build.sh --release  build and zip it for a GitHub release (signed ad hoc, always)
 #
 # Signing: with a code-signing identity named "Translation Strip Local Signing" in the keychain
 # (a self-signed certificate made on this Mac), the Accessibility grant survives rebuilds.
@@ -53,13 +54,22 @@ cp -R public "$APP/Contents/Resources/"
 # Signed with a local identity when the keychain has one, so macOS sees every build as the same
 # app and the Accessibility grant survives a rebuild. Otherwise ad hoc, and each build has to be
 # allowed again.
+# A release is always ad hoc: a local identity belongs to one Mac and means nothing on another.
 IDENTITY="Translation Strip Local Signing"
-if security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+if [ "$1" != "--release" ] && security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
   codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1
 else
   codesign --force --sign - "$APP" >/dev/null
 fi
 echo "Built $APP"
+
+if [ "$1" = "--release" ]; then
+  VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" app/Info.plist)
+  ZIP="build/Translation-Strip-$VERSION.zip"
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  echo "Zipped $ZIP"
+fi
 
 if [ "$1" = "--install" ]; then
   DEST="$HOME/Applications/$NAME.app"
