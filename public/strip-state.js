@@ -62,6 +62,8 @@
   }
   // Teams is there but its message box can't be found.
   const shapeUnknown = st => !!st.teams && !!st.teams.open && st.teams.shape === "unknown";
+  // More than one message box in Teams (a channel with a reply open) and none has the cursor.
+  const shapeSeveral = st => !!st.teams && !!st.teams.open && st.teams.shape === "several";
 
   // ---------------------------------------------------------------------------- what the strip shows
   const clock = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -102,6 +104,7 @@
     else if (p === "idle" && tr.guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (t && !t.open) tag("idle", "Teams isn't open", [{ act: "open-teams", label: "Open Teams" }]);
     else if (shapeUnknown(st)) tag("idle", "Can't find Teams' message box");
+    else if (shapeSeveral(st)) tag("needs", "Click the box in Teams first");
     else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
     else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
     else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
@@ -141,7 +144,7 @@
   function canSend(st, f, afterDraft) {
     const t = st.teams;
     if (!(st.phase === "ready" || (afterDraft && st.phase === "draft"))) return false;
-    return !!trim(f.en) && !!(t && t.open && t.chat) && !shapeUnknown(st) && !mismatch(st) && st.access.accessibility !== false && !st.dictStopping;
+    return !!trim(f.en) && !!(t && t.open && t.chat) && !shapeUnknown(st) && !shapeSeveral(st) && !mismatch(st) && st.access.accessibility !== false && !st.dictStopping;
   }
 
   // ---------------------------------------------------------------------------- translating and adjusting
@@ -281,6 +284,8 @@
       // Teams may still take the paste late (the clipboard keeps the English a few seconds): if it
       // lands, the next send finds our own text there, never offers to add it again.
       case "no-paste": n.leftover = st.lastText; n.notice = { kind: "error", text: "Teams didn't take it. Not sent" }; break;
+      // Two boxes and none with the cursor, found at send time: nothing was pasted.
+      case "which-box": n.notice = { kind: "needs", text: "Click the box in Teams first" }; break;
       // The page isn't the one inside this app: the shell refused to send for it.
       case "not-own-server": n.notice = { kind: "error", text: "Not the app's own page. Not sent" }; break;
       default: n.notice = { kind: "error", text: "Couldn't send" };
@@ -342,7 +347,7 @@
   }
 
   const api = {
-    create, context, mismatch, shapeUnknown, errorView, view, dataTeams, dictLabel, doneView, untilText, clock,
+    create, context, mismatch, shapeUnknown, shapeSeveral, errorView, view, dataTeams, dictLabel, doneView, untilText, clock,
     canTranslate, canAdjust, canSend,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,

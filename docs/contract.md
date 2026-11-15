@@ -50,8 +50,8 @@ Page → shell (`msg.type`):
 - `ready` `{}`: the page has loaded; the shell answers with `teams` and `access`.
 
 Shell → page (`window.strip.<fn>(arg)`):
-- `teams({ open, chat, from, last, draft })`: Teams is running or not, the chat open in it (`null` when no chat is open), the last message's author and text (for context, `null` when unknown), whether the message box already holds a draft, and `shape`: `"ok"`, or `"unknown"` when a Teams window is there but its message box can't be found. Sent when it changes.
-- `sent({ ok, reason? })`: after `send`. `reason`: `no-teams`, `no-chat`, `draft` (a draft is there and `afterDraft` wasn't set), `not-front` (Teams didn't come forward; the page offers no retry button, Send is the retry), `mismatch` (the box didn't hold the text; what was pasted stays in the box, so the page offers no retry), `no-access` (no Accessibility permission), `no-paste` (the box never changed after ⌘V: nothing was pasted), `not-own-server` (the page or the server isn't this app's own: nothing is done), `chat-changed` (Teams has another chat open than the one in `chat`; nothing was pasted, and the page says so with no retry), `not-sent` (Return was pressed, or Teams lost the front before it, and the box didn't empty: the text stays in the box and the page offers no retry).
+- `teams({ open, chat, from, last, draft })`: Teams is running or not, the chat open in it (`null` when no chat is open), the last message's author and text (for context, `null` when unknown), whether the message box already holds a draft, and `shape`: `"ok"`, `"unknown"` when a Teams window is there but its message box can't be found, or `"several"` when it has more than one message box (a channel with a reply open) and none has Teams' cursor; the page then shows an orange "Click the box in Teams first" and keeps Send off. Sent when it changes.
+- `sent({ ok, reason? })`: after `send`. `reason`: `no-teams`, `no-chat`, `draft` (a draft is there and `afterDraft` wasn't set), `not-front` (Teams didn't come forward; the page offers no retry button, Send is the retry), `mismatch` (the box didn't hold the text; what was pasted stays in the box, so the page offers no retry), `no-access` (no Accessibility permission), `no-paste` (the box never changed after ⌘V: nothing was pasted), `which-box` (more than one message box and none with the cursor, found at send time: nothing was pasted), `not-own-server` (the page or the server isn't this app's own: nothing is done), `chat-changed` (Teams has another chat open than the one in `chat`; nothing was pasted, and the page says so with no retry), `not-sent` (Return was pressed, or Teams lost the front before it, and the box didn't empty: the text stays in the box and the page offers no retry).
 - `dictation({ state: "on" | "off" | "denied" | "preparing" | "unavailable", text?, progress? })`: `text` is the whole transcript so far, which replaces what dictation added to the field. `progress` (0 to 1, in whole percents) comes with `preparing` while macOS downloads the Spanish model.
 - `access({ accessibility: true | false, microphone: "granted" | "denied" | "unknown" })`.
 - `focus()`: the global shortcut was pressed: focus the Spanish field.
@@ -90,7 +90,8 @@ Shell:
 - The settings menu (Choose Voice Guide…, Choose Voice Linter…) sends the path to `POST /api/settings` instead of writing the file.
 - Teams' strings and DOM identifiers live in one place (a `TeamsShape`); the message box is found by role and identifier, not by its English placeholder. When a Teams window is there but its message box can't be found, the shell logs it once per window and title, and `teams()` carries `shape: "unknown"` (otherwise `"ok"`).
 - Reading Teams and docking happen off the main thread; only the window's frame and ordering change on it. Between Accessibility notifications, the window list (no calls into Teams) is enough to follow the window.
-- A chat name comes only from a chat's window title (`Chat | <name> | …`); other views have no chat.
+- A chat name comes only from a chat's window title (`Chat | <name> | …`); other views have no chat. In Teams' current layout, channels live in the Chat view too, so they count as chats.
+- With more than one message box in the window (a channel with a reply open), the shell sends to the one with Teams' cursor; with none, `teams()` says `shape: "several"` and a send is `which-box`. While there are several, the shell looks again every second, so it follows the cursor.
 
 Page:
 - A translation remembers the chat it was written for. If the chat in Teams changes while the English is ready, a red tag "Written for <chat>" shows (with the out-of-date translation, the states that keep Send off use the error color), and Send is off until you translate again (⏎) or go back to that chat.
@@ -114,3 +115,14 @@ Page:
 - The horizontal strip doesn't change: its seven frames stay byte-identical.
 - A square window counts as the column. In the column, the dictation label and the Preview note sit in a row of their own above the Spanish footer. A notice beside Adjust may shorten with an ellipsis in the column's narrow footer; its title holds the whole words.
 - A layout change while Teams isn't running takes effect when Teams comes back. At launch, the last docked frame is reused until Teams is found.
+
+## Four sides and the size (0.6.0)
+
+Shell:
+- Layout setting (`layout` in the app's preferences): `automatic` (the default), `below`, `above`, `left`, `right`; the 0.5 names `under` and `beside` read as `below` and `right`. The app menu's "Layout" submenu has Automatic, Below Teams, Above Teams, Left of Teams and Right of Teams as radio items.
+- Below and above are the strip, exactly as wide as Teams, against Teams' bottom or top edge; left and right are the column, exactly as tall as Teams and level with it, against Teams' left or right edge. A forced side with no room sits inside the visible frame on that side, over Teams.
+- Automatic: below when the strip's height fits under Teams; else right, else left, when the column's width fits; else above, when the strip's height fits; else right, inside the visible frame.
+- Size: the user drags the outer edge (a 6 pt band: the bottom edge below, the top edge above, the right edge on the right, the left edge on the left) to set the strip's height (110 to 360 pt, 145 by default) or the column's width (300 to 640 pt, 360 by default). The side next to Teams holds still while dragging; the measure is kept (`stripHeight`, `columnWidth` in the preferences) and counts in Automatic's choice.
+
+Page:
+- The page fills its window: the strip is as tall as the window, up to 360 pt; the column's layout still follows the window's shape (taller than wide).

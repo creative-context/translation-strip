@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+- The strip goes on any side of Teams: Layout in the app menu has Automatic, Below Teams, Above Teams, Left of Teams and Right of Teams. Automatic tries below, then right, then left, then above.
+- Drag the strip's outer edge to set its height, from 110 to 360 pt, or the column's to set its width, from 300 to 640 pt. The side next to Teams holds still, and the app remembers the size.
+
+## 0.5.2
+
+- With two message boxes in Teams, as in a channel with a reply open, the strip sends to the one with Teams' cursor. If neither has it, the strip says "Click the box in Teams first" and pastes nothing, so a reply never lands as a new post.
+
+## 0.5.1
+
+- Fix: when Teams takes a moment to build a view, as it does when a channel opens, the strip no longer stays on "Can't find Teams' message box". It looks again every second until the box is there. Channels live in Teams' Chat view, so the strip sends to them like any chat.
+
 ## 0.5.0
 
 - A column beside Teams for when there's no room under it: as tall as Teams' window, on its right edge or else its left, with the English on top and your Spanish below. Layout in the app menu picks Automatic, Under Teams or Beside Teams.

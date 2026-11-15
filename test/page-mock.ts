@@ -9,7 +9,7 @@
 //   kindly    a polish with a voice-check finding    STARTING  the translator starts again (3 s) before it answers
 //   LOGIN     error "login" (Claude Code isn't signed in)      UPDATE    error "update" (Claude Code needs an update)
 // Adjust notes: "corto" or "short" gives a shorter English; "UNCLEAR" a question; "OFFLINE" and the others as above.
-// The page's own preview flags (in the URL, for the stand-in Teams): ?shape=unknown (Teams' message box can't be found),
+// The page's own preview flags (in the URL, for the stand-in Teams): ?shape=unknown (Teams' message box can't be found), ?shape=several (two boxes, none with the cursor),
 // ?send=no-paste or ?send=not-own-server (and the other send reasons), ?teams=closed|nochat, ?draft=1, ?access=0, ?mic=denied.
 import { join } from "node:path";
 

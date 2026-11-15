@@ -913,6 +913,25 @@ check("Teams", "Teams closes while a translation is ready: tag appears, Send goe
 
 const DANIEL_TEAMS = { open: true, chat: "Daniel Okafor", from: "Daniel Okafor", last: "Thanks, see you then.", draft: false, shape: "ok" };
 const PRIYA_TEAMS = { open: true, chat: "Priya Raman", from: "Priya Raman", last: LAST, draft: false, shape: "ok" };
+check("Teams", "two boxes and no cursor (?shape=several): orange 'Click the box in Teams first', the chat shown, Send off after a translation", async () => {
+  const t = await open("shape=several");
+  await translateFlow(t);
+  eq(await tagText(t.p), "Click the box in Teams first", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-needs", "tag class (orange)");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  ok(await vis(t.p, "#to"), "the 'To' chat name should show");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+  await t.p.keyboard.press("Meta+Enter");
+  await settle(t.p, 200);
+  eq((await sends(t)).length, 0, "send messages");
+});
+check("Send reasons", "which-box: orange 'Click the box in Teams first', no button, the text stays, Send on again", async () => {
+  const t = await failedSend("which-box");
+  eq(await tagText(t.p), "Click the box in Teams first", "tag");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+});
 check("Teams", "box not found (?shape=unknown): gray notice, no chat name, no button; Send stays off after a translation", async () => {
   const t = await open("shape=unknown");
   eq(await tagText(t.p), "Can't find Teams' message box", "tag");

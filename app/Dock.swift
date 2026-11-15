@@ -1,6 +1,7 @@
-// Where the strip goes. Two shapes: the strip right under Teams' main window, exactly as wide,
-// its top edge on Teams' bottom edge; or a column beside it, 360 pt wide, exactly as tall as
-// Teams and level with it. Pure math, so the check can try it with made-up screens.
+// Where the strip goes. Four sides of Teams' main window: below or above it, a strip exactly as
+// wide as Teams; left or right of it, a column exactly as tall as Teams and level with it. The
+// other measure (the strip's height, the column's width) is the user's, within limits. Pure
+// math, so the check can try it with made-up screens.
 
 import CoreGraphics
 
@@ -11,18 +12,42 @@ struct ScreenArea {
 
 // The layout setting, kept in the app's preferences under "layout".
 enum DockLayout: String, CaseIterable {
-    case automatic, under, beside
+    case automatic, below, above, left, right
+
+    // What the preferences hold, including the names 0.5 saved ("under" and "beside").
+    init?(saved: String) {
+        switch saved {
+        case "under": self = .below
+        case "beside": self = .right
+        default: self.init(rawValue: saved)
+        }
+    }
 }
 
-// The shape the window takes.
+// The side the window takes.
 enum DockShape: Equatable {
-    case under, beside
+    case below, above, left, right
+    var isColumn: Bool { self == .left || self == .right }
+}
+
+// The measures the user sets by dragging the strip's outer edge.
+struct DockSize: Equatable {
+    var stripHeight: CGFloat = Dock.height
+    var columnWidth: CGFloat = Dock.columnWidth
+
+    // Kept inside the limits, whatever the preferences hold.
+    var clamped: DockSize {
+        DockSize(stripHeight: min(max(stripHeight, Dock.heights.lowerBound), Dock.heights.upperBound),
+                 columnWidth: min(max(columnWidth, Dock.widths.lowerBound), Dock.widths.upperBound))
+    }
 }
 
 enum Dock {
-    static let height: CGFloat = 145
+    static let height: CGFloat = 145 // the strip's height, until the user sets another
     static let firstWidth: CGFloat = 900
-    static let columnWidth: CGFloat = 360
+    static let columnWidth: CGFloat = 360 // the column's width, until the user sets another
+    static let heights: ClosedRange<CGFloat> = 110...360
+    static let widths: ClosedRange<CGFloat> = 300...640
 
     // A top-left-origin rect (Accessibility, the window list) in AppKit's coordinates, which
     // count up from the bottom of the main screen (the one with the menu bar).
@@ -30,62 +55,106 @@ enum Dock {
         CGRect(x: r.minX, y: mainHeight - r.maxY, width: r.width, height: r.height)
     }
 
-    // The window's frame for a Teams window (top-left origin) and the layout setting.
-    static func frame(for teams: CGRect, layout: DockLayout, screens: [ScreenArea], mainHeight: CGFloat) -> CGRect {
-        switch shape(for: teams, layout: layout, screens: screens, mainHeight: mainHeight) {
-        case .under: return frame(under: teams, screens: screens, mainHeight: mainHeight)
-        case .beside: return frame(beside: teams, screens: screens, mainHeight: mainHeight)
+    // The window's frame for a Teams window (top-left origin), the layout setting and the sizes.
+    static func frame(for teams: CGRect, layout: DockLayout, screens: [ScreenArea], mainHeight: CGFloat,
+                      size: DockSize = DockSize()) -> CGRect {
+        frame(shape(for: teams, layout: layout, screens: screens, mainHeight: mainHeight, size: size),
+              teams: teams, screens: screens, mainHeight: mainHeight, size: size)
+    }
+
+    static func frame(_ shape: DockShape, teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat,
+                      size: DockSize = DockSize()) -> CGRect {
+        let s = size.clamped
+        switch shape {
+        case .below: return frame(under: teams, screens: screens, mainHeight: mainHeight, height: s.stripHeight)
+        case .above: return frame(above: teams, screens: screens, mainHeight: mainHeight, height: s.stripHeight)
+        case .left: return frame(left: teams, screens: screens, mainHeight: mainHeight, width: s.columnWidth)
+        case .right: return frame(right: teams, screens: screens, mainHeight: mainHeight, width: s.columnWidth)
         }
     }
 
-    // Under and Beside force their shape. Automatic: under Teams when its screen's visible
-    // frame has at least the strip's height free below Teams' window, else beside it. With
-    // no screen to measure against, under, as before.
-    static func shape(for teams: CGRect, layout: DockLayout, screens: [ScreenArea], mainHeight: CGFloat) -> DockShape {
+    // A forced side is that side. Automatic: below Teams when its screen's visible frame has the
+    // strip's height free there; else the right side, else the left, when the column's width
+    // fits; else above, when the strip's height fits; else the right side, inside the visible
+    // frame, over Teams. With no screen to measure against, below.
+    static func shape(for teams: CGRect, layout: DockLayout, screens: [ScreenArea], mainHeight: CGFloat,
+                      size: DockSize = DockSize()) -> DockShape {
         switch layout {
-        case .under: return .under
-        case .beside: return .beside
+        case .below: return .below
+        case .above: return .above
+        case .left: return .left
+        case .right: return .right
         case .automatic:
+            let s = size.clamped
             let t = appKit(teams, mainHeight: mainHeight)
-            guard let screen = screen(of: t, screens: screens) else { return .under }
-            return t.minY - screen.visible.minY >= height ? .under : .beside
+            guard let v = screen(of: t, screens: screens)?.visible else { return .below }
+            if t.minY - v.minY >= s.stripHeight { return .below }
+            if v.maxX - t.maxX >= s.columnWidth { return .right }
+            if t.minX - v.minX >= s.columnWidth { return .left }
+            if v.maxY - t.maxY >= s.stripHeight { return .above }
+            return .right
         }
     }
 
-    // The strip's frame for a Teams window (top-left origin). With less than its height free
-    // under Teams, it sits at the bottom of that screen's visible area instead.
-    static func frame(under teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat) -> CGRect {
+    // Below Teams, exactly as wide, its top edge on Teams' bottom edge. With less than its height
+    // free there, it sits at the bottom of that screen's visible area instead.
+    static func frame(under teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat, height h: CGFloat = height) -> CGRect {
         let t = appKit(teams, mainHeight: mainHeight)
-        var y = t.minY - height
+        var y = t.minY - h
         if let screen = screen(of: t, screens: screens), y < screen.visible.minY { y = screen.visible.minY }
-        return CGRect(x: t.minX, y: y, width: t.width, height: height)
+        return CGRect(x: t.minX, y: y, width: t.width, height: h)
     }
 
-    // The column's frame for a Teams window (top-left origin): exactly as tall as Teams and
-    // level with it, against Teams' right edge when the visible frame has the column's width
-    // there, else against its left edge. With room on neither side, inside the visible frame
-    // at Teams' right edge, over Teams.
-    static func frame(beside teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat) -> CGRect {
+    // Above Teams, exactly as wide, its bottom edge on Teams' top edge. With less than its height
+    // free there, it sits at the top of that screen's visible area instead.
+    static func frame(above teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat, height h: CGFloat = height) -> CGRect {
         let t = appKit(teams, mainHeight: mainHeight)
-        let w = columnWidth
+        var y = t.maxY
+        if let screen = screen(of: t, screens: screens), y + h > screen.visible.maxY { y = screen.visible.maxY - h }
+        return CGRect(x: t.minX, y: y, width: t.width, height: h)
+    }
+
+    // Right of Teams, exactly as tall and level with it. With less than its width free there,
+    // inside the visible frame at Teams' right edge, over Teams.
+    static func frame(right teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat, width w: CGFloat = columnWidth) -> CGRect {
+        let t = appKit(teams, mainHeight: mainHeight)
         var x = t.maxX
-        if let v = screen(of: t, screens: screens)?.visible {
-            if v.maxX - t.maxX >= w {
-                x = t.maxX
-            } else if t.minX - v.minX >= w {
-                x = t.minX - w
-            } else {
-                x = max(v.minX, min(t.maxX, v.maxX) - w)
-            }
+        if let v = screen(of: t, screens: screens)?.visible, v.maxX - t.maxX < w {
+            x = max(v.minX, min(t.maxX, v.maxX) - w)
         }
         return CGRect(x: x, y: t.minY, width: w, height: t.height)
     }
 
+    // Left of Teams, exactly as tall and level with it. With less than its width free there,
+    // inside the visible frame at Teams' left edge, over Teams.
+    static func frame(left teams: CGRect, screens: [ScreenArea], mainHeight: CGFloat, width w: CGFloat = columnWidth) -> CGRect {
+        let t = appKit(teams, mainHeight: mainHeight)
+        var x = t.minX - w
+        if let v = screen(of: t, screens: screens)?.visible, t.minX - v.minX < w {
+            x = min(v.maxX - w, max(t.minX, v.minX))
+        }
+        return CGRect(x: x, y: t.minY, width: w, height: t.height)
+    }
+
+    // A drag of the outer edge by `delta` points (screen coordinates, up and right positive): the
+    // new measure, kept inside its limits. Below: the bottom edge goes down to grow; above: the
+    // top edge goes up; right: the right edge goes right; left: the left edge goes left.
+    static func resized(_ size: DockSize, shape: DockShape, delta: CGPoint) -> DockSize {
+        var s = size
+        switch shape {
+        case .below: s.stripHeight -= delta.y
+        case .above: s.stripHeight += delta.y
+        case .right: s.columnWidth += delta.x
+        case .left: s.columnWidth -= delta.x
+        }
+        return s.clamped
+    }
+
     // The first launch with Teams closed: the bottom of the main screen, 900 pt wide.
-    static func firstFrame(main: ScreenArea) -> CGRect {
+    static func firstFrame(main: ScreenArea, height h: CGFloat = height) -> CGRect {
         let v = main.visible
         let w = min(firstWidth, v.width)
-        return CGRect(x: v.midX - w / 2, y: v.minY, width: w, height: height)
+        return CGRect(x: v.midX - w / 2, y: v.minY, width: w, height: h)
     }
 
     // Teams' screen (Teams in AppKit's coordinates): the one under its bottom edge, else the

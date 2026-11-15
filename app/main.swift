@@ -22,6 +22,56 @@ let stripCornerRadius: CGFloat = 10 // the page's --radius-raised, which its .st
 let stripDir: URL = ProcessInfo.processInfo.environment["STRIP_DIR"].map { URL(fileURLWithPath: $0) }
     ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".translation-strip")
 
+// The strip's outer edge: a band the user drags to set the strip's height (below or above Teams)
+// or the column's width (left or right of it). Anywhere else, clicks go through to the page.
+final class EdgeResizer: NSView {
+    static let band: CGFloat = 6
+    var shape: DockShape = .below {
+        didSet { if shape != oldValue { window?.invalidateCursorRects(for: self) } }
+    }
+    var onStart: () -> Void = {}
+    var onDrag: (CGPoint) -> Void = { _ in } // how far the pointer went since the press, up and right positive
+    var onEnd: () -> Void = {}
+    private(set) var dragging = false
+    private var pressedAt = CGPoint.zero
+
+    var edge: NSRect {
+        let b = bounds, w = Self.band
+        switch shape {
+        case .below: return NSRect(x: 0, y: 0, width: b.width, height: w)
+        case .above: return NSRect(x: 0, y: b.height - w, width: b.width, height: w)
+        case .right: return NSRect(x: b.width - w, y: 0, width: w, height: b.height)
+        case .left: return NSRect(x: 0, y: 0, width: w, height: b.height)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        edge.contains(convert(point, from: superview)) ? self : nil
+    }
+    override func resetCursorRects() {
+        addCursorRect(edge, cursor: shape.isColumn ? .resizeLeftRight : .resizeUpDown)
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    // Where the event happened, on the screen: from the event itself (the window may have moved
+    // or grown since the press, and the event says where it was then).
+    private func onScreen(_ event: NSEvent) -> CGPoint {
+        event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+    }
+    override func mouseDown(with event: NSEvent) {
+        dragging = true
+        pressedAt = onScreen(event)
+        onStart()
+    }
+    override func mouseDragged(with event: NSEvent) {
+        let now = onScreen(event)
+        onDrag(CGPoint(x: now.x - pressedAt.x, y: now.y - pressedAt.y))
+    }
+    override func mouseUp(with event: NSEvent) {
+        dragging = false
+        onEnd()
+    }
+}
+
 // Borderless, and still able to take the keyboard so the page's fields work.
 final class StripWindow: NSWindow {
     override var canBecomeKey: Bool { true }
@@ -54,6 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var firstPlace = true // the strip's first placement at launch also makes it active
     var followedPid: pid_t = 0
     var layoutMenu: NSMenu? // the app menu's Layout submenu
+    let resizer = EdgeResizer() // the strip's outer edge, to drag
+    var resizeStart: (size: DockSize, frame: NSRect)?
+    var resizedTo: DockSize?
 
     // The server answering on the port: whether it's this app's own, by pid.
     var checkedServers: [pid_t: Bool] = [:]
@@ -192,18 +245,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             content.layer?.masksToBounds = true
             web.frame = content.bounds
             content.addSubview(web)
+            // The outer edge, over the page's 8 pt margin: drag it to set the strip's height or the
+            // column's width.
+            resizer.frame = content.bounds
+            resizer.autoresizingMask = [.width, .height]
+            resizer.onStart = { [weak self] in self?.resizeStarted() }
+            resizer.onDrag = { [weak self] delta in self?.resizeDragged(delta) }
+            resizer.onEnd = { [weak self] in self?.resizeEnded() }
+            content.addSubview(resizer)
         }
         window.setFrame(savedFrame ?? Dock.firstFrame(main: screenAreas.first ?? ScreenArea(frame: .zero, visible: .zero)), display: false)
     }
 
     var screenAreas: [ScreenArea] { NSScreen.screens.map { ScreenArea(frame: $0.frame, visible: $0.visibleFrame) } }
 
-    // The last place the strip was docked, if it's still on a screen.
-    // The layout setting: automatic (the default), under Teams or beside it.
+    // The layout setting: automatic (the default), or below, above, left or right of Teams.
     var layout: DockLayout {
-        get { defaults.string(forKey: "layout").flatMap(DockLayout.init(rawValue:)) ?? .automatic }
+        get { defaults.string(forKey: "layout").flatMap(DockLayout.init(saved:)) ?? .automatic }
         set { defaults.set(newValue.rawValue, forKey: "layout") }
     }
+
+    // The strip's height and the column's width, as the user last dragged them.
+    var dockSize: DockSize {
+        get {
+            let h = defaults.double(forKey: "stripHeight"), w = defaults.double(forKey: "columnWidth")
+            return DockSize(stripHeight: h > 0 ? CGFloat(h) : Dock.height, columnWidth: w > 0 ? CGFloat(w) : Dock.columnWidth).clamped
+        }
+        set {
+            defaults.set(Double(newValue.stripHeight), forKey: "stripHeight")
+            defaults.set(Double(newValue.columnWidth), forKey: "columnWidth")
+        }
+    }
+
+    // The last place the strip was docked, if it's still on a screen.
 
     var savedFrame: NSRect? {
         guard let s = defaults.string(forKey: "stripFrame") else { return nil }
@@ -230,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         dockAX = dockAX || ax
         dockShow = dockShow || show
         guard !docking else { dockAgain = true; return }
+        guard !resizer.dragging else { return } // the user is dragging its edge: it docks again after
         guard !NSApp.isHidden else { dockRaise = false; dockAX = false; dockShow = false; return }
         let raise = dockRaise, ax = dockAX, show = dockShow
         dockRaise = false
@@ -250,12 +325,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let screens = screenAreas
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
         let layout = self.layout
+        let size = self.dockSize
         let f = follower
         dockQueue.async {
             let w = f.window(of: teams, ax: ax)
-            let frame = w.flatMap { $0.onScreen ? Dock.frame(for: $0.frame, layout: layout, screens: screens, mainHeight: mainHeight) : nil }
+            let shape = w.map { Dock.shape(for: $0.frame, layout: layout, screens: screens, mainHeight: mainHeight, size: size) }
+            let frame = w.flatMap { t in t.onScreen ? shape.map { Dock.frame($0, teams: t.frame, screens: screens, mainHeight: mainHeight, size: size) } : nil }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    if let shape { self.resizer.shape = shape }
                     self.place(frame, raise: raise, show: show)
                     self.docking = false
                     if self.dockAgain {
@@ -265,6 +343,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 }
             }
         }
+    }
+
+    // Dragging the outer edge: the window follows the pointer, with the side next to Teams held
+    // where it is; the new measure is kept when the drag ends, and the strip docks again.
+    func resizeStarted() {
+        resizeStart = (dockSize, window.frame)
+        resizedTo = nil
+    }
+
+    func resizeDragged(_ delta: CGPoint) {
+        guard let start = resizeStart else { return }
+        let s = Dock.resized(start.size, shape: resizer.shape, delta: delta)
+        var f = start.frame
+        switch resizer.shape {
+        case .below: f.size.height = s.stripHeight; f.origin.y = start.frame.maxY - s.stripHeight
+        case .above: f.size.height = s.stripHeight
+        case .right: f.size.width = s.columnWidth
+        case .left: f.size.width = s.columnWidth; f.origin.x = start.frame.maxX - s.columnWidth
+        }
+        window.setFrame(f, display: true, animate: false)
+        resizedTo = s
+    }
+
+    func resizeEnded() {
+        if let s = resizedTo {
+            dockSize = s
+            ShellLog.write(resizer.shape.isColumn ? "size: column \(Int(s.columnWidth)) pt wide" : "size: strip \(Int(s.stripHeight)) pt tall")
+        }
+        resizeStart = nil
+        resizedTo = nil
+        dock()
     }
 
     // nil: Teams' window isn't on screen, so the strip steps out (unless `show`).
@@ -674,7 +783,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     // on the current one.
     func layoutItem() -> NSMenuItem {
         let menu = NSMenu(title: "Layout")
-        let titles: [DockLayout: String] = [.automatic: "Automatic", .under: "Under Teams", .beside: "Beside Teams"]
+        let titles: [DockLayout: String] = [.automatic: "Automatic", .below: "Below Teams", .above: "Above Teams",
+                                            .left: "Left of Teams", .right: "Right of Teams"]
         for l in DockLayout.allCases {
             let i = item(titles[l] ?? l.rawValue, #selector(chooseLayout(_:)), "")
             i.representedObject = l.rawValue

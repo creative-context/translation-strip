@@ -18,7 +18,7 @@
   /* In the app the window is clear and rounded like the strip, so only the strip shows: the family's
      body color, as in Session Monitor's window, with the boxes as veils on it. */
   body.embed { background: transparent; }
-  .strip { position: relative; width: 100%; height: 145px; border-radius: var(--radius-raised); background: var(--color-background-body);
+  .strip { position: relative; width: 100%; height: min(100vh, 360px); /* the window's height: 145 pt until the user drags it taller */ border-radius: var(--radius-raised); background: var(--color-background-body);
     padding: 8px; }
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; height: 100%; min-height: 0; }
   .f { position: relative; display: grid; grid-template-rows: 1fr auto; gap: 6px; min-height: 0; min-width: 0;
@@ -256,7 +256,7 @@ function post(msg) {
 
 // The stand-in bridge, for a browser with no shell: a made-up chat and a made-up last message, and a
 // send that succeeds after a moment without sending anything. The query string picks a case to
-// try: ?teams=closed|nochat  ?shape=unknown  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
+// try: ?teams=closed|nochat  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
 // ?send=draft|no-teams|no-chat|not-front|mismatch|not-sent|chat-changed|no-paste|not-own-server|no-access
 const qp = new URLSearchParams(location.search);
 const PREVIEW_DICTATION = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.".split(" ");
@@ -264,7 +264,7 @@ let previewTimer;
 function previewTeams() {
   const t = qp.get("teams");
   if (t === "closed") return { open: false, chat: null, from: null, last: null, draft: false, shape: "ok" };
-  const shape = qp.get("shape") === "unknown" ? "unknown" : "ok";
+  const shape = ["unknown", "several"].includes(qp.get("shape")) ? qp.get("shape") : "ok";
   if (t === "nochat") return { open: true, chat: null, from: null, last: null, draft: false, shape };
   return { open: true, chat: "Priya Raman", from: "Priya Raman", last: "Could you send me the budget numbers before Thursday?", draft: qp.get("draft") === "1", shape };
 }

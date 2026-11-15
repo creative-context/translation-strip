@@ -93,23 +93,26 @@ enum SwiftCheck {
         vertical()
     }
 
-    // The column beside Teams (0.5.0) and the layout setting. Same made-up screens.
+    // The four sides (0.6.0), the layout setting and the sizes. Same made-up screens.
     static func vertical() {
-        func shape(_ t: CGRect, _ l: DockLayout = .automatic, _ s: [ScreenArea] = [mainScreen]) -> DockShape {
-            Dock.shape(for: t, layout: l, screens: s, mainHeight: mainHeight)
+        func shape(_ t: CGRect, _ l: DockLayout = .automatic, _ s: [ScreenArea] = [mainScreen], _ z: DockSize = DockSize()) -> DockShape {
+            Dock.shape(for: t, layout: l, screens: s, mainHeight: mainHeight, size: z)
         }
-        func frame(_ t: CGRect, _ l: DockLayout = .automatic, _ s: [ScreenArea] = [mainScreen]) -> CGRect {
-            Dock.frame(for: t, layout: l, screens: s, mainHeight: mainHeight)
+        func frame(_ t: CGRect, _ l: DockLayout = .automatic, _ s: [ScreenArea] = [mainScreen], _ z: DockSize = DockSize()) -> CGRect {
+            Dock.frame(for: t, layout: l, screens: s, mainHeight: mainHeight, size: z)
         }
-        check("layout: the column is 360 pt wide", Dock.columnWidth, 360)
-        check("layout: the settings' names", DockLayout.allCases.map(\.rawValue), ["automatic", "under", "beside"])
+        check("layout: the column is 360 pt wide until set", Dock.columnWidth, 360)
+        check("layout: the settings' names", DockLayout.allCases.map(\.rawValue), ["automatic", "below", "above", "left", "right"])
+        check("layout: 0.5's 'under' reads as below", DockLayout(saved: "under"), .below)
+        check("layout: 0.5's 'beside' reads as right", DockLayout(saved: "beside"), .right)
+        check("layout: an unknown name is no setting", DockLayout(saved: "sideways"), nil)
 
-        // Room below: Automatic is the strip under Teams, exactly as frame(under:).
+        // Room below: Automatic is the strip below Teams, exactly as frame(under:).
         let roomy = rect(100, 50, 800, 500)
-        check("automatic: room below, under Teams", shape(roomy), .under)
+        check("automatic: room below, below Teams", shape(roomy), .below)
         check("automatic: room below, the same frame as the strip's", frame(roomy), Dock.frame(under: roomy, screens: [mainScreen], mainHeight: mainHeight))
-        check("automatic: exactly 145 pt below, still under", shape(rect(100, 50, 800, 665)), .under)
-        check("automatic: 144 pt below, beside", shape(rect(100, 50, 800, 666)), .beside)
+        check("automatic: exactly 145 pt below, still below", shape(rect(100, 50, 800, 665)), .below)
+        check("automatic: 144 pt below, the right side", shape(rect(100, 50, 800, 666)), .right)
 
         // No room below, room on the right: against Teams' right edge, level with it, as tall.
         let tall = rect(100, 40, 800, 780) // AppKit: x 100…900, y 80…860
@@ -120,39 +123,57 @@ enum SwiftCheck {
         check("column: exactly 360 pt free on the right still fits there", frame(rect(340, 40, 800, 780)), rect(1140, 80, 360, 780))
 
         // Only room on the left: against Teams' left edge.
-        check("automatic: 359 pt on the right, 400 on the left: against Teams' left edge", frame(rect(400, 40, 741, 780)), rect(40, 80, 360, 780))
+        check("automatic: 359 pt on the right, 400 on the left: the left side", shape(rect(400, 40, 741, 780)), .left)
+        check("automatic: the column against Teams' left edge", frame(rect(400, 40, 741, 780)), rect(40, 80, 360, 780))
         check("column: exactly 360 pt on the left fits there", frame(rect(360, 40, 1000, 780)), rect(0, 80, 360, 780))
 
-        // Room on neither side: inside the visible frame at Teams' right edge, over Teams.
-        check("automatic: no room on either side: inside, at Teams' right edge", frame(rect(200, 40, 1100, 780)), rect(940, 80, 360, 780))
+        // No room below or on either side, room above: the strip above Teams.
+        let wideLow = rect(100, 400, 1300, 465) // AppKit: y 35…500, visible 40…870: 5 below, 370 above
+        check("automatic: room only above: above Teams", shape(wideLow), .above)
+        check("automatic: above, its bottom edge on Teams' top edge, as wide", frame(wideLow), rect(100, 500, 1300, 145))
+
+        // Room nowhere: the right side, inside the visible frame, over Teams.
+        check("automatic: no room anywhere: inside, at Teams' right edge", frame(rect(200, 40, 1100, 780)), rect(940, 80, 360, 780))
         check("automatic: Teams past the right edge, no room: at the visible frame's right edge", frame(rect(100, 40, 1500, 780)), rect(1140, 80, 360, 780))
         check("automatic: Teams filling the visible frame: the column inside it, as tall as Teams", frame(rect(0, 30, 1500, 830)), rect(1140, 40, 360, 830))
 
         // Teams on a screen above the main one: that screen's visible frame decides.
         let upTall = rect(200, -870, 800, 860) // AppKit: y 910…1770, 10 pt above that screen's visible bottom
-        check("above: no room below on that screen, beside", shape(upTall, .automatic, [mainScreen, aboveScreen]), .beside)
-        check("above: the column against Teams' right edge, level with it", frame(upTall, .automatic, [mainScreen, aboveScreen]), rect(1000, 910, 360, 860))
-        check("above: room below on that screen, under", shape(rect(200, -800, 800, 600), .automatic, [mainScreen, aboveScreen]), .under)
+        check("screen above: no room below on that screen, the right side", shape(upTall, .automatic, [mainScreen, aboveScreen]), .right)
+        check("screen above: the column against Teams' right edge, level with it", frame(upTall, .automatic, [mainScreen, aboveScreen]), rect(1000, 910, 360, 860))
+        check("screen above: room below on that screen, below", shape(rect(200, -800, 800, 600), .automatic, [mainScreen, aboveScreen]), .below)
 
         // Teams on a screen to the left of the main one (visible x -1200…0): the right edge there is 0, not the main screen's.
         let leftTall = rect(-1100, 40, 900, 800)
-        check("left screen: no room below, beside", shape(leftTall, .automatic, [mainScreen, leftScreen]), .beside)
         check("left screen: 200 pt on its right, 100 on its left: inside at Teams' right edge", frame(leftTall, .automatic, [mainScreen, leftScreen]), rect(-560, 60, 360, 800))
         check("left screen: room on its right side within that screen", frame(rect(-1150, 40, 700, 800), .automatic, [mainScreen, leftScreen]), rect(-450, 60, 360, 800))
         check("left screen: only room on the left", frame(rect(-800, 40, 800, 800), .automatic, [mainScreen, leftScreen]), rect(-1160, 60, 360, 800))
 
-        // Forced settings: Under keeps the strip even with no room below; Beside makes the column
-        // even with room below, right edge first, then left.
-        check("under: forced with no room below, the strip", shape(tall, .under), .under)
-        check("under: forced, the same frame as the strip's", frame(tall, .under), Dock.frame(under: tall, screens: [mainScreen], mainHeight: mainHeight))
-        check("beside: forced with room below, the column", shape(roomy, .beside), .beside)
-        check("beside: forced, right edge first, as tall as Teams", frame(roomy, .beside), rect(900, 350, 360, 500))
-        check("beside: forced, left edge when the right has no room", frame(rect(700, 50, 800, 500), .beside), rect(340, 350, 360, 500))
-        check("beside: forced, no room either side, inside at Teams' right edge", frame(rect(200, 50, 1100, 500), .beside), rect(940, 350, 360, 500))
+        // Forced sides: each one is that side, with or without room.
+        check("below: forced with no room below, the strip at the visible bottom", frame(tall, .below), Dock.frame(under: tall, screens: [mainScreen], mainHeight: mainHeight))
+        check("above: forced, the strip's bottom edge on Teams' top edge, as wide", frame(rect(100, 300, 800, 400), .above), rect(100, 600, 800, 145))
+        check("above: forced with no room above, at the visible top", frame(rect(100, 30, 800, 500), .above), rect(100, 725, 800, 145))
+        check("right: forced with room below, the column on the right", frame(roomy, .right), rect(900, 350, 360, 500))
+        check("right: forced, no room on the right, inside at Teams' right edge", frame(rect(700, 50, 800, 500), .right), rect(1140, 350, 360, 500))
+        check("left: forced with room on the right, the column on the left", frame(rect(700, 50, 800, 500), .left), rect(340, 350, 360, 500))
+        check("left: forced, no room on the left, inside at Teams' left edge", frame(roomy, .left), rect(100, 350, 360, 500))
 
-        // No screens: Automatic stays under; Beside goes against Teams' right edge.
-        check("no screens: automatic, under", shape(tall, .automatic, []), .under)
-        check("no screens: beside, against Teams' right edge", frame(tall, .beside, []), rect(900, 80, 360, 780))
+        // Sizes: the user's height and width, inside their limits, and the room they need.
+        let taller = DockSize(stripHeight: 220, columnWidth: 480)
+        check("size: a taller strip below Teams", frame(roomy, .below, [mainScreen], taller), rect(100, 130, 800, 220))
+        check("size: a wider column on the right", frame(roomy, .right, [mainScreen], taller), rect(900, 350, 480, 500))
+        check("size: a wider column on the left grows away from Teams", frame(rect(700, 50, 800, 500), .left, [mainScreen], taller), rect(220, 350, 480, 500))
+        check("size: automatic needs the taller strip's room below", shape(rect(100, 50, 800, 600), .automatic, [mainScreen], taller), .right)
+        check("size: kept inside its limits", DockSize(stripHeight: 40, columnWidth: 2000).clamped, DockSize(stripHeight: 110, columnWidth: 640))
+        check("drag: below, the bottom edge down 50 pt makes it 50 pt taller", Dock.resized(DockSize(), shape: .below, delta: CGPoint(x: 0, y: -50)).stripHeight, 195)
+        check("drag: above, the top edge up 50 pt makes it 50 pt taller", Dock.resized(DockSize(), shape: .above, delta: CGPoint(x: 0, y: 50)).stripHeight, 195)
+        check("drag: right, the right edge out 40 pt makes it 40 pt wider", Dock.resized(DockSize(), shape: .right, delta: CGPoint(x: 40, y: 0)).columnWidth, 400)
+        check("drag: left, the left edge out 40 pt makes it 40 pt wider", Dock.resized(DockSize(), shape: .left, delta: CGPoint(x: -40, y: 0)).columnWidth, 400)
+        check("drag: never past the limits", Dock.resized(DockSize(), shape: .below, delta: CGPoint(x: 0, y: -900)).stripHeight, 360)
+
+        // No screens: Automatic stays below; Right goes against Teams' right edge.
+        check("no screens: automatic, below", shape(tall, .automatic, []), .below)
+        check("no screens: right, against Teams' right edge", frame(tall, .right, []), rect(900, 80, 360, 780))
     }
 
     static func teams() {
@@ -255,6 +276,23 @@ enum SwiftCheck {
         let renamed = Node("AXTextArea", id: "composer-7", desc: "Type a message", value: "")
         check("find: a box with an unknown id isn't taken for its placeholder", TeamsScan.find(in: chatWindow(box: renamed).window, FakeAX()).box == nil, true)
         check("find: no box in the window", TeamsScan.find(in: chatWindow(box: nil).window, FakeAX()).box == nil, true)
+        // Two boxes, as in a channel with a reply open: the one with Teams' cursor, or none.
+        let post = Node("AXTextArea", id: "new-message-p1", desc: "Type a message", value: "Type a message\n")
+        let reply = Node("AXTextArea", id: "new-message-r1", desc: "Reply", value: "Reply\n", focused: true)
+        let two = Node("AXWindow", kids: [Node("AXGroup", kids: [post]), Node("AXGroup", kids: [reply])])
+        let t = TeamsScan.find(in: two, FakeAX())
+        check("find: two boxes are both counted", t.boxes, 2)
+        check("find: of two boxes, the one with Teams' cursor", t.box === reply, true)
+        check("find: and its own placeholder", t.placeholder, "Reply")
+        check("find: two boxes with the cursor in one are not 'several'", t.several, false)
+        let replyIdle = Node("AXTextArea", id: "new-message-r2", desc: "Reply", value: "Reply\n")
+        let none = TeamsScan.find(in: Node("AXWindow", kids: [post, replyIdle]), FakeAX())
+        check("find: two boxes and no cursor: no box", none.box == nil, true)
+        check("find: two boxes and no cursor: several", none.several, true)
+        check("find: one box is taken even without the cursor", TeamsScan.find(in: Node("AXWindow", kids: [post]), FakeAX()).box === post, true)
+        check("context: several boxes and no cursor is shape several, with the chat",
+              TeamsScan.context(title: "Chat | Ops sync | Acme Org | Microsoft Teams", boxValue: nil, placeholder: "", hasList: true, from: nil, last: nil, several: true),
+              TeamsContext(open: true, chat: "Ops sync", from: nil, last: nil, draft: false, shape: "several"))
         let wide = Node("AXWindow", kids: (0..<9000).map { _ in Node("AXGroup") })
         check("find: the walk stops after 8,000 elements", TeamsScan.find(in: wide, FakeAX()).nodes, TeamsShape.walkLimit + 1)
 
@@ -337,9 +375,10 @@ final class Node {
     let desc: String
     let title: String
     let value: String?
+    let focused: Bool
     let kids: [Node]
-    init(_ role: String, id: String = "", classes: [String] = [], desc: String = "", title: String = "", value: String? = nil, kids: [Node] = []) {
-        self.role = role; self.id = id; self.classes = classes; self.desc = desc; self.title = title; self.value = value; self.kids = kids
+    init(_ role: String, id: String = "", classes: [String] = [], desc: String = "", title: String = "", value: String? = nil, focused: Bool = false, kids: [Node] = []) {
+        self.role = role; self.id = id; self.classes = classes; self.desc = desc; self.title = title; self.value = value; self.focused = focused; self.kids = kids
     }
 }
 
@@ -356,6 +395,7 @@ final class FakeAX: AXReading {
             case "AXDescription": return e.desc.isEmpty ? nil : e.desc
             case "AXTitle": return e.title.isEmpty ? nil : e.title
             case "AXValue": return e.value
+            case "AXFocused": return e.focused
             case "AXChildren": return e.kids
             default: return nil
             }

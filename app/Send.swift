@@ -14,7 +14,7 @@ import ApplicationServices
 
 struct SendOutcome {
     var ok: Bool
-    var reason: String? = nil // the contract's reasons: "not-sent", "chat-changed" and "no-paste" included
+    var reason: String? = nil // the contract's reasons: "not-sent", "chat-changed", "no-paste" and "which-box" included
     var sent = false // Return was pressed and the box emptied
 }
 
@@ -99,6 +99,12 @@ extension TeamsReader {
         guard AXIsProcessTrusted() else { return SendOutcome(ok: false, reason: "no-access") }
         guard Teams.running() != nil else { return SendOutcome(ok: false, reason: "no-teams") }
         let context = read() // a fresh look at the window, the box and the draft
+        // Two boxes (a channel with a reply open) and none with Teams' cursor: which one is the user's
+        // to say, so nothing is pasted.
+        if context.shape == "several" {
+            log("send: more than one message box in Teams and none has the cursor; nothing pasted")
+            return SendOutcome(ok: false, reason: "which-box")
+        }
         guard context.open, let app, let window, let box = composer else {
             return SendOutcome(ok: false, reason: context.open ? "no-chat" : "no-teams")
         }

@@ -49,6 +49,7 @@ enum TeamsShape {
     // Limits: a walk looks at 8,000 elements at most, 80 levels deep; the last message is
     // looked for among the last 15; a message's text is cut at 4,000 characters.
     static let walkLimit = 8000
+    static let findAgain: TimeInterval = 1 // how often to search again while the box isn't found
     static let depthLimit = 80
     static let messagesBack = 15
     static let textLimit = 4000
@@ -115,7 +116,7 @@ struct TeamsContext: Equatable {
     var from: String?
     var last: String?
     var draft: Bool
-    var shape = "ok" // "unknown": a Teams window whose message box can't be found
+    var shape = "ok" // "unknown": a Teams window whose message box can't be found; "several": more than one box (a channel with a reply open) and none has the cursor
 
     static let closed = TeamsContext(open: false, chat: nil, from: nil, last: nil, draft: false)
     static let noChat = TeamsContext(open: true, chat: nil, from: nil, last: nil, draft: false)
@@ -246,26 +247,34 @@ enum Teams {
 // The walks over a window's tree, on any AXReading: the live one or the check's made-up one.
 enum TeamsScan {
     struct Found<E> {
-        var box: E?
+        var box: E? // the one box to send to: the only one, or the one with Teams' cursor
         var placeholder: String? // the box's description
         var list: E?
         var nodes = 0
+        var boxes = 0 // message boxes in the window (a channel with a reply open has two)
+        var several: Bool { boxes > 1 && box == nil } // more than one and none has the cursor
     }
 
     // One walk of the window for the message box and the message list, by role and DOM id.
     // The messages themselves are skipped: the walk doesn't go into the list.
     static func find<R: AXReading>(in window: R.Element, _ r: R) -> Found<R.Element> {
         var found = Found<R.Element>()
+        var first: (box: R.Element, placeholder: String?)?
+        var focused: (box: R.Element, placeholder: String?)?
         var stack: [(R.Element, Int)] = [(window, 0)]
+        // Every box is counted (no stop at the first): with two, the message must go to the one
+        // the user picked in Teams, never to whichever comes first.
         while let (e, depth) = stack.popLast() {
             found.nodes += 1
-            if found.nodes > TeamsShape.walkLimit || (found.box != nil && found.list != nil) { break }
-            let v = r.attrs(e, [kAXRoleAttribute, TeamsShape.domID, kAXDescriptionAttribute, kAXChildrenAttribute])
+            if found.nodes > TeamsShape.walkLimit { break }
+            let v = r.attrs(e, [kAXRoleAttribute, TeamsShape.domID, kAXDescriptionAttribute, kAXChildrenAttribute, kAXFocusedAttribute])
             let role = v[0] as? String ?? ""
             let id = v[1] as? String ?? ""
-            if found.box == nil, role == TeamsShape.boxRole, id.hasPrefix(TeamsShape.boxIDPrefix) {
-                found.box = e
-                found.placeholder = (v[2] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if role == TeamsShape.boxRole, id.hasPrefix(TeamsShape.boxIDPrefix) {
+                found.boxes += 1
+                let one = (box: e, placeholder: (v[2] as? String).flatMap { $0.isEmpty ? nil : $0 })
+                if first == nil { first = one }
+                if (v[4] as? Bool) == true, focused == nil { focused = one }
                 continue
             }
             if id == TeamsShape.listID {
@@ -275,6 +284,9 @@ enum TeamsScan {
             guard depth < TeamsShape.depthLimit, let kids = v[3] as? [R.Element] else { continue }
             for k in kids.reversed() { stack.append((k, depth + 1)) } // depth first, in order
         }
+        let chosen = found.boxes == 1 ? first : focused
+        found.box = chosen?.box
+        found.placeholder = chosen?.placeholder
         return found
     }
 
@@ -323,8 +335,9 @@ enum TeamsScan {
     // list, and the box's value. A chat's window (or a message list) with no box is a shape
     // the shell doesn't know; any other window without one is no chat.
     static func context(title: String, boxValue: String?, placeholder: String, hasList: Bool,
-                        from: String?, last: String?) -> TeamsContext {
+                        from: String?, last: String?, several: Bool = false) -> TeamsContext {
         let chat = Teams.chatName(title)
+        if several { return TeamsContext(open: true, chat: chat, from: nil, last: nil, draft: false, shape: "several") }
         guard let boxValue else {
             if chat != nil || hasList { return TeamsContext(open: true, chat: chat, from: nil, last: nil, draft: false, shape: "unknown") }
             return .noChat
@@ -353,6 +366,9 @@ final class TeamsReader: @unchecked Sendable {
     private var lastKey: (count: Int, item: AXUIElement)?
     private var lastFound: (from: String?, last: String?) = (nil, nil)
     private var unknownLogged: Set<String> = [] // windows and titles already logged without a box
+    private var nextFind = Date.distantPast // the next search while the box isn't found yet, or while there are several
+    private(set) var boxes = 0 // message boxes the last search found
+    private(set) var several = false // more than one, and none had Teams' cursor
     private(set) var readMs = 0.0 // how long the last read took
     private(set) var walkMs = 0.0 // how long the last search for the box and the list took
     private(set) var nodes = 0 // elements the last search looked at
@@ -366,7 +382,7 @@ final class TeamsReader: @unchecked Sendable {
     }
 
     private func forget() {
-        window = nil; title = ""; composer = nil; messages = nil; lastKey = nil; lastFound = (nil, nil)
+        window = nil; title = ""; composer = nil; messages = nil; lastKey = nil; lastFound = (nil, nil); nextFind = .distantPast; boxes = 0; several = false
         placeholder = TeamsShape.placeholder
     }
 
@@ -399,14 +415,19 @@ final class TeamsReader: @unchecked Sendable {
             window = main.element
             title = t
             find(in: main.element)
+            nextFind = Date().addingTimeInterval(TeamsShape.findAgain)
         }
         var value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
-        if value == nil, composer != nil { // the box went away: look again once
+        // No box yet (Teams may still be building the view it just switched to, as when a channel
+        // opens), the box went away, or there are several (the cursor may have moved to another):
+        // search again, at most once a second.
+        if value == nil || boxes > 1, Date() >= nextFind {
+            nextFind = Date().addingTimeInterval(TeamsShape.findAgain)
             find(in: main.element)
             value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
         }
         let (from, last) = value == nil ? (nil, nil) : lastMessage()
-        let context = TeamsScan.context(title: title, boxValue: value, placeholder: placeholder, hasList: messages != nil, from: from, last: last)
+        let context = TeamsScan.context(title: title, boxValue: value, placeholder: placeholder, hasList: messages != nil, from: from, last: last, several: several)
         if context.shape == "unknown" {
             // Once per window and title; the log never gets the title itself.
             let key = "\(CFHash(main.element))|\(t.hashValue)"
@@ -424,6 +445,8 @@ final class TeamsReader: @unchecked Sendable {
         composer = found.box
         placeholder = found.placeholder ?? TeamsShape.placeholder
         messages = found.list
+        boxes = found.boxes
+        several = found.several
         lastKey = nil
         nodes = found.nodes
         walkMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6

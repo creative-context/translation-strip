@@ -18,6 +18,7 @@ const DANIEL = { ...PRIYA, chat: "Daniel Okafor", from: "Daniel Okafor", last: "
 const NOCHAT = { open: true, chat: null, from: null, last: null, draft: false, shape: "ok" };
 const CLOSED = { open: false, chat: null, from: null, last: null, draft: false, shape: "ok" };
 const UNKNOWN = { ...PRIYA, shape: "unknown" };
+const SEVERAL = { ...PRIYA, shape: "several" };
 
 // ---------------------------------------------------------------------------------------- helpers
 // The two boxes, as the page reads them: a state writes one by bumping its counter.
@@ -217,6 +218,7 @@ describe("what a send leaves behind", () => {
     ["a translation out of date", () => type(ready(), ES + "!")],
     ["a translation still coming", () => { let s = type(start(), ES); return applied(s, SS.translateStart(s.st, s.f).st); }],
     ["Teams' message box not found", () => withTeams(ready(), UNKNOWN)],
+    ["two boxes in Teams and none with the cursor", () => withTeams(ready(), SEVERAL)],
     ["dictation's last words still coming in", () => { const s = ready(); return { ...s, st: { ...s.st, dictStopping: true } }; }],
   ];
   for (const [name, mk] of refuse) test(`Send is off with ${name}`, () => { const s = mk(); expect(canSend(s)).toBe(false); expect(SS.sendStart(s.st, s.f, false, "send")).toBeNull(); });
@@ -292,6 +294,13 @@ describe("what a send leaves behind", () => {
     // Teams may still take the paste late (the clipboard keeps the English a few seconds), so a
     // later send that finds this text in the box treats it as ours, never offers to add it again.
     expect(s.st.leftover).toBe(s.st.lastText);
+  });
+
+  test("which-box: an orange 'Click the box in Teams first', nothing left behind, Send on again", () => {
+    const s = sendAnd(ready(), { ok: false, reason: "which-box" });
+    expect(tagOf(s)).toBe("needs: Click the box in Teams first");
+    expect(s.st.leftover).toBeNull();
+    expect(canSend(s)).toBe(true);
   });
 
   test("no-access turns the first-run cover on and nothing else", () => {
@@ -570,6 +579,7 @@ describe("the notices and their buttons", () => {
     ["ready, with Teams closed", () => withTeams(ready(), CLOSED), null, "idle: Teams isn't open", ["Open Teams"]],
     ["ready, with no chat", () => withTeams(ready(), NOCHAT), null, "idle: No chat open in Teams", []],
     ["ready, the box not found", () => withTeams(ready(), UNKNOWN), null, "idle: Can't find Teams' message box", []],
+    ["ready, two boxes and none with the cursor", () => withTeams(ready(), SEVERAL), null, "needs: Click the box in Teams first", []],
     ["ready with a voice finding", () => ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }, { level: "warning", message: "Long" }]), null, "needs: Stiff", []],
     ["ready, the box not found, beats a voice finding", () => withTeams(ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }]), UNKNOWN), null, "idle: Can't find Teams' message box", []],
     ["question", () => { const s = ready(); return applied(s, SS.translateDone({ ...s.st, phase: "translating" }, s.f, { question: "Which one?" })); }, null, "asks: Asks you", [], "question"],
