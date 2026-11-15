@@ -43,22 +43,27 @@ After every English reply, the server writes it to a temp file, runs `bun <linte
 In the app, the page talks to the shell through `window.webkit.messageHandlers.strip.postMessage(msg)`, and the shell calls functions on `window.strip`. In a browser (no shell), the page uses a stand-in bridge: a made-up chat ("Priya Raman") with a made-up last message, and "send" succeeds after a short delay without sending anything.
 
 Page → shell (`msg.type`):
-- `send` `{ text, mode: "send" | "leave", afterDraft?: true }`: put `text` in the open chat's message box and press Return (mode `send`), or leave it there (mode `leave`). `afterDraft` adds it after a draft that's already there.
+- `send` `{ text, mode: "send" | "leave", afterDraft?: true, chat? }`: put `text` in the open chat's message box and press Return (mode `send`), or leave it there (mode `leave`). `afterDraft` adds it after a draft that's already there. `chat` is the chat the strip showed ("To"): the shell sends only if Teams still has that chat open, checked again right before the paste. The shell marks its borrowed clipboard item with the nspasteboard.org markers (transient, concealed, auto-generated) so clipboard managers don't keep the message.
 - `dictation` `{ action: "start" | "stop" }`.
 - `open` `{ what: "teams" | "accessibility" | "microphone" | "guide" }`.
 - `ready` `{}`: the page has loaded; the shell answers with `teams` and `access`.
 
 Shell → page (`window.strip.<fn>(arg)`):
 - `teams({ open, chat, from, last, draft })`: Teams is running or not, the chat open in it (`null` when no chat is open), the last message's author and text (for context, `null` when unknown), and whether the message box already holds a draft. Sent when it changes.
-- `sent({ ok, reason? })`: after `send`. `reason`: `no-teams`, `no-chat`, `draft` (a draft is there and `afterDraft` wasn't set), `not-front` (Teams didn't come forward), `mismatch` (the box didn't hold the text; what was pasted stays in the box, so the page offers no retry), `no-access` (no Accessibility permission), `not-sent` (Return was pressed, or Teams lost the front before it, and the box didn't empty: the page shows its generic "Couldn't send").
-- `dictation({ state: "on" | "off" | "denied", text? })`: `text` is the whole transcript so far, which replaces what dictation added to the field.
+- `sent({ ok, reason? })`: after `send`. `reason`: `no-teams`, `no-chat`, `draft` (a draft is there and `afterDraft` wasn't set), `not-front` (Teams didn't come forward; the page offers no retry button, Send is the retry), `mismatch` (the box didn't hold the text; what was pasted stays in the box, so the page offers no retry), `no-access` (no Accessibility permission), `chat-changed` (Teams has another chat open than the one in `chat`; nothing was pasted, and the page says so with no retry), `not-sent` (Return was pressed, or Teams lost the front before it, and the box didn't empty: the text stays in the box and the page offers no retry).
+- `dictation({ state: "on" | "off" | "denied" | "preparing" | "unavailable", text?, progress? })`: `text` is the whole transcript so far, which replaces what dictation added to the field. `progress` (0 to 1, in whole percents) comes with `preparing` while macOS downloads the Spanish model.
 - `access({ accessibility: true | false, microphone: "granted" | "denied" | "unknown" })`.
 - `focus()`: the global shortcut was pressed: focus the Spanish field.
 - After `send` in mode `send`, and after any `send` that failed, the shell makes the strip active again and calls `focus()`; a message left in the box (mode `leave`, ok) keeps Teams in front.
-- `dictation` `start` when no on-device Spanish recognizer (es-MX, es-US, es-ES) is there: `dictation({ state: "off" })` and a line in the log.
+- `dictation` `start`: on macOS 26 and later the shell uses the system's dictation model in Spanish (es-MX, else es-US, else es-ES). The first time, macOS downloads it: `dictation({ state: "preparing" })` until it's there, then `on`. A `stop` while preparing answers `off` and listens to nothing. No Spanish model, or the download fails: `dictation({ state: "unavailable" })` and a line in the log. Older systems use an installed on-device recognizer, or answer `unavailable`.
 
 The shell's menu writes `voiceGuide` and `linter` into `settings.json` (Choose Voice Guide…, Choose Voice Linter…), keeping every other key; the server notices the change on its own. `open` `guide` opens the same chooser.
 
 ## Page states (the design: prototype/design.html, direction Signal)
 
 Empty, Dictating, Microphone not allowed, Translating, Starting, Ready, Adjust, Adjusting, Adjusted, Out of date, Asks you, Voice check (the linter found something: an orange tag with the first finding; Send stays on), Sending, Sent, Put in Teams, Draft in Teams, Couldn't translate, No voice guide (`guide` error: a gray tag "Voice guide not set" and "Open guide settings"), No chat open, Teams closed, Plan limit, Long message, First run (no Accessibility).
+
+Page behavior worth knowing (the page's own, no shell or server part):
+- Translate is a button, always at the end of the Spanish footer (⏎ does the same): off when the field is empty or while a send, an adjust or the end of a dictation is running. The mic doesn't move.
+- A send that fails leaves the English as it was, with a notice. Any notice of kind error ("Teams didn't come forward", "Couldn't send", "Teams changed it. Not sent", "In Teams' box, not sent", "Teams didn't answer. Check the chat", a failed adjust) gives the English box the red error surface; none of them has a Try again button except a failed adjust, since Send is the retry for a send.
+- Listening shows a still dot beside "Listening"; the words arriving in the field are the feedback. While the label shows ("Getting Spanish dictation ready…", "Listening", "Spanish dictation isn't available on this Mac", "Microphone not allowed"), the browser preview's "Preview · nothing is sent" note is hidden. Preview flags: `?dict=prep`, `?dict=unavailable`.

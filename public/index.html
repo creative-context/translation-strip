@@ -15,54 +15,57 @@
 
   /* Two panels, each with its own controls: the Spanish side writes and translates, the English
      side adjusts and sends. No separate bar, so the text gets the height. */
-  /* In the app the window is clear and rounded like the strip, so only the strip's surface shows. */
+  /* In the app the window is clear and rounded like the strip, so only the strip shows: the family's
+     body color, as in Session Monitor's window, with the boxes as veils on it. */
   body.embed { background: transparent; }
-  .strip { position: relative; width: 100%; height: 145px; border-radius: var(--radius-raised); background: var(--color-surface-raised);
+  .strip { position: relative; width: 100%; height: 145px; border-radius: var(--radius-raised); background: var(--color-background-body);
     padding: 8px; }
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; height: 100%; min-height: 0; }
   .f { position: relative; display: grid; grid-template-rows: 1fr auto; gap: 6px; min-height: 0; min-width: 0;
-    border-radius: var(--radius-container); padding: 10px 12px 8px; background: var(--color-background-card);
+    border-radius: var(--radius-container); padding: 7px 12px 8px; background: var(--color-background-card);
     transition: background-color 240ms var(--ease-standard); }
   /* Surfaces, no lines: the boxes stand apart by their tone only. The Spanish box always has a
      surface, since that's where you write; the English side stays flat until there's English. */
   .f.es { background: var(--obsidian-veil-selected); }
   .f.es:focus-within { background: var(--color-overlay-pressed); }
-  .f.en { grid-template-rows: 1fr auto auto; background: transparent; }
+  /* Two rows, so both footers sit on the same line; the adjust row takes a third only while it's open. */
+  .f.en { background: transparent; }
+  [data-adjust="open"] .f.en { grid-template-rows: 1fr auto auto; row-gap: 4px; }
   .foot { display: flex; align-items: center; gap: 8px; height: 28px; min-width: 0; margin: 0 -4px; }
   .foot .grow { flex: 1; }
   .en-wrap { position: relative; min-height: 0; }
   textarea { all: unset; box-sizing: border-box; display: block; width: 100%; height: 100%; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
     font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-primary); cursor: text; }
   textarea::placeholder { color: var(--color-text-secondary); }
-  .tagrow { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
-  .status { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; overflow: hidden; } /* whole; the chat's name gives way */
+  /* Where the keyboard is: the caret takes the accent. */
+  textarea, .adjust-row .field { caret-color: var(--color-text-accent); }
+  .tagrow { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+  /* The notice gives way before the chat's name does: its words end in an ellipsis and its title holds them whole. */
+  .status { display: inline-flex; flex-shrink: 2; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; overflow: hidden; }
   .status:empty { display: none; }
   .status.tag { height: 20px; }
-  .tagrow .grow { flex: 1; }
+  .btn.adjust-btn, .actions .btn, #chip { height: 24px; font-size: var(--csm-text-body); }
   .adjust-btn { flex: none; }
-  .adjust-btn kbd, .chip kbd { font: inherit; opacity: .7; }
+  #adjustBtn { margin-right: 8px; } /* 24 px to "To <chat>": Adjust edits, the name goes with Send */
+  #pencil { display: inline-flex; }
+  .btn kbd { font: inherit; }
   .adjust-btn svg.i { width: 12px; height: 12px; }
   /* Dictation: the mic sits where Adjust sits on the English side. Listening is yours, so it's
      neutral white, never a state color. */
   .dict-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--csm-text-meta); color: var(--color-text-secondary); white-space: nowrap; }
   .dict-label:empty { display: none; }
-  .level { display: inline-flex; align-items: center; gap: 2px; height: 12px; }
-  .level i { width: 2px; height: 4px; border-radius: 1px; background: var(--color-text-primary); animation: level 900ms ease-in-out infinite; }
-  .level i:nth-child(2) { height: 8px; animation-delay: 150ms; }
-  .level i:nth-child(3) { height: 11px; animation-delay: 300ms; }
-  .level i:nth-child(4) { height: 6px; animation-delay: 450ms; }
-  @keyframes level { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+  .dict-label .sdot { color: var(--color-text-primary); }
   .mic { width: 28px; height: 28px; border-radius: 50%; }
   .mic svg.i { width: 16px; height: 16px; }
   [data-dict="on"] .f.es { background: var(--color-overlay-pressed); }
   [data-dict="on"] .mic { background: var(--color-text-primary); color: var(--color-on-light); }
 
   /* The adjust line: a note on the translation, in Spanish or English. */
-  .adjust-row { display: none; align-items: center; gap: 6px; }
+  .adjust-row { display: none; align-items: center; gap: 8px; margin: 0 -4px; }
   [data-adjust="open"] .adjust-row { display: flex; }
-  .adjust-row .field { flex: 1; height: 26px; background: var(--color-overlay-pressed); font-size: var(--csm-text-body); }
-  .adjust-row .field:focus { background: #FFFFFF1A; }
-  .actions { display: inline-flex; gap: 6px; flex: none; }
+  .adjust-row .field { flex: 1; background: var(--color-overlay-pressed); font-size: var(--csm-text-body); }
+  .adjust-row .field:focus { background: var(--color-overlay-pressed); }
+  .actions { display: inline-flex; gap: 8px; flex: none; }
   .actions:empty { display: none; }
   .busy { display: none; position: absolute; left: 0; top: 0; color: var(--color-text-accent); align-items: center; gap: 8px; font-size: var(--msg); line-height: var(--msg-lh); }
   [data-state="translating"] .busy, [data-state="starting"] .busy { display: inline-flex; }
@@ -73,44 +76,50 @@
   /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
   [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
   [data-state="stale"] .f.en, [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
+  /* Sent: the message takes the English text's place, in the middle of the box. */
+  .done-msg { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; gap: 8px; padding: 0 12px;
+    font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-primary); white-space: nowrap; }
+  .done-msg .ok { color: var(--color-text-green); display: inline-flex; flex: none; }
+  .done-msg .ok svg.i { width: 16px; height: 16px; }
+  .done-msg .who { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .done-msg .when { color: var(--color-text-secondary); flex: none; }
+  [data-state="sent"] .done-msg, [data-state="leave"] .done-msg { display: flex; }
+  [data-state="sent"] .en-out, [data-state="leave"] .en-out { visibility: hidden; }
   [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
   [data-state="error"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
   [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
+  [data-state="ready"] .f.en:focus-within { background: var(--color-overlay-pressed); }
 
   .preview { color: var(--color-text-secondary); white-space: nowrap; }
   /* The chat's name gives way first, so a notice beside it stays whole. */
-  .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 100; }
+  /* The chat's name gives way first (down to about "To Castellan…"), so a notice beside it stays whole. */
+  .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; }
   .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
   [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
-  .hint { color: var(--color-text-secondary); white-space: nowrap; }
-  .hint:empty { display: none; }
-  .hint kbd { font: inherit; color: var(--color-text-primary); }
-  .more-btn { font-size: 15px; letter-spacing: 1px; flex: none; margin-left: auto; } /* stays right while the tag row is hidden */
-  .send { gap: 8px; flex: none; }
-  .send kbd { font: inherit; opacity: .7; }
+  .more-btn { font-size: 15px; letter-spacing: 1px; flex: none; width: 28px; height: 28px; }
+  .send, #translate { gap: 8px; flex: none; }
   .btn:disabled { opacity: .4; pointer-events: none; }
-  /* Nothing to send yet: a gray button you can still read, not a dimmed blue one. */
-  .send:disabled { opacity: 1; background: var(--color-overlay-hover); color: var(--color-text-secondary); }
+  /* Nothing to send or translate yet: a gray button you can still read, not a dimmed one. */
+  .send:disabled, #translate:disabled { opacity: 1; background: var(--color-overlay-hover); color: var(--color-text-secondary); }
 
   /* The menu opens over the fields, not above the strip: the app's window is only as tall as the strip. */
   .menu { position: absolute; right: 8px; bottom: calc(8px + 8px + 28px + 6px); width: max-content; max-width: calc(100% - 16px); padding: 6px;
     border-radius: var(--radius-raised); background: var(--color-surface-raised); box-shadow: var(--shadow-raised); display: none; z-index: 5; gap: 6px; }
   .menu.open { display: flex; }
   .menu .col { display: flex; flex-direction: column; min-width: 0; }
-  .menu .mh { padding: 6px 8px 4px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); min-height: 24px; }
+  .menu .mh { padding: 6px 8px 4px 28px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); min-height: 24px; }
   .menu button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
   .menu button:hover { background: var(--obsidian-veil-selected); }
   .menu button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: -2px; }
   .menu button .ck { width: 12px; color: var(--color-text-accent); visibility: hidden; }
   .menu button[aria-checked="true"] .ck { visibility: visible; }
   .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
-  .menu .off { color: var(--color-text-secondary); }
-  .menu .off:hover { color: var(--obsidian-text-hover); }
 
-  /* First run: one sentence and one button over the strip. */
-  .cover { display: none; position: absolute; inset: 0; border-radius: var(--radius-raised); background: var(--color-surface-raised); z-index: 10;
-    align-items: center; gap: 16px; padding: 0 24px; font-size: var(--msg); line-height: var(--msg-lh); }
+  /* First run: one sentence and one button on a single veil the size of the two boxes. */
+  .cover { display: none; position: absolute; inset: 8px; border-radius: var(--radius-container); background: var(--obsidian-veil-selected); z-index: 10;
+    align-items: center; gap: 16px; padding: 0 12px; font-size: var(--msg); line-height: var(--msg-lh); }
   [data-access="no"] .cover { display: flex; }
+  [data-access="no"] .fields { visibility: hidden; }
 </style>
 </head>
 <body>
@@ -124,13 +133,14 @@
         <span class="grow"></span>
         <span class="dict-label" id="dictLabel"></span>
         <button class="icon-btn mic" id="mic" title="Dictate ⌘D" aria-label="Dictate" aria-pressed="false"></button>
-        <span class="hint" id="hint"></span>
+        <button class="btn" id="translate" disabled>Translate <kbd>⏎</kbd></button>
       </div>
     </div>
     <div class="f en">
       <div class="en-wrap">
         <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="English translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
         <div class="busy"><span class="calm"><i></i><i></i><i></i></span><span id="busyText">Translating…</span></div>
+        <div class="done-msg" id="doneMsg" role="status" aria-live="polite"></div>
       </div>
       <div class="adjust-row">
         <input class="field adj-in" id="adjIn" placeholder="What to change" aria-label="What to change" spellcheck="false" autocomplete="off" autocapitalize="off">
@@ -138,18 +148,19 @@
       </div>
       <div class="foot">
         <div class="tagrow" id="tagrow">
-          <span class="status" id="status" role="status" aria-live="polite"></span><span class="actions" id="actions"></span><span class="grow"></span>
-          <button class="btn ghost small adjust-btn" id="adjustBtn"><span id="pencil"></span>Adjust <kbd>⌘K</kbd></button>
+          <span class="status" id="status" role="status" aria-live="polite"></span><span class="actions" id="actions"></span>
         </div>
-        <button class="icon-btn more-btn" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <span class="grow"></span>
+        <button class="btn ghost small adjust-btn" id="adjustBtn"><span id="pencil"></span>Adjust <kbd>⌘K</kbd></button>
         <span class="to" id="to">To <b id="chat"></b></span>
         <button class="btn primary send" id="send" disabled>Send <kbd>⌘⏎</kbd></button>
+        <button class="icon-btn more-btn" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
       </div>
     </div>
   </div>
   <div class="menu" id="menu" role="menu">
     <div class="col">
-      <div class="mh">⌘⏎</div>
+      <div class="mh">On ⌘⏎</div>
       <button role="menuitemradio" data-mode="send" aria-checked="true"><span class="ck" data-ic="check"></span>Send</button>
       <button role="menuitemradio" data-mode="leave" aria-checked="false"><span class="ck" data-ic="check"></span>Put in Teams without sending</button>
     </div>
@@ -162,8 +173,8 @@
     <hr>
     <div class="col">
       <div class="mh">&nbsp;</div>
-      <button role="menuitem" class="off" data-do="guide">Open voice guide</button>
-      <button role="menuitem" class="off" data-do="restart">Restart translator</button>
+      <button role="menuitem" data-do="guide">Open voice guide</button>
+      <button role="menuitem" data-do="restart">Restart translator</button>
     </div>
   </div>
   <div class="cover"><span>Allow Accessibility to send messages in Teams.</span><button class="btn primary" id="accessBtn">Open System Settings</button></div>
@@ -226,14 +237,25 @@ function standIn(msg) {
     clearInterval(previewTimer);
     if (msg.action === "start") {
       if (qp.get("mic") === "denied") { window.strip.dictation({ state: "denied" }); return; }
+      if (qp.get("dict") === "unavailable") { window.strip.dictation({ state: "unavailable" }); return; }
       let n = 0;
-      window.strip.dictation({ state: "on", text: "" });
-      previewTimer = setInterval(() => {
+      const listen = () => {
+        window.strip.dictation({ state: "on", text: "" });
+        previewTimer = setInterval(() => {
         n++;
         window.strip.dictation({ state: n >= PREVIEW_DICTATION.length ? "off" : "on", text: PREVIEW_DICTATION.slice(0, n).join(" ") });
         if (n >= PREVIEW_DICTATION.length) clearInterval(previewTimer);
-      }, 160);
+        }, 160);
+      };
+      // ?dict=prep: the first time, macOS downloads its Spanish model before listening.
+      if (qp.get("dict") === "prep") {
+        window.strip.dictation({ state: "preparing" });
+        [0.2, 0.55, 0.9].forEach((p, i) => setTimeout(() => window.strip.dictation({ state: "preparing", progress: p }), 300 * (i + 1)));
+        previewTimer = setTimeout(listen, 1500);
+      }
+      else listen();
     } else if (msg.action === "stop") {
+      clearTimeout(previewTimer);
       window.strip.dictation({ state: "off" });
     }
   }
@@ -344,6 +366,16 @@ function errorView(kind, until, what) {
   return { state: "error", tag: { kind: "error", text: what === "adjust" ? "Couldn't adjust" : "Couldn't translate" }, actions: retry };
 }
 
+// The notice stays whole and the chat's name gives way first, down to its 96 px. Only when the
+// row still overflows does the notice shorten too. (Flex shrink alone takes a fraction of a pixel
+// from the notice, which is enough to cut its last letters.)
+function fitFooter() {
+  const row = $("tagrow"), foot = row.parentElement;
+  row.style.flexShrink = "0";
+  if (foot.scrollWidth > foot.clientWidth + 1) row.style.flexShrink = "";
+}
+window.addEventListener("resize", () => fitFooter());
+
 // What the strip says about itself right now: its state name (for color), the tag and its buttons.
 function view() {
   const p = st.phase, t = shell.teams;
@@ -351,24 +383,24 @@ function view() {
   const tag = (kind, text, actions) => { v.tag = { kind, text }; if (actions) v.actions = actions; };
   if (p === "translating") v.state = tr().status === "starting" ? "starting" : "translating";
   else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
-  else if (p === "sent") tag("done", `Sent ${st.sentAt}`);
-  else if (p === "leave") tag("done", "In Teams, not sent");
   else if (p === "adjusting") tag("working", "Adjusting…");
   else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
   else if (p === "question") tag("asks", "Asks you");
   else if (p === "stale") tag("needs", "Translation out of date");
-  else if (p === "draft") tag("needs", "Teams has a draft in this chat", [{ act: "add", label: "Add after draft" }, { act: "cancel", label: "Cancel", ghost: true }]);
-  else if (st.notice) tag(st.notice.kind, st.notice.text, st.notice.actions || []);
+  else if (p === "draft") tag("needs", "Teams has a draft", [{ act: "add", label: "Add after draft" }, { act: "cancel", label: "Cancel" }]);
+  else if (st.notice) { tag(st.notice.kind, st.notice.text, st.notice.actions || []); if (st.notice.kind === "error") v.state = "error"; }
   else if (p === "idle" && tr().guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
   else if (t && !t.open) tag("idle", "Teams isn't open", [{ act: "open-teams", label: "Open Teams" }]);
   else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
   else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
   else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
-  if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo", ghost: true }]);
+  if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo" }]);
   return v;
 }
 
 const canAdjust = () => st.phase === "ready" && !!enOut.value.trim();
+// The Translate button and ⏎ ask the same thing.
+const canTranslate = () => !!esIn.value.trim() && !["sending", "adjusting"].includes(st.phase) && !st.dictStopping;
 function canSend(afterDraft) {
   const t = shell.teams;
   if (!(st.phase === "ready" || (afterDraft && st.phase === "draft"))) return false;
@@ -386,19 +418,20 @@ function paint() {
   $("fields").inert = shell.access.accessibility === false;
   $("busyText").textContent = v.state === "starting" ? "Starting translator…" : "Translating…";
   $("chat").textContent = (t && t.chat) || "";
+  $("to").title = (t && t.chat) || "";
   esIn.readOnly = st.phase === "sending";
   enOut.readOnly = st.phase !== "ready";
 
   const send = $("send");
   send.disabled = !canSend(false);
   send.innerHTML = `${settings().mode === "leave" ? "Put in Teams" : "Send"} <kbd>⌘⏎</kbd>`;
-  $("hint").innerHTML = ["idle", "stale", "sent", "leave", "question"].includes(st.phase) ? `<kbd>⏎</kbd> Translate` : "";
+  $("translate").disabled = !canTranslate();
   for (const b of document.querySelectorAll("#tone button")) b.setAttribute("aria-pressed", b.dataset.register === st.register);
   for (const b of menu.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === settings().mode);
   for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
 
-  $("adjustBtn").style.display = canAdjust() ? "" : "none";
-  $("tagrow").style.display = (v.tag || v.actions.length || canAdjust()) && !open ? "" : "none";
+  $("adjustBtn").style.display = canAdjust() && !open ? "" : "none";
+  $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
   // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
   const sig = JSON.stringify([v.tag, v.actions]);
   if (sig !== drawn) {
@@ -407,7 +440,7 @@ function paint() {
     status.replaceChildren(); actions.replaceChildren();
     if (v.tag) {
       status.className = `status tag s-${v.tag.kind}`;
-      if (v.tag.title) status.title = v.tag.title; else status.removeAttribute("title");
+      status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
       const mark = document.createElement("span");
       if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
       else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
@@ -425,8 +458,12 @@ function paint() {
 
   const label = $("dictLabel");
   label.replaceChildren();
-  if (st.dict === "on") {
-    label.innerHTML = `<span class="level"><i></i><i></i><i></i><i></i></span>Listening`;
+  if (st.dict === "on" && st.dictPrep) {
+    label.textContent = "Getting Spanish dictation ready…" + (st.dictProgress == null ? "" : ` ${Math.round(st.dictProgress * 100)}%`);
+  } else if (st.dict === "on") {
+    label.innerHTML = `<span class="sdot"></span>Listening`;
+  } else if (st.dictNote) {
+    label.textContent = st.dictNote;
   } else if (st.dict === "denied") {
     label.append("Microphone not allowed ");
     const b = document.createElement("button");
@@ -434,6 +471,20 @@ function paint() {
     label.append(b);
   }
   $("mic").setAttribute("aria-pressed", st.dict === "on");
+  $("preview").hidden = inApp || label.childNodes.length > 0;   // the note gives way to what the label says
+
+  fitFooter();
+
+  // Sent: in the middle of the English box, who it went to and when.
+  const done = $("doneMsg");
+  if (st.phase === "sent" || st.phase === "leave") {
+    const sent = st.phase === "sent";
+    done.innerHTML = `<span class="ok">${ic("check")}</span><span class="who"></span><span class="when"></span>`;
+    const who = done.querySelector(".who");
+    who.textContent = sent ? (st.sentTo ? `Sent to ${st.sentTo}` : "Sent") : "Left in Teams, not sent";
+    who.title = who.textContent;
+    done.querySelector(".when").textContent = sent ? `· ${st.sentAt}` : "";
+  } else if (done.firstChild) done.replaceChildren();
 }
 
 // ------------------------------------------------------------------------------ translating and adjusting
@@ -441,9 +492,8 @@ function setEnglish(text, lint) { st.en = text; enOut.value = text; st.lint = li
 const cleanLint = l => (Array.isArray(l) ? l.filter(f => f && typeof f.message === "string" && f.message) : []);
 
 async function translate() {
-  if (st.phase === "sending" || st.phase === "adjusting" || st.dictStopping) return;
+  if (!canTranslate()) return;
   const text = esIn.value.trim();
-  if (!text) return;
   if (st.phase === "translating" && text === st.es) return;
   clearTimeout(fadeTimer);
   const id = ++st.req;
@@ -512,9 +562,11 @@ function send(afterDraft) {
   if (!canSend(afterDraft)) return;
   clearTimeout(fadeTimer); clearTimeout(sendWatch);
   st.sendMode = settings().mode === "leave" ? "leave" : "send";
+  st.sentTo = (shell.teams && shell.teams.chat) || "";
   st.adjustOpen = false; st.notice = null; st.phase = "sending";
   paint();
   const msg = { type: "send", text: enOut.value.trim(), mode: st.sendMode };
+  if (st.sentTo) msg.chat = st.sentTo; // the shell sends only to this chat
   if (afterDraft) msg.afterDraft = true;
   st.lastText = msg.text;
   post(msg);
@@ -541,7 +593,6 @@ function onSent(m) {
   }
   // The text stays, so nothing is lost; each reason says what to do.
   st.phase = "ready";
-  const resend = [{ act: "resend", label: "Try again" }];
   switch (m.reason) {
     case "draft":
       // The "draft" is our own text from a failed try: adding it again would send it twice.
@@ -550,12 +601,14 @@ function onSent(m) {
       break;
     case "no-teams": st.notice = { kind: "idle", text: "Teams isn't open", actions: [{ act: "open-teams", label: "Open Teams" }], env: true }; break;
     case "no-chat": st.notice = { kind: "idle", text: "No chat open in Teams", env: true }; break;
-    case "not-front": st.notice = { kind: "error", text: "Teams didn't come forward", actions: resend }; break;
+    case "not-front": st.notice = { kind: "error", text: "Teams didn't come forward" }; break;
+    // Teams moved to another chat after you saw "To": nothing was pasted. "To" now shows the new chat.
+    case "chat-changed": st.notice = { kind: "error", text: "Chat changed. Not sent" }; break;
     case "mismatch": st.leftover = st.lastText; st.notice = { kind: "error", text: "Teams changed it. Not sent" }; break;
     case "no-access": shell.access.accessibility = false; break;
     // Return didn't send it: the text is still in the box, so trying again would only find it there.
     case "not-sent": st.leftover = st.lastText; st.notice = { kind: "error", text: "In Teams' box, not sent" }; break;
-    default: st.notice = { kind: "error", text: "Couldn't send", actions: resend };
+    default: st.notice = { kind: "error", text: "Couldn't send" };
   }
   paint();
 }
@@ -564,7 +617,7 @@ function onSent(m) {
 function startDictation() {
   if (st.dict !== "off" || st.dictStopping || ["sending", "translating", "adjusting"].includes(st.phase)) return;
   st.dictBase = esIn.value.trim() ? esIn.value.trim() + " " : "";
-  st.dict = "on"; paint(); esIn.focus();
+  st.dict = "on"; st.dictPrep = false; st.dictProgress = null; st.dictNote = null; paint(); esIn.focus();
   post({ type: "dictation", action: "start" });
 }
 // Stop, then run `then` once the last words have come in (or after a moment if they don't).
@@ -582,7 +635,18 @@ function cancelDictation() {
   clearTimeout(dictTimer); st.dictStopping = false; st.dictDone = null;
 }
 function onDictation(m) {
-  if (m.state === "denied") { st.dict = "denied"; st.dictStopping = false; st.dictDone = null; paint(); return; }
+  if (m.state === "denied") { st.dict = "denied"; st.dictPrep = false; st.dictStopping = false; st.dictDone = null; paint(); return; }
+  // macOS is downloading its Spanish model; listening starts by itself once it's there.
+  if (m.state === "preparing") {
+    if (st.dict === "on") { st.dictPrep = true; st.dictProgress = typeof m.progress === "number" ? m.progress : st.dictProgress ?? null; paint(); }
+    return;
+  }
+  if (m.state === "unavailable") {
+    st.dict = "off"; st.dictPrep = false; st.dictStopping = false; st.dictDone = null;
+    st.dictNote = "Spanish dictation isn't available on this Mac";
+    paint(); return;
+  }
+  if (m.state === "on" || m.state === "off") { st.dictPrep = false; st.dictProgress = null; }
   if (m.state === "on" && st.dict === "off" && !st.dictStopping) { st.dictBase = esIn.value.trim() ? esIn.value.trim() + " " : ""; st.dict = "on"; }
   // The text is the whole transcript so far: it replaces what dictation added.
   if (typeof m.text === "string" && (st.dict === "on" || st.dictStopping)) { esIn.value = st.dictBase + m.text; onSpanishInput(); }
@@ -643,6 +707,7 @@ $("mic").onclick = toggleDictation;
 $("adjustBtn").onclick = openAdjust;
 $("chip").onclick = () => adjust($("chip").dataset.quick);
 $("send").onclick = () => send(false);
+$("translate").onclick = () => { if (st.dict === "on") stopDictation(translate); else translate(); esIn.focus(); };
 $("accessBtn").onclick = () => post({ type: "open", what: "accessibility" });
 for (const b of document.querySelectorAll("#tone button")) b.onclick = () => setRegister(b.dataset.register);
 
@@ -655,7 +720,6 @@ box.addEventListener("click", e => {
     case "undo": undo(); esIn.focus(); break;
     case "add": send(true); break;
     case "cancel": st.phase = "ready"; paint(); esIn.focus(); break;
-    case "resend": st.notice = null; send(false); break;
     case "open-teams": post({ type: "open", what: "teams" }); break;
     case "guide": post({ type: "open", what: "guide" }); break;
     case "mic-settings": post({ type: "open", what: "microphone" }); break;

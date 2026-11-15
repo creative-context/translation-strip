@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             if let text { m["text"] = text }
             self?.call("dictation", m)
         }
+        dictation.onProgress = { [weak self] fraction in
+            self?.call("dictation", ["state": "preparing", "progress": fraction])
+        }
         GlobalShortcut.pressed = { [weak self] in self?.shortcutPressed() }
         if let why = shortcut.register() { ShellLog.write("shortcut: \(why)") }
 
@@ -372,10 +375,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         guard !text.isEmpty else { return call("sent", ["ok": false]) }
         let leave = (m["mode"] as? String) == "leave"
         let afterDraft = (m["afterDraft"] as? Bool) == true
+        // The chat the strip showed when the user pressed Send: the message goes there or nowhere.
+        let chat = (m["chat"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         sending = true
         let r = reader
         teamsQueue.async {
-            let out = r.send(text, leave: leave, afterDraft: afterDraft, log: { ShellLog.write($0) })
+            let out = r.send(text, to: chat, leave: leave, afterDraft: afterDraft, log: { ShellLog.write($0) })
             DispatchQueue.main.async {
                 self.sending = false
                 ShellLog.write(out.ok ? (leave ? "send: left in the message box" : "send: sent") : "send: not sent (\(out.reason ?? "unknown"))")

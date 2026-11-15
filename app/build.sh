@@ -30,6 +30,19 @@ lipo -create build/TranslationStrip-arm64 build/TranslationStrip-x86_64 \
 
 cp app/Info.plist "$APP/Contents/Info.plist"
 
+# Icon: draw once at 1024 px, then let sips and iconutil make the sizes.
+if [ ! -f build/AppIcon.icns ] || [ app/make-icon.swift -nt build/AppIcon.icns ]; then
+  swift app/make-icon.swift build/icon-1024.png >/dev/null
+  rm -rf build/AppIcon.iconset && mkdir -p build/AppIcon.iconset
+  for s in 16 32 128 256 512; do
+    sips -z $s $s build/icon-1024.png --out "build/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
+    d=$((s * 2))
+    sips -z $d $d build/icon-1024.png --out "build/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+  done
+  iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns
+fi
+cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+
 # The server, bundled into one server.js, in Resources/server. Bundled, it finds the page one
 # folder up (src/config.ts: the folder above its own, then public/), so public/ goes in Resources.
 SERVER="$APP/Contents/Resources/server"

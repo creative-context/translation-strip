@@ -15,6 +15,8 @@ This is **Translation Strip** (working name): a Mac app that sits in the gap und
 
 ```bash
 bun test                   # port 4811
+bun test/page-mock.ts      # port 4813, the page with canned replies and a stand-in Teams
+bun test/page-check.ts     # every control of the page in WebKit, with the page mock running
 bun server.ts              # port 4810, the app's own
 sh app/build.sh --install  # build, copy to ~/Applications, reopen
 ```

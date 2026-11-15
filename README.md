@@ -2,7 +2,7 @@
 
 A Mac app that sits in the gap under your Teams window. You write in Spanish, press Return and get English ready to send, in your own voice. ⌘Return sends it to the chat you have open, with no copying or pasting.
 
-Version 0.2.0 · macOS 14 or later · Microsoft Teams · Built with Swift and [Bun](https://bun.sh)
+Version 0.3.0 · macOS 14 or later · Microsoft Teams · Built with Swift and [Bun](https://bun.sh)
 
 Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. The strip translates the meaning, in the voice your guide describes, and adds nothing you didn't write, so no greeting, name, thanks or closing line appears on its own.
 
@@ -45,7 +45,7 @@ Normal and Formal pick the register, as your guide describes them. The ⋯ menu 
 
 ### How it sends
 
-The app brings Teams forward, pastes the English into the message box, checks that the box holds exactly that text and then presses Return. It never presses a key while Teams isn't in front. If the box already has a draft, it stops and lets you add the message after it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
+The app brings Teams forward, pastes the English into the message box, checks that the box holds exactly that text and then presses Return. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If the box already has a draft, it stops and lets you add the message after it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
 
 ## Privacy
 
@@ -67,9 +67,9 @@ Through Accessibility, about once a second while the strip is on screen: the win
 
 ### The clipboard and the microphone
 
-To paste, the app borrows the clipboard for under half a second and then puts back what was there.
+To paste, the app borrows the clipboard for under half a second and then puts back what was there. It marks what it puts there as temporary and private, so clipboard managers that respect those marks don't keep your message.
 
-The microphone listens only while you dictate. Apple's speech recognition turns what you say into text on your Mac, in the Spanish your Mac has installed (Mexico, the US or Spain), and the audio never leaves it.
+The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in Mexican Spanish (or US or Spain Spanish), and the audio never leaves it. The first time, macOS downloads that model from Apple.
 
 ### What it keeps
 
@@ -97,6 +97,8 @@ Nothing. The hidden session connects to Anthropic the way Claude Code always doe
 
 ```bash
 bun test                   # the server's tests, port 4811
+bun test/page-mock.ts      # the page with canned replies, port 4813
+bun test/page-check.ts     # every control of the page in WebKit (needs the page mock and Playwright)
 bun server.ts              # the server on port 4810: in a browser, a preview that sends nothing
 sh app/build.sh            # build into build/
 sh app/build.sh --install  # build, copy to ~/Applications and open it
