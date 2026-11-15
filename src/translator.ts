@@ -10,17 +10,26 @@
 // in on file descriptor 3, so the guide's text is never on a command line or in a file. Each
 // session's stderr is held in memory (the first 2 KB) only to name why it ended, in one word.
 // Logs say what happened, never a message's text or what Claude Code printed.
+//
+// A session that exits or stalls before it answers, for no reason a second session would hit too
+// (not the login, an update, the network or the plan's limit), gets one more try on a fresh session
+// before the request fails. Seen in testing (2026-11-15): now and then a session exits at its first
+// turn with "Error reading system prompt file: EACCES … /dev/fd/3", only inside the server, never
+// when the same spawn runs on its own; a fresh session answers.
 import type { Subprocess } from "bun";
 import { close, mkdirSync, readFileSync, statSync, write } from "node:fs";
-import { CLAUDE, DAY_FILE, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TRANSLATOR_DIR } from "./config";
+import { CLAUDE, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TRANSLATOR_DIR } from "./config";
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
 import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
 import { fileThere } from "./settings";
 import { bump, state, type Model, type TranslatorError } from "./state";
 
-export type Outcome = { ok: true; reply: Reply } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true };
+// aborted: the session ended before it answered; stopped: on purpose (a restart, the server stopping);
+// unusable: it answered, but with no JSON reply or another request's id (a slip a fresh session doesn't repeat).
+export type Outcome = { ok: true; reply: Reply } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true; stopped?: true; unusable?: true };
 
-type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null };
+// ms: how long this try waits; retry: a failure of this try is tried once more, so it doesn't restart the translator itself.
+type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null; ms: number; retry: boolean };
 type Session = {
   proc: Subprocess<"pipe", "pipe", "pipe">;
   pid: number;
@@ -55,11 +64,17 @@ export function translatorEnv(): Record<string, string> {
   return env;
 }
 
+// Opus runs at low effort. Tested on made-up messages (2026-11-15): the same English as at its
+// default effort and at high, and as fast or faster (high thinks more often and is slower in its
+// slowest replies). Haiku and Sonnet keep Claude Code's default.
+const EFFORT: Partial<Record<Model, string>> = { opus: "low" };
+
 export function translatorArgs(model: Model): string[] {
   return [
     CLAUDE, "-p",
     "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--model", model,
+    ...(EFFORT[model] ? ["--effort", EFFORT[model]!] : []),
     "--system-prompt-file", "/dev/fd/3",
     "--tools", "", "--strict-mcp-config", "--setting-sources", "",
     "--disable-slash-commands", "--no-session-persistence",
@@ -163,7 +178,7 @@ export class Translator {
     this.spare = null;
     if (a) {
       this.retire(a);
-      this.end(a, { ok: false, error: "failed", aborted: true });
+      this.end(a, { ok: false, error: "failed", aborted: true, stopped: true });
     }
     this.refresh();
   }
@@ -184,11 +199,20 @@ export class Translator {
     this.start(reason);
   }
 
-  // One request, on its own session. The caller checks busy() first.
+  // One request, on its own session. The caller checks busy() first. A first try that ends without
+  // an answer for a reason a fresh session can fix (it exited, stalled, or answered with no JSON or
+  // another request's id) gets one more, on a fresh session.
   async request(req: Request): Promise<Outcome> {
+    const first = await this.attempt(req, Math.min(FIRST_TRY_MS, TIMEOUT_MS), true);
+    if (first.ok || !(first.aborted || first.unusable) || first.stopped || first.error !== "failed") return first;
+    log("no answer from that session; trying once more on a fresh one");
+    return this.attempt(req, TIMEOUT_MS, false);
+  }
+
+  private async attempt(req: Request, ms: number, retry: boolean): Promise<Outcome> {
     if (!this.spare || this.spare.retired) {
-      this.crashes = 0; // a request always gets one try, past the cap too
-      this.start("request");
+      if (retry) this.crashes = 0; // a request always gets one try, past the cap too
+      this.start(retry ? "request" : "retry");
       if (!this.spare) return { ok: false, error: this.error?.error ?? "failed", until: this.error?.until ?? null };
     }
     const s = this.spare!;
@@ -196,8 +220,8 @@ export class Translator {
     this.active = s;
     const id = requestId();
     const outcome = await new Promise<Outcome>((resolve) => {
-      const turn: Turn = { id, text: [], resolve, timer: null };
-      turn.timer = setTimeout(() => this.timedOut(s), TIMEOUT_MS);
+      const turn: Turn = { id, text: [], resolve, timer: null, ms, retry };
+      turn.timer = setTimeout(() => this.timedOut(s), ms);
       s.turn = turn;
       this.refresh();
       try {
@@ -269,11 +293,12 @@ export class Translator {
     if (this.active !== s || !s.turn || s.retired) return;
     const word = stderrWord(s.err);
     const error: TranslatorError = s.retried || word === "offline" ? "offline" : "failed";
-    log(`no reply in ${Math.round(TIMEOUT_MS / 1000)} s (${error}; claude ${this.version ?? "unknown"}); restarting`);
+    const retry = s.turn.retry && error === "failed";
+    log(`no reply in ${Math.round(s.turn.ms / 1000)} s (${error}; claude ${this.version ?? "unknown"}); ${retry ? "trying again" : "restarting"}`);
     this.active = null;
     this.retire(s);
     this.end(s, { ok: false, error, aborted: true });
-    this.recover("timeout", error);
+    if (!retry) this.recover("timeout", error); // else the request's second try starts its own session
     this.refresh();
   }
 
@@ -335,7 +360,7 @@ export class Translator {
     const c = isError || rl?.status === "rejected" ? classify(errText, rl) : { error: "failed" as const, until: null };
     const why = isError ? "" : parseReply(text) ? " (a reply with another id)" : " (no JSON reply)";
     log(`turn failed: ${c.error}${why}`);
-    this.end(s, { ok: false, error: c.error, until: c.until });
+    this.end(s, { ok: false, error: c.error, until: c.until, ...(isError ? {} : { unusable: true as const }) });
   }
 
   // A session ended without being asked to: names why in one word from its stderr (read to its
@@ -351,8 +376,9 @@ export class Translator {
     if (this.active !== s && this.spare !== s) return; // stopped meanwhile: whoever did it decides what's next
     if (this.spare === s) this.spare = null;
     if (this.active === s) this.active = null;
+    const retry = !!s.turn?.retry && error === "failed";
     this.end(s, { ok: false, error, aborted: true });
-    this.recover("exit", error);
+    if (!retry) this.recover("exit", error); // else the request's second try starts its own session
     this.refresh();
   }
 

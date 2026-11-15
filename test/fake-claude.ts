@@ -6,7 +6,11 @@
 //   "SLOW" → answers after 1.5 s; "HANG" → never answers (the server's timeout ends it); "KINDLY" → English the stand-in linter flags;
 //   "CHATTY" → the JSON object with words around it; "WRONGID" → a reply carrying another id;
 //   "MEMORY" → English that says how many turns this process has seen and the texts before this one;
-//   "EXIT-LOGIN", "EXIT-UPDATE", "EXIT-OFFLINE", "EXIT-LIMIT" → made-up Claude Code words on stderr, then exits 1.
+//   "EXIT-LOGIN", "EXIT-UPDATE", "EXIT-OFFLINE", "EXIT-LIMIT" → made-up Claude Code words on stderr, then exits 1;
+//   an adjust whose note names «kindly» (the server's linter fix) → the English without "kindly", or unchanged with "STUBBORN";
+//   "PROMPT-ONCE" → the first session that sees it can't read its system prompt (Claude Code's words on stderr)
+//   and exits 1, and the next one answers; "HANG-ONCE" → the first never answers, the next one does;
+//   "WRONGID-ONCE" → the first answers with another request's id, the next one answers right.
 // `--version` prints a made-up version. Each start appends a line to $STRIP_DIR/fake-starts.jsonl with
 // what it was started with, and each turn a line to fake-turns.jsonl (its pid, task, id and turn number).
 // When $STRIP_DIR/fake-exit-at-start exists, a start prints its text on stderr and exits 1 at once.
@@ -88,8 +92,22 @@ async function turn(content: string) {
     await Bun.sleep(20);
     process.exit(1);
   }
+  // The -ONCE words: a marker in $STRIP_DIR says the first session already met this text.
+  const once = text.match(/(PROMPT|HANG|WRONGID)-ONCE/);
+  if (once && !existsSync(join(DIR, `fake-once-${once[1]}`))) {
+    appendFileSync(join(DIR, `fake-once-${once[1]}`), "1");
+    if (once[1] === "HANG") return new Promise<void>(() => {});
+    if (once[1] === "WRONGID") {
+      const wrong = JSON.stringify({ id: "zzzzzzzz", english: "Can you send me the slides before lunch?" });
+      assistant(wrong);
+      return result(wrong);
+    }
+    process.stderr.write("Error reading system prompt file: EACCES: permission denied, open '/dev/fd/3'\n");
+    await Bun.sleep(20);
+    process.exit(1);
+  }
   if (text.includes("CRASH")) process.exit(1);
-  if (text.includes("HANG")) return new Promise<void>(() => {});
+  if (!once && text.includes("HANG")) return new Promise<void>(() => {});
   if (text.includes("SLOW")) await Bun.sleep(1500);
   else await Bun.sleep(30);
   if (text.includes("LIMIT")) {
@@ -98,8 +116,10 @@ async function turn(content: string) {
     return result("You've hit your limit · resets 3pm", true);
   }
   let reply: string;
-  const id = text.includes("WRONGID") ? "zzzzzzzz" : req.id;
+  const id = text.includes("WRONGID") && !once ? "zzzzzzzz" : req.id;
   if (text.includes("UNCLEAR")) reply = JSON.stringify({ id, question: "Which report do you mean, the weekly one or the budget one?" });
+  // The server's linter fix: an adjust whose note names «kindly» drops the word, unless the text says STUBBORN.
+  else if (req.task === "adjust" && /«kindly»/.test(String(req.note))) reply = JSON.stringify({ id, english: text.includes("STUBBORN") ? String(req.english) : String(req.english).replace(/\bkindly /i, "") });
   else if (req.task === "adjust") reply = JSON.stringify({ id, english: `${String(req.english).replace(/[.!]$/, "")}, thanks!` });
   else if (text.includes("KINDLY")) reply = JSON.stringify({ id, english: "Could you kindly send me the slides before lunch?" });
   else if (text.includes("MEMORY")) reply = JSON.stringify({ id, english: `Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}` });

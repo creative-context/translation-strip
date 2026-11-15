@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- The strip's settings menu has Position: Auto, ↓, ↑, ← and →, so you can move the strip without the menu bar. The app menu's Layout and this row stay in step.
+- The menu's button is a gear, since the menu holds settings. It was ⋯.
+- A failed translation shows its notice and Try again in the middle of the English box, where "Sent to" shows.
+- Under a narrow Teams window the footers give way in steps instead of overlapping: the shortcut hints first, then Adjust's word (the pencil stays), then the notice's words, then the chat's name. Normal and Formal step aside only while a dictation notice needs the room.
+- A translation whose hidden session closes or stalls before answering, or answers in a form the app can't use, gets one more try on a fresh session, after 20 seconds at most instead of 45, so you no longer see "Couldn't translate" for it.
+- Opus joins Haiku and Sonnet in the settings menu, at low effort (in tests it wrote as well as at its default or high effort, and as fast). Model and Position share one column, each a row of buttons, so the menu stays as tall as before.
+- When your voice linter finds an error in the English, the app asks for one fix before showing it, and keeps the fix only if it's better. Warnings still just show.
+- In a strip dragged shorter than 140 pt, the settings menu opens beside the gear instead of past the top edge.
+- Before it answers, the translator rereads its English against everything your guide says never to write, in the formal register too, and keeps your words where they point at something ("that", "the minimum") instead of swapping in a number or name from the chat.
+
 ## 0.6.0
 
 - The strip goes on any side of Teams: Layout in the app menu has Automatic, Below Teams, Above Teams, Left of Teams and Right of Teams. Automatic tries below, then right, then left, then above.

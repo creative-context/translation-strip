@@ -11,6 +11,8 @@ const OFFLINE = /connection (?:error|refused|reset|closed)|network|ENOTFOUND|ECO
 
 // Claude Code isn't signed in, or its login ran out.
 const LOGIN = /not (?:logged|signed) in|please run \/login|run `?claude`? (?:\/)?login|invalid api key|(?:oauth|access) token (?:has )?(?:expired|revoked)|authentication[_ ](?:error|failed)|unauthori[sz]ed/i;
+// Claude Code couldn't read the system prompt the server hands it on fd 3 (a fresh session can).
+const PROMPT = /system prompt file/i;
 // Claude Code refused the app's options: a flag renamed or removed by an update.
 const UPDATE = /unknown (?:option|argument|flag)|unrecognized (?:option|argument)|unexpected argument|invalid (?:option|argument)|error: option|too many arguments|requires? (?:a )?newer|please (?:update|upgrade)/i;
 
@@ -23,18 +25,19 @@ export function classify(text: string, rl: RateLimit): { error: TranslatorError;
 }
 
 // One word for what a session's stderr says. Only this word reaches the log, never the text.
-export type StderrWord = "login" | "update" | "offline" | "limit" | "unknown";
+export type StderrWord = "login" | "update" | "offline" | "limit" | "prompt" | "unknown";
 export function stderrWord(text: string): StderrWord {
   if (!text.trim()) return "unknown";
   if (LOGIN.test(text)) return "login";
   if (UPDATE.test(text)) return "update";
   if (LIMIT.test(text)) return "limit";
   if (OFFLINE.test(text)) return "offline";
+  if (PROMPT.test(text)) return "prompt";
   return "unknown";
 }
 
 // The error the page sees for a stderr word.
-export const errorFor = (w: StderrWord): TranslatorError => (w === "unknown" ? "failed" : w);
+export const errorFor = (w: StderrWord): TranslatorError => (w === "unknown" || w === "prompt" ? "failed" : w);
 
 // The reset time as ISO: from the rate_limit_event (seconds since 1970), or the older
 // "…usage limit reached|<seconds>" form.

@@ -32,6 +32,7 @@
       dict: "off",       // off on denied
       dictBase: "", dictStopping: false, dictPrep: false, dictProgress: null, dictNote: null,
       teams: null,       // the shell's last word on Teams: { open, chat, from, last, draft, shape? }
+      layout: "automatic", // the shell's position setting: automatic, below, above, left, right
       access: { accessibility: null, microphone: "unknown" },
     };
   }
@@ -136,6 +137,10 @@
     const sent = st.phase === "sent";
     return { text: sent ? (st.sentTo ? `Sent to ${st.sentTo}` : "Sent") : "Left in Teams, not sent", when: sent ? `· ${st.sentAt}` : "" };
   }
+
+  // A failed translation leaves the English box empty: its notice and button take the box's middle,
+  // where "Sent to …" shows. A failed adjust keeps the English, so its notice stays in the footer.
+  const centerNotice = (st, f) => st.phase === "error" && !trim(f.en);
 
   // ---------------------------------------------------------------------------- what can be done
   // The Translate button and ⏎ ask the same thing.
@@ -337,6 +342,9 @@
 
   // ---------------------------------------------------------------------------- what the shell says
   const shellTeams = (st, m) => next(st, { teams: m && typeof m === "object" ? m : null, notice: st.notice && st.notice.env ? null : st.notice });
+  // The position setting, as the shell says it (an unknown value keeps the one before).
+  const LAYOUTS = ["automatic", "below", "above", "left", "right"];
+  const shellLayout = (st, m) => next(st, { layout: m && LAYOUTS.includes(m.value) ? m.value : st.layout });
   // { st, stopDictation }: a mic that is denied ends the dictation.
   function shellAccess(st, m) {
     const n = next(st, { access: { accessibility: m && typeof m.accessibility === "boolean" ? m.accessibility : null, microphone: (m && m.microphone) || "unknown" } });
@@ -347,7 +355,7 @@
   }
 
   const api = {
-    create, context, mismatch, shapeUnknown, shapeSeveral, errorView, view, dataTeams, dictLabel, doneView, untilText, clock,
+    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, doneView, centerNotice, untilText, clock,
     canTranslate, canAdjust, canSend,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,

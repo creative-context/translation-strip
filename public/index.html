@@ -84,6 +84,10 @@
   .done-msg .who { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .done-msg .when { color: var(--color-text-secondary); flex: none; }
   [data-state="sent"] .done-msg, [data-state="leave"] .done-msg { display: flex; }
+  /* A failed translation: its notice and button take the same place, in the middle of the box. */
+  .en-wrap > #tagrow { position: absolute; inset: 0; justify-content: center; padding: 0 12px; margin: 0; min-width: 0; pointer-events: none; }
+  .en-wrap > #tagrow > * { pointer-events: auto; }   /* in the column it spans the module: the footer under it stays clickable */
+  [data-center="notice"] .en-out { visibility: hidden; }
   [data-state="sent"] .en-out, [data-state="leave"] .en-out { visibility: hidden; }
   [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
   [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
@@ -96,8 +100,23 @@
   .to { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 96px; flex-shrink: 1000; }
   .to b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
   [data-teams="nochat"] .to, [data-teams="closed"] .to, [data-teams="unknown"] .to { display: none; }
-  .more-btn { font-size: 15px; letter-spacing: 1px; flex: none; width: 28px; height: 28px; }
+  .more-btn { flex: none; width: 28px; height: 28px; }
+  .more-btn svg.i { width: 16px; height: 16px; }
   .send, #translate { gap: 8px; flex: none; }
+  .tone, .mic { flex: none; }
+  /* A narrow strip: the footers give way in steps (fitFooter). The dictation label and the preview note
+     end in an ellipsis, their titles holding the words; the note gives way first. */
+  .preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1000; }
+  .dict-label { min-width: 0; }
+  .dict-label .dw { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .dict-label .btn { flex: none; }
+  [data-fit~="keys"] .foot kbd { display: none; }
+  [data-fit~="pencil"] #adjustBtn { width: 24px; padding: 0; justify-content: center; }
+  [data-fit~="pencil"] #adjustBtn .lbl { display: none; }
+  [data-fit~="name"] .to { min-width: 0; }
+  [data-fit~="noname"] .to { display: none; }
+  [data-fit~="nonotice"] #tagrow #status { display: none; }
+  [data-fit~="tone"] .tone { display: none; }
   .btn:disabled { opacity: .4; pointer-events: none; }
   /* Nothing to send or translate yet: a gray button you can still read, not a dimmed one. */
   .send:disabled, #translate:disabled { opacity: 1; background: var(--color-overlay-hover); color: var(--color-text-secondary); }
@@ -113,7 +132,20 @@
   .menu button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: -2px; }
   .menu button .ck { width: 12px; color: var(--color-text-accent); visibility: hidden; }
   .menu button[aria-checked="true"] .ck { visibility: visible; }
+  /* Model and Position: one column, a row of buttons each with its label on the left, in line with
+     the other columns' two items, so three models and five sides fit the strip's height and width. */
+  .menu .prow { display: flex; align-items: center; gap: 8px; height: 26px; }
+  .menu .prow .pl { flex: none; width: 52px; padding-left: 8px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); }
+  .menu .posrow { display: flex; gap: 2px; }
+  .menu .posrow button { width: auto; min-width: 28px; height: 24px; padding: 0 8px; justify-content: center; color: var(--color-text-primary); }
+  .menu .posrow button[aria-checked="true"] { background: var(--color-overlay-pressed); }
   .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
+
+  /* A short strip (dragged below 140 pt): there's no room above the footer, so the menu opens to the
+     left of the gear, as tall as the strip lets it, and the gear stays clickable. */
+  @media (orientation: landscape) and (max-height: 139px) {
+    .menu { bottom: 8px; right: 48px; max-width: calc(100% - 56px); gap: 4px; }
+  }
 
   /* First run: one sentence and one button on a single veil the size of the two boxes. */
   .cover { display: none; position: absolute; inset: 8px; border-radius: var(--radius-container); background: var(--obsidian-veil-selected); z-index: 10;
@@ -123,7 +155,7 @@
 
   /* The column: when the window is taller than it is wide (the strip's second shape, beside Teams), the
      same two boxes stack, the English on top and the Spanish below, each half the height. The English
-     footer takes two rows (the notice and Adjust, then who it goes to, Send and ⋯); the Spanish footer
+     footer takes two rows (the notice and Adjust, then who it goes to, Send and the gear); the Spanish footer
      is the same row as today, and anything that doesn't fit on it (the dictation label, the preview note)
      takes a row of its own above it. Nothing here applies to the strip's own shape. */
   @media (orientation: portrait) {
@@ -137,7 +169,7 @@
     .done-msg .who { overflow: visible; text-overflow: clip; }
 
     /* English footer. Row 1 (a strut keeps its 28 px, so the text doesn't move when a notice comes or goes):
-       the notice and its buttons, then Adjust. Row 2: who it goes to, Send, ⋯. */
+       the notice and its buttons, then Adjust. Row 2: who it goes to, Send, the gear. */
     .f.en .foot { flex-wrap: wrap; height: auto; row-gap: 0; align-content: flex-start; }
     .f.en .foot .grow { display: none; }
     .f.en .foot::before { content: ""; order: 0; flex: none; width: 0; height: 24px; margin: 0 -8px 4px 0; }
@@ -146,7 +178,7 @@
     #tagrow { order: 1; flex: 1 1 0; min-width: 0; margin-bottom: 4px; }
     #adjustBtn { order: 2; margin: 0 0 4px auto; }
     .to { order: 4; flex: 1 1 0; }
-    #send { order: 5; margin-left: auto; }   /* with no chat name, Send and ⋯ stay at the right */
+    #send { order: 5; margin-left: auto; }   /* with no chat name, Send and the gear stay at the right */
     #more { order: 6; }
 
     /* Spanish footer: the same row; a label that needs room goes above it. */
@@ -156,7 +188,8 @@
     /* The menu stacks its groups in one column and opens over the English box, above its footer. */
     .menu { left: 8px; right: 8px; bottom: calc(50% + 74px); width: auto; max-width: none; max-height: calc(50% - 82px); overflow-y: auto; flex-direction: column; }
     .menu hr { width: auto; height: 1px; margin: 2px 8px; align-self: stretch; }
-    .menu .col:last-child .mh { display: none; }
+    .menu .col:last-child .mh, .menu .col.prefs .mh { display: none; }
+    .menu .prow .pl { width: 88px; padding-left: 28px; }   /* in line with the items' words, as in the other groups */
     .menu .col:last-child button { padding-left: 28px; }   /* in line with the items that have a check mark */
 
     /* First run: the sentence over its button, on the one veil. */
@@ -171,7 +204,7 @@
       <textarea class="es-in" id="es" lang="es" placeholder="Message" aria-label="Message to translate" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       <div class="foot">
         <div class="pseg tone" id="tone"><button data-register="normal" aria-pressed="true">Normal</button><button data-register="formal" aria-pressed="false">Formal</button></div>
-        <span class="preview" id="preview" hidden>Preview · nothing is sent</span>
+        <span class="preview" id="preview" title="Preview · nothing is sent" hidden>Preview · nothing is sent</span>
         <span class="grow"></span>
         <span class="dict-label" id="dictLabel"></span>
         <button class="icon-btn mic" id="mic" title="Dictate ⌘D" aria-label="Dictate" aria-pressed="false"></button>
@@ -193,10 +226,10 @@
           <span class="status" id="status" role="status" aria-live="polite"></span><span class="actions" id="actions"></span>
         </div>
         <span class="grow"></span>
-        <button class="btn ghost small adjust-btn" id="adjustBtn"><span id="pencil"></span>Adjust <kbd>⌘K</kbd></button>
+        <button class="btn ghost small adjust-btn" id="adjustBtn" aria-label="Adjust" title="Adjust ⌘K"><span id="pencil"></span><span class="lbl">Adjust</span> <kbd>⌘K</kbd></button>
         <span class="to" id="to">To <b id="chat"></b></span>
         <button class="btn primary send" id="send" disabled>Send <kbd>⌘⏎</kbd></button>
-        <button class="icon-btn more-btn" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <button class="icon-btn more-btn" id="more" aria-label="Settings" title="Settings" aria-haspopup="menu" aria-expanded="false"></button>
       </div>
     </div>
   </div>
@@ -207,10 +240,20 @@
       <button role="menuitemradio" data-mode="leave" aria-checked="false"><span class="ck" data-ic="check"></span>Put in Teams without sending</button>
     </div>
     <hr>
-    <div class="col">
-      <div class="mh">Model</div>
-      <button role="menuitemradio" data-model="haiku" aria-checked="true"><span class="ck" data-ic="check"></span>Haiku</button>
-      <button role="menuitemradio" data-model="sonnet" aria-checked="false"><span class="ck" data-ic="check"></span>Sonnet</button>
+    <div class="col prefs">
+      <div class="mh">&nbsp;</div>
+      <div class="prow"><span class="pl" id="modelLabel">Model</span><div class="posrow" role="group" aria-labelledby="modelLabel">
+        <button role="menuitemradio" data-model="haiku" aria-checked="true">Haiku</button>
+        <button role="menuitemradio" data-model="sonnet" aria-checked="false">Sonnet</button>
+        <button role="menuitemradio" data-model="opus" aria-checked="false">Opus</button>
+      </div></div>
+      <div class="prow"><span class="pl" id="positionLabel">Position</span><div class="posrow" role="group" aria-labelledby="positionLabel">
+        <button role="menuitemradio" data-layout="automatic" aria-checked="true" title="Automatic" aria-label="Automatic">Auto</button>
+        <button role="menuitemradio" data-layout="below" aria-checked="false" title="Below Teams" aria-label="Below Teams">↓</button>
+        <button role="menuitemradio" data-layout="above" aria-checked="false" title="Above Teams" aria-label="Above Teams">↑</button>
+        <button role="menuitemradio" data-layout="left" aria-checked="false" title="Left of Teams" aria-label="Left of Teams">←</button>
+        <button role="menuitemradio" data-layout="right" aria-checked="false" title="Right of Teams" aria-label="Right of Teams">→</button>
+      </div></div>
     </div>
     <hr>
     <div class="col">
@@ -240,6 +283,9 @@ const ic = n => DesignIcons.svg(n);
 // The design system has no mic yet: drawn on its 24 px grid and stroke, to add to mac-app-design before it is vendored.
 const MIC = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg>`;
 $("mic").innerHTML = MIC;
+// The settings button: a gear, drawn the same way (eight teeth, the same stroke), also to add to mac-app-design.
+const GEAR = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.14 5.05 L10.42 2.53 L13.58 2.53 L13.86 5.05 A7.2 7.2 0 0 1 15.6 5.76 L17.57 4.18 L19.82 6.43 L18.24 8.4 A7.2 7.2 0 0 1 18.95 10.14 L21.47 10.42 L21.47 13.58 L18.95 13.86 A7.2 7.2 0 0 1 18.24 15.6 L19.82 17.57 L17.57 19.82 L15.6 18.24 A7.2 7.2 0 0 1 13.86 18.95 L13.58 21.47 L10.42 21.47 L10.14 18.95 A7.2 7.2 0 0 1 8.4 18.24 L6.43 19.82 L4.18 17.57 L5.76 15.6 A7.2 7.2 0 0 1 5.05 13.86 L2.53 13.58 L2.53 10.42 L5.05 10.14 A7.2 7.2 0 0 1 5.76 8.4 L4.18 6.43 L6.43 4.18 L8.4 5.76 A7.2 7.2 0 0 1 10.14 5.05Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+$("more").innerHTML = GEAR;
 $("pencil").innerHTML = ic("pencil");
 for (const s of document.querySelectorAll("[data-ic]")) s.innerHTML = ic(s.dataset.ic);
 
@@ -273,7 +319,10 @@ function standIn(msg) {
     setTimeout(() => {
       window.strip.access({ accessibility: qp.get("access") !== "0", microphone: qp.get("mic") === "denied" ? "denied" : "unknown" });
       window.strip.teams(previewTeams());
+      window.strip.layout({ value: "automatic" });
     }, 0);
+  } else if (msg.type === "layout") {
+    setTimeout(() => window.strip.layout({ value: msg.value }), 0); // the stand-in moves nothing
   } else if (msg.type === "send") {
     setTimeout(() => {
       const why = qp.get("send");
@@ -335,6 +384,7 @@ window.strip = {
     commit(r.st); paint();
   },
   focus() { esIn.focus(); },
+  layout(m) { commit(SS.shellLayout(st, m)); paint(); },
 };
 
 // ------------------------------------------------------------------------------ the server
@@ -382,13 +432,47 @@ async function ask(path, body, id) {
   }
 }
 
-// The notice stays whole and the chat's name gives way first, down to its 96 px. Only when the
-// row still overflows does the notice shorten too. (Flex shrink alone takes a fraction of a pixel
-// from the notice, which is enough to cut its last letters.)
+// When the footers don't fit (a narrow Teams window, a long notice), they give way in steps, the
+// fewest that make each fit. The chat's name shortens first, down to its 96 px (that's its flex
+// shrink). Then the shortcut hints leave the buttons (the keys still work, and the titles say
+// them), then Adjust keeps only its pencil, then the notice's words end in an ellipsis (its title
+// holds them, and its buttons stay whole), then the chat's name goes below 96 px, then it leaves
+// the row, and last the notice's words leave too. (Flex shrink alone takes a fraction of a pixel
+// from the notice, which is enough to cut its last letters: so the notice can't shrink until then.)
 function fitFooter() {
-  const row = $("tagrow"), foot = row.parentElement;
-  row.style.flexShrink = "0";
-  if (foot.scrollWidth > foot.clientWidth + 1) row.style.flexShrink = "";
+  // The preview note shows only in a browser, gives way to what the dictation label says, and leaves
+  // rather than end in an ellipsis.
+  const pv = $("preview");
+  pv.hidden = inApp || $("dictLabel").childNodes.length > 0;
+  fitSteps();
+  if (!pv.hidden && pv.scrollWidth > pv.clientWidth + 1) { pv.hidden = true; fitSteps(); }
+}
+function fitSteps() {
+  const row = $("tagrow"), acts = $("actions"), status = $("status");
+  const en = box.querySelector(".f.en .foot"), es = box.querySelector(".f.es .foot");
+  const over = (f) => f.scrollWidth > f.clientWidth + 1;
+  const fit = [];
+  const step = (s) => { fit.push(s); box.dataset.fit = fit.join(" "); };
+  const notice = (dot) => {
+    row.style.flexShrink = "";
+    row.style.minWidth = `${(acts.firstChild ? acts.offsetWidth : 0) + (status.firstChild && dot ? 34 : 0) + (acts.firstChild && status.firstChild && dot ? 8 : 0)}px`;
+  };
+  row.style.flexShrink = "0"; row.style.minWidth = "";
+  box.dataset.fit = "";
+  // The dictation label keeps its button whole and a few of its words; the rest end in an ellipsis.
+  const dl = $("dictLabel"), dlBtn = dl.querySelector(".btn");
+  dl.style.minWidth = "";
+  if (dl.firstChild) dl.style.minWidth = `${Math.min(dl.scrollWidth, (dlBtn ? dlBtn.offsetWidth + 8 : 0) + 64)}px`;
+  // Both footers lose their shortcut hints together, so the buttons look alike.
+  if (over(en) || over(es)) step("keys");
+  // The English footer, in its order. Every step is undone on the next paint or resize.
+  if (over(en)) step("pencil");
+  if (over(en)) notice(true);          // the notice shortens down to its dot; its buttons stay whole
+  if (over(en)) step("name");
+  if (over(en)) step("noname");
+  if (over(en)) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
+  // The Spanish footer: Normal and Formal step aside last, only while a dictation label needs the room.
+  if (over(es)) step("tone");
 }
 window.addEventListener("resize", () => fitFooter());
 
@@ -414,9 +498,16 @@ function paint() {
   for (const b of document.querySelectorAll("#tone button")) b.setAttribute("aria-pressed", b.dataset.register === st.register);
   for (const b of menu.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === settings().mode);
   for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
+  for (const b of menu.querySelectorAll("[data-layout]")) b.setAttribute("aria-checked", b.dataset.layout === st.layout);
 
   $("adjustBtn").style.display = SS.canAdjust(st, f) && !open ? "" : "none";
   $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
+  // A failed translation leaves the English box empty: its notice and button move to the box's
+  // middle, where "Sent to …" shows, and back to the footer after.
+  const center = SS.centerNotice(st, f), row = $("tagrow"), wrap = enOut.parentElement, enFoot = box.querySelector(".f.en .foot");
+  box.dataset.center = center ? "notice" : "";
+  if (center && row.parentElement !== wrap) wrap.append(row);
+  else if (!center && row.parentElement !== enFoot) enFoot.prepend(row);
   // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
   const sig = JSON.stringify([v.tag, v.actions]);
   if (sig !== drawn) {
@@ -443,17 +534,20 @@ function paint() {
 
   const label = $("dictLabel"), dl = SS.dictLabel(st);
   label.replaceChildren();
-  if (dl && dl.kind === "prep") label.textContent = dl.text;
-  else if (dl && dl.kind === "listening") label.innerHTML = `<span class="sdot"></span>Listening`;
-  else if (dl && dl.kind === "note") label.textContent = dl.text;
+  // The words sit in their own span, so they can end in an ellipsis when the strip is narrow; the title holds them.
+  const words = (text) => { const w = document.createElement("span"); w.className = "dw"; w.textContent = text; label.title = text; return w; };
+  label.removeAttribute("title");
+  if (dl && dl.kind === "prep") label.append(words(dl.text));
+  else if (dl && dl.kind === "listening") { label.innerHTML = `<span class="sdot"></span>`; label.append(words("Listening")); }
+  else if (dl && dl.kind === "note") label.append(words(dl.text));
   else if (dl && dl.kind === "denied") {
-    label.append("Microphone not allowed ");
+    label.append(words("Microphone not allowed"));
     const b = document.createElement("button");
     b.className = "btn ghost small"; b.dataset.act = "mic-settings"; b.textContent = "Open Settings";
     label.append(b);
   }
   $("mic").setAttribute("aria-pressed", st.dict === "on");
-  $("preview").hidden = inApp || label.childNodes.length > 0;   // the note gives way to what the label says
+  // (the preview note: fitFooter, below, which knows the room it has)
 
   fitFooter();
 
@@ -626,7 +720,7 @@ box.addEventListener("click", e => {
   }
 });
 
-// ------------------------------------------------------------------------------ the ⋯ menu
+// ------------------------------------------------------------------------------ the settings menu (the gear)
 moreBtn.onclick = e => {
   e.stopPropagation();
   const open = menu.classList.toggle("open");
@@ -648,6 +742,8 @@ menu.addEventListener("click", e => {
   if (!b) return;
   if (b.dataset.mode) setSettings({ mode: b.dataset.mode });
   else if (b.dataset.model) setSettings({ model: b.dataset.model });
+  // The shell moves the strip and says the new setting back (window.strip.layout).
+  else if (b.dataset.layout) { post({ type: "layout", value: b.dataset.layout }); commit(SS.shellLayout(st, { value: b.dataset.layout })); paint(); }
   else if (b.dataset.do === "guide") { post({ type: "open", what: "guide" }); closeMenu(); }
   else if (b.dataset.do === "restart") { api("/api/translator/restart", {}); closeMenu(); }
 });

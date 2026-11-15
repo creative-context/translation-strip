@@ -19,6 +19,9 @@ export const PARENT_ENV = "STRIP_PARENT_PID";
 export const CLAUDE = process.env.STRIP_CLAUDE || "claude";
 
 export const TIMEOUT_MS = Number(process.env.STRIP_TIMEOUT_MS) || 45_000; // one request, then failed and a restart
+// A request's first try waits this long before a fresh session tries once more (TIMEOUT_MS for that one).
+// Long enough for a long message on any of the models; a stalled session gets its second try sooner.
+export const FIRST_TRY_MS = Number(process.env.STRIP_FIRST_TRY_MS) || 20_000;
 export const STDERR_KEEP = 2048; // bytes of each session's stderr held in memory, to classify an exit
 export const MAX_RESTARTS = 5; // restarts after a failure, within RESTART_WINDOW_MS; past that, error until a request
 export const RESTART_WINDOW_MS = 10 * 60_000;

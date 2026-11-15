@@ -29,7 +29,9 @@ const CHECK = `
 
 # Before you reply
 
-Compare your English with the user's text, part by part. Remove anything that isn't in their text: a greeting, a name, a "yes", thanks, a sign-off, a question, an offer, a closing line. Put back anything of theirs you dropped. The guide shapes the words; the user's text sets what is said.
+Compare your English with the user's text, part by part. Remove anything that isn't in their text: a greeting, a name, a "yes", thanks, a sign-off, a question, an offer, a closing line, a softener or a detail. Put back anything of theirs you dropped. Each part says what theirs says: the same person (I, we, you), the same promise and the same certainty. Where they point at something ("that", "it", "the minimum"), keep pointing: don't swap their words for a number, name or date from the context. The guide shapes the words; the user's text sets what is said.
+
+Then read your English once more against everything the guide says never to write: words, phrases, punctuation and how thanks are said. Those rules hold in every register, formal too, so a formal message is polite without the phrases the guide rules out. Fix any you find.
 `;
 
 // The system prompt: the protocol, the guide's text and the check, held in memory only.

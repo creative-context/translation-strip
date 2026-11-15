@@ -181,10 +181,18 @@ describe("Translation Strip server", () => {
     expect(t2.id).not.toBe(t1.id);
   });
 
-  test("a reply with another request's id is failed", async () => {
+  test("a reply with another request's id gets one more try on a fresh session, and is failed when that one slips too", async () => {
+    const before = turns().length;
     expect(await post("/api/translate", { text: "WRONGID ¿me mandas las slides?", register: "normal" })).toEqual({ status: 503, body: { error: "failed" } });
+    expect(turns().length - before).toBe(2); // one more try, never a loop
     await statusIs("ready");
     expect((await post("/api/translate", { text: "¿me mandas las slides?" })).status).toBe(200);
+  });
+
+  test("a reply with another request's id, once: the fresh session's answer goes through", async () => {
+    const r = await post("/api/translate", { text: "WRONGID-ONCE ¿me mandas las slides?", register: "normal" });
+    expect(r).toEqual({ status: 200, body: { english: "Can you send me the slides before lunch?", lint: [] } });
+    await statusIs("ready");
   });
 
   test("takes the reply's JSON even with words around it", async () => {
@@ -192,11 +200,23 @@ describe("Translation Strip server", () => {
     expect(r.body.english).toBe("Can you send me the slides before lunch?");
   });
 
-  test("returns the linter's findings", async () => {
+  test("a linter error gets one fix before the page sees it: an adjust whose note names the error", async () => {
+    const before = turns().length;
     const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" });
     expect(r.status).toBe(200);
-    expect(r.body.english).toContain("kindly");
+    expect(r.body).toEqual({ english: "Could you send me the slides before lunch?", lint: [] });
+    const t = turns().slice(before);
+    expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]); // the fix ran on a fresh session of its own
+    expect(t[0].pid).not.toBe(t[1].pid);
+  });
+
+  test("a fix that doesn't help: the first English goes back with the linter's findings", async () => {
+    const before = turns().length;
+    const r = await post("/api/translate", { text: "KINDLY STUBBORN ¿me mandas las slides?", register: "normal" });
+    expect(r.status).toBe(200);
+    expect(r.body.english).toBe("Could you kindly send me the slides before lunch?");
     expect(r.body.lint).toEqual([{ level: "error", message: "Sounds stiff: «kindly»" }]);
+    expect(turns().length - before).toBe(2); // one fix, never a loop
   });
 
   test("asks a question when something important is unclear", async () => {
@@ -235,13 +255,23 @@ describe("Translation Strip server", () => {
     expect((await state()).translator).toMatchObject({ status: "ready", error: null, until: null });
   });
 
-  test("a crash fails the request, and the translator restarts", async () => {
+  test("a crash gets one more try on a fresh session; when that one crashes too, the request fails and the translator restarts", async () => {
     const before = (await settle(starts)).length;
     const r = await post("/api/translate", { text: "CRASH ¿me mandas las slides?", register: "normal" });
     expect(r).toEqual({ status: 503, body: { error: "failed" } });
-    await until("a new spare", async () => starts().length === before + 1);
+    await until("the second try's session and a new spare", async () => starts().length === before + 2);
     await statusIs("ready");
     expect((await post("/api/translate", { text: "¿me mandas las slides?" })).status).toBe(200);
+  });
+
+  test("a session that can't read its system prompt gets one more try on a fresh session, and the request goes through", async () => {
+    await statusIs("ready");
+    const before = (await settle(starts)).length;
+    const r = await post("/api/translate", { text: "PROMPT-ONCE ¿me mandas las slides?", register: "normal" });
+    expect(r.status).toBe(200);
+    expect(r.body.english).toBeTruthy();
+    await until("the second try's session and the next spare", async () => starts().length === before + 2);
+    await statusIs("ready");
   });
 
   test("a session that ends with Claude Code's words says which: login, update, offline, limit", async () => {
@@ -319,6 +349,17 @@ describe("Translation Strip server", () => {
     const s = await statusIs("ready");
     expect(s.translator.model).toBe("sonnet");
     expect(s.settings).toEqual({ model: "sonnet", mode: "leave" });
+    expect(starts().at(-1).args).not.toContain("--effort"); // Sonnet keeps Claude Code's default effort
+
+    // Opus runs at low effort.
+    expect((await post("/api/settings", { model: "opus" })).body.settings).toEqual({ model: "opus", mode: "leave" });
+    await until("an opus start", async () => starts().at(-1)?.model === "opus");
+    const args = starts().at(-1).args;
+    expect(args[args.indexOf("--effort") + 1]).toBe("low");
+    await statusIs("ready");
+    expect((await post("/api/settings", { model: "sonnet" })).status).toBe(200);
+    await until("a sonnet start again", async () => starts().at(-1)?.model === "sonnet");
+    await statusIs("ready");
 
     expect((await post("/api/settings", { model: "gpt" })).status).toBe(400);
   });
@@ -415,21 +456,30 @@ describe("Translation Strip server: its limits", () => {
     rmSync(DIR2, { recursive: true, force: true });
   });
 
-  test("a request the stand-in never answers ends as failed after the timeout, and the translator restarts", async () => {
+  test("a request the stand-in never answers gets one more try, then ends as failed after the timeouts, and the translator restarts", async () => {
     const before = await settle(starts2);
     const hung = before.at(-1).pid;
     const t0 = Date.now();
     const r = await post("/api/translate", { text: "HANG ¿me mandas las slides?", register: "normal" });
     const took = Date.now() - t0;
     expect(r).toEqual({ status: 503, body: { error: "failed" } });
-    expect(took).toBeGreaterThanOrEqual(TIMEOUT_MS - 100); // it waited for the timeout, not less
-    expect(took).toBeLessThan(TIMEOUT_MS + 3000);
-    await until("a new start", async () => starts2().length === before.length + 1);
+    expect(took).toBeGreaterThanOrEqual(2 * TIMEOUT_MS - 200); // both tries waited their timeout, not less
+    expect(took).toBeLessThan(2 * TIMEOUT_MS + 3000);
+    await until("the second try's session and a new spare", async () => starts2().length === before.length + 2);
     expect(starts2().at(-1).pid).not.toBe(hung);
     await until("the hung process stopped", async () => !alive(hung));
     await statusIs("ready");
-    expect(starts2().length).toBe(before.length + 1); // one restart, not a loop
+    expect(starts2().length).toBe(before.length + 2); // one restart, not a loop
     expect((await normal()).status).toBe(200); // and it answers again
+  });
+
+  test("a first try that never answers gives way to a fresh session after its wait, and the request goes through", async () => {
+    await statusIs("ready");
+    const t0 = Date.now();
+    const r = await post("/api/translate", { text: "HANG-ONCE ¿me mandas las slides?", register: "normal" });
+    expect(r.status).toBe(200);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(TIMEOUT_MS - 100); // the first try waited its turn
+    await statusIs("ready");
   });
 
   test("at most 5 restarts in 10 minutes, then an error until a request", async () => {
@@ -438,18 +488,19 @@ describe("Translation Strip server: its limits", () => {
     let n = (await settle(starts2)).length;
     for (let i = 1; i <= 5; i++) {
       expect(await post("/api/translate", { text: "CRASH ¿me mandas las slides?", register: "normal" })).toEqual({ status: 503, body: { error: "failed" } });
-      await until(`restart ${i}`, async () => starts2().length === n + 1);
+      // The second try's session (not a restart) and the restart after it.
+      await until(`restart ${i}`, async () => starts2().length === n + 2);
       await statusIs("ready");
       expect((await normal()).status).toBe(200); // a good reply between them: not "twice in a row"
-      await until(`the spare after reply ${i}`, async () => starts2().length === n + 2);
-      n += 2;
+      await until(`the spare after reply ${i}`, async () => starts2().length === n + 3);
+      n += 3;
       await statusIs("ready");
     }
     expect((await post("/api/translate", { text: "CRASH ¿me mandas las slides?", register: "normal" })).status).toBe(503);
     const s = await statusIs("error");
     expect(s.translator.error).toBe("failed");
     await Bun.sleep(500);
-    expect(starts2().length).toBe(n); // the sixth isn't restarted
+    expect(starts2().length).toBe(n + 1); // the sixth gets its second try, and isn't restarted after it
     expect((await normal()).status).toBe(200); // a request gets its try
     await statusIs("ready");
   }, 20000);

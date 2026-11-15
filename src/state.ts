@@ -1,5 +1,5 @@
 // The shared state the page sees, and the version that bumps on each change.
-export type Model = "haiku" | "sonnet";
+export type Model = "haiku" | "sonnet" | "opus";
 export type Mode = "send" | "leave";
 export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "failed";
 export type Status = "starting" | "ready" | "busy" | "error";

@@ -499,6 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             pageReady = true
             published = nil
             sendAccess(force: true)
+            call("layout", ["value": layout.rawValue])
             readTeams(now: true)
             checkServer { own in
                 if !own { ShellLog.write("the server on port \(port) isn't this app's own; nothing will be sent") }
@@ -511,6 +512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 }
                 self.send(m)
             }
+        case "layout":
+            if let l = (m["value"] as? String).flatMap(DockLayout.init(rawValue:)) { setLayout(l) }
         case "dictation":
             if (m["action"] as? String) == "start" { dictation.start() } else { dictation.stop() }
         case "open":
@@ -803,9 +806,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     @objc func chooseLayout(_ sender: NSMenuItem) {
-        guard let l = (sender.representedObject as? String).flatMap(DockLayout.init(rawValue:)), l != layout else { return }
+        guard let l = (sender.representedObject as? String).flatMap(DockLayout.init(rawValue:)) else { return }
+        setLayout(l)
+    }
+
+    // From the Layout menu or the page's settings menu: keep it, check it in the menu, tell the page, dock.
+    func setLayout(_ l: DockLayout) {
+        guard l != layout else { return call("layout", ["value": l.rawValue]) }
         layout = l
         updateLayoutMenu()
+        call("layout", ["value": l.rawValue])
         ShellLog.write("layout: \(l.rawValue)")
         dock()
     }

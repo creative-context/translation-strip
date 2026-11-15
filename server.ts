@@ -69,21 +69,39 @@ async function body(req: Request): Promise<any> {
   }
 }
 
-// A polish or an adjust, start to finish: the translator, then the linter.
+// A polish or an adjust, start to finish: the translator, then the linter. English the linter
+// finds an error in gets one fix before the page sees it: an adjust whose note names the errors.
+// The fix is kept only when it has fewer errors; else the first English goes back with its
+// findings, as before. Warnings are left alone (the guide says they depend on the message).
 async function run(r: Ask) {
   if (translator.busy()) return json({ error: "busy" }, 409);
   const out = await translator.request(r);
   if (!out.ok) return json(out.until ? { error: out.error, until: out.until } : { error: out.error }, 503);
   if ("question" in out.reply) return json({ question: out.reply.question });
   if (!("english" in out.reply)) return json({ error: "failed" }, 503);
-  const l = await lint(out.reply.english, state.settings.linter);
+  let english = out.reply.english;
+  let l = await lint(english, state.settings.linter);
   const linter = l.ok ? "ok" : "missing";
   if (state.translator.linter !== linter) {
     state.translator.linter = linter;
     bump();
   }
-  return json({ english: out.reply.english, lint: l.lint });
+  const errors = l.lint.filter((f) => f.level === "error");
+  if (errors.length && !translator.busy()) {
+    const note = `The user's voice guide rules this out, so change only it and keep everything else as it is: ${errors.map((f) => f.message).join(" / ")}`;
+    const fix = await translator.request({ task: "adjust", text: r.text, english, note, register: r.register, ...(r.context ? { context: r.context } : {}) });
+    if (fix.ok && "english" in fix.reply) {
+      const l2 = await lint(fix.reply.english, state.settings.linter);
+      const left = l2.lint.filter((f) => f.level === "error").length;
+      const kept = left < errors.length;
+      if (kept) { english = fix.reply.english; l = l2; }
+      fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; a fix ${kept ? `kept (${left} left)` : "didn't help, the first reply goes back"}`);
+    } else fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; the fix got no English, the first reply goes back`);
+  }
+  return json({ english, lint: l.lint });
 }
+// Counts only, never the text.
+const fixLog = (words: string) => console.error(`${new Date().toISOString()} lint: ${words}`);
 
 async function routes(req: Request, url: URL): Promise<Response | undefined> {
   const post = req.method === "POST";

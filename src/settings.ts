@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { SETTINGS_FILE } from "./config";
 import type { Mode, Model, Settings } from "./state";
 
-export const MODELS: Model[] = ["haiku", "sonnet"];
+export const MODELS: Model[] = ["haiku", "sonnet", "opus"];
 export const MODES: Mode[] = ["send", "leave"];
 
 function readRaw(file = SETTINGS_FILE): Record<string, unknown> {

@@ -2,7 +2,7 @@
 
 A Mac app that sits in the gap under your Teams window. You write in Spanish, press Return and get English ready to send, in your own voice. ⌘Return sends it to the chat you have open, with no copying or pasting.
 
-Version 0.6.0 · macOS 14 or later · Microsoft Teams · Built with Swift and [Bun](https://bun.sh)
+Version 0.7.0 · macOS 14 or later · Microsoft Teams · Built with Swift and [Bun](https://bun.sh)
 
 Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. The strip translates the meaning, in the voice your guide describes, and adds nothing you didn't write, so no greeting, name, thanks or closing line appears on its own.
 
@@ -29,7 +29,7 @@ macOS ties the Accessibility permission to the app's signature. If your keychain
 
 ## Use it
 
-The strip docks under the Teams window, as wide as it, and moves with it. When there's no room under Teams, it becomes a column beside Teams, as tall as its window, with the English on top and your Spanish below. Layout in the app menu picks Automatic or a side: Below, Above, Left of or Right of Teams. Drag the strip's outer edge to make it taller, or the column's to make it wider, and the app remembers the size. The strip steps out of the way when Teams is minimized, hidden or on another desktop.
+The strip docks under the Teams window, as wide as it, and moves with it. When there's no room under Teams, it becomes a column beside Teams, as tall as its window, with the English on top and your Spanish below. Position in the strip's settings menu (the gear), or Layout in the app menu, picks Automatic or a side: below, above, left or right of Teams. Drag the strip's outer edge to make it taller, or the column's to make it wider, and the app remembers the size. The strip steps out of the way when Teams is minimized, hidden or on another desktop.
 
 | Key | What it does |
 |---|---|
@@ -41,7 +41,7 @@ The strip docks under the Teams window, as wide as it, and moves with it. When t
 | Esc | Clear |
 | ⌃⌥T | From any app, bring up the strip ready to type |
 
-Normal and Formal pick the register, as your guide describes them. The ⋯ menu sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku or Sonnet), opens your guide and restarts the translator.
+Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku, Sonnet or Opus, which runs at low effort), opens your guide and restarts the translator.
 
 ### How it sends
 

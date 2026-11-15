@@ -17,7 +17,7 @@ const PORT = 4813;
 const PUBLIC = join(import.meta.dir, "..", "public");
 const DELAY = 700;
 
-type Settings = { model: "haiku" | "sonnet"; mode: "send" | "leave" };
+type Settings = { model: "haiku" | "sonnet" | "opus"; mode: "send" | "leave" };
 const settings: Settings = { model: "haiku", mode: "send" };
 const translator = { status: "ready" as "starting" | "ready" | "busy" | "error", error: null as string | null, until: null as string | null, guide: "ok", linter: "ok" };
 let version = 0;
@@ -136,7 +136,7 @@ Bun.serve({
       if (p === "/api/translate") return translate(body);
       if (p === "/api/adjust") return adjust(body);
       if (p === "/api/settings") {
-        if (body?.model === "haiku" || body?.model === "sonnet") {
+        if (body?.model === "haiku" || body?.model === "sonnet" || body?.model === "opus") {
           const changed = body.model !== settings.model;
           settings.model = body.model;
           if (changed) restart(1500);

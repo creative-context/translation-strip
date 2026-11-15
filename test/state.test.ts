@@ -105,8 +105,17 @@ describe("translating", () => {
       s = applied(s, SS.translateDone(s.st, s.f, d));
       expect(s.st.phase).toBe(phase);
       expect(s.f.en).toBe(en);
+      // A failed translation's notice takes the English box's middle; anything else stays in the footer.
+      expect(SS.centerNotice(s.st, s.f)).toBe(phase === "error");
     });
   }
+  test("a failed adjust keeps the English, so its notice stays in the footer", () => {
+    let s = ready();
+    s = applied(s, SS.adjustStart(s.st, s.f, "corto").st);
+    s = applied(s, SS.adjustDone(s.st, s.f, { error: "failed" }).st);
+    expect(s.f.en).toBe(EN);
+    expect(SS.centerNotice(s.st, s.f)).toBe(false);
+  });
 
   test("an answer for text that was changed since is dropped", () => {
     let s = type(start(), ES);
@@ -301,6 +310,16 @@ describe("what a send leaves behind", () => {
     expect(tagOf(s)).toBe("needs: Click the box in Teams first");
     expect(s.st.leftover).toBeNull();
     expect(canSend(s)).toBe(true);
+  });
+
+  test("the position: automatic until the shell says another, and an unknown value keeps the one before", () => {
+    const s = ready();
+    expect(s.st.layout).toBe("automatic");
+    const left = SS.shellLayout(s.st, { value: "left" });
+    expect(left.layout).toBe("left");
+    expect(SS.shellLayout(left, { value: "sideways" }).layout).toBe("left");
+    expect(SS.shellLayout(left, null).layout).toBe("left");
+    expect(SS.LAYOUTS).toEqual(["automatic", "below", "above", "left", "right"]);
   });
 
   test("no-access turns the first-run cover on and nothing else", () => {
