@@ -2,19 +2,68 @@
 // message box and the last message. Nothing here is stored or logged: the reader keeps only
 // the elements it found, so the next read is cheap, and the last answer it gave.
 //
-// What Teams shows (the new Teams, com.microsoft.teams2):
-//   - the main window's title reads "Chat | <chat name> | <org> | <account>" in a chat;
-//   - the message box is an AXTextArea described "Type a message", whose value is that
-//     placeholder plus a line break while it's empty;
-//   - the messages sit in a group described "Message List", under it the list itself (DOM id
-//     "chat-pane-list"): a heading per message ("<preview> by <author>") and a group per
-//     message whose body has the DOM id "message-body-<id>" (class fui-ChatMyMessage__body
-//     for the user's own) and holds "content-<id>", described with the whole text.
+// Every string and DOM identifier the shell relies on lives in TeamsShape, so a Teams update
+// is one edit there. The tree walks (find, lastMessage) go through a small protocol,
+// AXReading, so the Swift check can run them on a made-up tree.
 
 import AppKit
 import ApplicationServices
 
-let teamsBundleID = "com.microsoft.teams2"
+// What Teams shows (the new Teams, com.microsoft.teams2), as seen on 2026-11-15:
+//   - a chat in the main window has the title "Chat | <chat name> | <org> | <account>"; other
+//     views ("Calendar | …") and pop-out chat windows ("<chat name> | <org> | <account>") don't;
+//   - the message box is an AXTextArea whose DOM id starts with "new-message-"; its description
+//     is the placeholder ("Type a message" in English), and its value is that placeholder plus
+//     a line break while it's empty;
+//   - the messages are the children of the element with DOM id "chat-pane-list": a heading per
+//     message ("<preview> by <author>") and a group per message whose body has the DOM id
+//     "message-body-<id>" (class fui-ChatMyMessage__body for the user's own) and holds
+//     "content-<id>", described with the whole text.
+enum TeamsShape {
+    static let bundleID = "com.microsoft.teams2"
+
+    // Titles.
+    static let titleSeparator = " | "
+    static let chatView = "Chat" // the first part of a chat's window title
+    static let selfMarker = "(You)" // the user's own chat with themself
+
+    // The message box: found by role and DOM id. The placeholder is only stripped from its
+    // value; the box's own description gives it, this one stands in when it gives none.
+    static let boxRole = "AXTextArea"
+    static let boxIDPrefix = "new-message-"
+    static let placeholder = "Type a message"
+
+    // The messages.
+    static let listID = "chat-pane-list"
+    static let headingRole = "AXHeading"
+    static let messageRole = "AXGroup"
+    static let bodyIDPrefix = "message-body-"
+    static let myMessageClassPrefix = "fui-ChatMyMessage"
+    static let contentIDPrefix = "content-"
+    static let authorSeparator = " by " // "<preview> by <author>"
+
+    // Accessibility attribute names Teams' web content answers to.
+    static let domID = "AXDOMIdentifier"
+    static let domClasses = "AXDOMClassList"
+
+    // Limits: a walk looks at 8,000 elements at most, 80 levels deep; the last message is
+    // looked for among the last 15; a message's text is cut at 4,000 characters.
+    static let walkLimit = 8000
+    static let depthLimit = 80
+    static let messagesBack = 15
+    static let textLimit = 4000
+}
+
+let teamsBundleID = TeamsShape.bundleID
+
+// Reading attributes of a tree, live (AXUIElement) or made up (the check's fixture).
+protocol AXReading {
+    associatedtype Element
+    // The attributes asked, in order; one that's missing comes back nil. Children come back
+    // as [Element].
+    func attrs(_ e: Element, _ names: [String]) -> [Any?]
+    func same(_ a: Element, _ b: Element) -> Bool
+}
 
 enum AX {
     static func attr(_ e: AXUIElement, _ name: String) -> AnyObject? {
@@ -47,6 +96,18 @@ enum AX {
     }
 }
 
+// The live tree.
+struct LiveAX: AXReading {
+    func attrs(_ e: AXUIElement, _ names: [String]) -> [Any?] {
+        AX.attrs(e, names).map { v -> Any? in
+            guard let v else { return nil }
+            if let kids = v as? [AXUIElement] { return kids }
+            return v
+        }
+    }
+    func same(_ a: AXUIElement, _ b: AXUIElement) -> Bool { CFEqual(a, b) }
+}
+
 // What the page gets in window.strip.teams(...).
 struct TeamsContext: Equatable {
     var open: Bool
@@ -54,12 +115,13 @@ struct TeamsContext: Equatable {
     var from: String?
     var last: String?
     var draft: Bool
+    var shape = "ok" // "unknown": a Teams window whose message box can't be found
 
     static let closed = TeamsContext(open: false, chat: nil, from: nil, last: nil, draft: false)
     static let noChat = TeamsContext(open: true, chat: nil, from: nil, last: nil, draft: false)
 
     var page: [String: Any] {
-        ["open": open, "chat": chat ?? NSNull(), "from": from ?? NSNull(), "last": last ?? NSNull(), "draft": draft]
+        ["open": open, "chat": chat ?? NSNull(), "from": from ?? NSNull(), "last": last ?? NSNull(), "draft": draft, "shape": shape]
     }
 }
 
@@ -72,82 +134,202 @@ struct TeamsWindow: Equatable {
 
 enum Teams {
     static func running() -> NSRunningApplication? {
-        NSRunningApplication.runningApplications(withBundleIdentifier: teamsBundleID).first { !$0.isTerminated }
+        NSRunningApplication.runningApplications(withBundleIdentifier: TeamsShape.bundleID).first { !$0.isTerminated }
     }
 
     // The largest normal window that isn't minimized, with its frame.
+    // Teams' main window, not a chat popped out of it: the window showing a chat view ("Chat | …")
+    // first, then the one whose title has the most parts (the main window names its view, its item
+    // and the app; a pop-out names fewer), then the largest.
     static func mainWindow(_ app: AXUIElement) -> (element: AXUIElement, frame: CGRect)? {
         let windows = (AX.attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
-        var best: (element: AXUIElement, frame: CGRect)?
+        var best: (element: AXUIElement, frame: CGRect, rank: (Int, Int, CGFloat))?
         for w in windows {
-            let v = AX.attrs(w, [kAXSubroleAttribute, kAXMinimizedAttribute, kAXPositionAttribute, kAXSizeAttribute])
+            let v = AX.attrs(w, [kAXSubroleAttribute, kAXMinimizedAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXTitleAttribute])
             guard (v[0] as? String) == kAXStandardWindowSubrole, (v[1] as? Bool) != true,
                   let p = AX.point(v[2]), let s = AX.size(v[3]), s.width > 0, s.height > 0 else { continue }
             let f = CGRect(origin: p, size: s)
-            if best.map({ f.width * f.height > $0.frame.width * $0.frame.height }) ?? true { best = (w, f) }
+            let title = (v[4] as? String) ?? ""
+            let rank = (chatName(title) != nil ? 1 : 0, title.components(separatedBy: " | ").count, f.width * f.height)
+            if best.map({ rank > $0.rank }) ?? true { best = (w, f, rank) }
         }
-        return best
+        return best.map { ($0.element, $0.frame) }
     }
 
-    // Teams' windows on screen now, from the window list (bounds need no permission).
-    static func onScreenFrames(pid: pid_t) -> [CGRect] {
-        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
-        return list.compactMap { w in
-            guard (w[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid,
-                  (w[kCGWindowLayer as String] as? Int) == 0,
-                  let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
-            return CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
-        }
+    // One of Teams' windows in the window list (bounds need no permission, and no call goes to Teams).
+    struct Listed: Equatable {
+        var id: CGWindowID
+        var frame: CGRect
+        var onScreen: Bool
+    }
+
+    private static func listed(_ w: [String: Any], pid: pid_t) -> Listed? {
+        guard (w[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid,
+              (w[kCGWindowLayer as String] as? Int) == 0,
+              let id = (w[kCGWindowNumber as String] as? Int).map(CGWindowID.init),
+              let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
+        let frame = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+        return Listed(id: id, frame: frame, onScreen: (w[kCGWindowIsOnscreen as String] as? Bool) == true)
+    }
+
+    // Teams' normal windows: on screen now only, or all of them (minimized and other Spaces too).
+    static func listedWindows(pid: pid_t, onScreenOnly: Bool) -> [Listed] {
+        let options: CGWindowListOption = onScreenOnly ? [.optionOnScreenOnly, .excludeDesktopElements] : [.optionAll, .excludeDesktopElements]
+        let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
+        return list.compactMap { listed($0, pid: pid) }
+    }
+
+    // One window by its number; nil once it's closed.
+    static func listedWindow(_ id: CGWindowID, pid: pid_t) -> Listed? {
+        let list = (CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]]) ?? []
+        return list.lazy.compactMap { listed($0, pid: pid) }.first { $0.id == id }
+    }
+
+    static func sameFrame(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3 && abs(a.height - b.height) < 3
     }
 
     // The main window and whether it's on screen. With Accessibility, its frame comes from
     // there; without it (first run), the largest window in the window list stands in.
     // nil: no window (minimized, or none open).
     static func window(of teams: NSRunningApplication, app: AXUIElement?) -> TeamsWindow? {
-        let shown = onScreenFrames(pid: teams.processIdentifier)
+        let shown = listedWindows(pid: teams.processIdentifier, onScreenOnly: true).map(\.frame)
         if let app, AXIsProcessTrusted() {
             guard let main = mainWindow(app) else { return nil }
-            let visible = !teams.isHidden && shown.contains { abs($0.minX - main.frame.minX) < 3 && abs($0.minY - main.frame.minY) < 3
-                && abs($0.width - main.frame.width) < 3 && abs($0.height - main.frame.height) < 3 }
+            let visible = !teams.isHidden && shown.contains { sameFrame($0, main.frame) }
             return TeamsWindow(frame: main.frame, onScreen: visible)
         }
         guard let largest = shown.filter({ $0.width > 400 && $0.height > 300 }).max(by: { $0.width * $0.height < $1.width * $1.height }) else { return nil }
         return TeamsWindow(frame: largest, onScreen: !teams.isHidden)
     }
 
-    // "Chat | <chat name> | <org> | <account>": the chat's name, or nil.
+    // "Chat | <chat name> | <org> | <account>": the chat's name. Any other title (another view,
+    // a pop-out window, the app's name) has none.
     static func chatName(_ title: String) -> String? {
-        let parts = title.components(separatedBy: " | ")
-        guard parts.count > 1 else { return nil }
+        let parts = title.components(separatedBy: TeamsShape.titleSeparator)
+        guard parts.count > 1, parts[0].trimmingCharacters(in: .whitespaces) == TeamsShape.chatView else { return nil }
         let name = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
 
+    static func isSelfChat(_ title: String) -> Bool { title.contains(TeamsShape.selfMarker) }
+
     // "<preview> by <author>": the author, or nil.
     static func author(fromHeading title: String) -> String? {
-        guard let r = title.range(of: " by ", options: .backwards) else { return nil }
+        guard let r = title.range(of: TeamsShape.authorSeparator, options: .backwards) else { return nil }
         let name = title[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
 
-    static let placeholder = "Type a message"
-
     // What the message box holds, without its placeholder, with plain spaces and line breaks
     // and no outer whitespace. "" when it's empty.
-    static func boxText(_ value: String) -> String {
-        var s = value.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-            .replacingOccurrences(of: "\u{00A0}", with: " ")
-        for invisible in ["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}"] { s = s.replacingOccurrences(of: invisible, with: "") }
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        return s == placeholder ? "" : s
+    static func boxText(_ value: String, placeholder: String = TeamsShape.placeholder) -> String {
+        func plain(_ v: String) -> String {
+            var s = v.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+                .replacingOccurrences(of: "\u{00A0}", with: " ")
+            for invisible in ["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}"] { s = s.replacingOccurrences(of: invisible, with: "") }
+            return s.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let s = plain(value)
+        return !placeholder.isEmpty && s == plain(placeholder) ? "" : s
     }
 
     // The same words in the same lines, whatever the spacing at line ends or between paragraphs.
-    static func sameText(_ a: String, _ b: String) -> Bool {
+    static func sameText(_ a: String, _ b: String, placeholder: String = TeamsShape.placeholder) -> Bool {
         func lines(_ s: String) -> [String] {
-            boxText(s).components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            boxText(s, placeholder: placeholder).components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
         return lines(a) == lines(b)
+    }
+}
+
+// The walks over a window's tree, on any AXReading: the live one or the check's made-up one.
+enum TeamsScan {
+    struct Found<E> {
+        var box: E?
+        var placeholder: String? // the box's description
+        var list: E?
+        var nodes = 0
+    }
+
+    // One walk of the window for the message box and the message list, by role and DOM id.
+    // The messages themselves are skipped: the walk doesn't go into the list.
+    static func find<R: AXReading>(in window: R.Element, _ r: R) -> Found<R.Element> {
+        var found = Found<R.Element>()
+        var stack: [(R.Element, Int)] = [(window, 0)]
+        while let (e, depth) = stack.popLast() {
+            found.nodes += 1
+            if found.nodes > TeamsShape.walkLimit || (found.box != nil && found.list != nil) { break }
+            let v = r.attrs(e, [kAXRoleAttribute, TeamsShape.domID, kAXDescriptionAttribute, kAXChildrenAttribute])
+            let role = v[0] as? String ?? ""
+            let id = v[1] as? String ?? ""
+            if found.box == nil, role == TeamsShape.boxRole, id.hasPrefix(TeamsShape.boxIDPrefix) {
+                found.box = e
+                found.placeholder = (v[2] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                continue
+            }
+            if id == TeamsShape.listID {
+                if found.list == nil { found.list = e }
+                continue
+            }
+            guard depth < TeamsShape.depthLimit, let kids = v[3] as? [R.Element] else { continue }
+            for k in kids.reversed() { stack.append((k, depth + 1)) } // depth first, in order
+        }
+        return found
+    }
+
+    // The last message from someone other than the user, else the last message: its author
+    // and text, from the list's items.
+    static func lastMessage<R: AXReading>(items: [R.Element], _ r: R) -> (from: String?, last: String?) {
+        var fallback: (from: String?, last: String?)?
+        var i = items.count - 1
+        var looked = 0
+        while i >= 0, looked < TeamsShape.messagesBack {
+            defer { i -= 1 }
+            guard let m = message(in: items[i], r) else { continue }
+            looked += 1
+            var author: String?
+            if i > 0 {
+                let h = r.attrs(items[i - 1], [kAXRoleAttribute, kAXTitleAttribute])
+                if (h[0] as? String) == TeamsShape.headingRole { author = (h[1] as? String).flatMap(Teams.author(fromHeading:)) }
+            }
+            if !m.mine { return (author, m.text) }
+            if fallback == nil { fallback = (author, m.text) }
+        }
+        return fallback ?? (nil, nil)
+    }
+
+    // A message's body: whether it's the user's own, and its whole text.
+    static func message<R: AXReading>(in item: R.Element, _ r: R) -> (mine: Bool, text: String)? {
+        let v = r.attrs(item, [kAXRoleAttribute, kAXChildrenAttribute])
+        guard (v[0] as? String) == TeamsShape.messageRole, let kids = v[1] as? [R.Element] else { return nil }
+        for k in kids {
+            let b = r.attrs(k, [TeamsShape.domID, TeamsShape.domClasses, kAXChildrenAttribute])
+            guard (b[0] as? String)?.hasPrefix(TeamsShape.bodyIDPrefix) == true else { continue }
+            let classes = (b[1] as? [String]) ?? []
+            let mine = classes.contains { $0.hasPrefix(TeamsShape.myMessageClassPrefix) }
+            for c in (b[2] as? [R.Element]) ?? [] {
+                let cv = r.attrs(c, [TeamsShape.domID, kAXDescriptionAttribute])
+                guard (cv[0] as? String)?.hasPrefix(TeamsShape.contentIDPrefix) == true else { continue }
+                let text = ((cv[1] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : (mine, String(text.prefix(TeamsShape.textLimit)))
+            }
+            return nil
+        }
+        return nil
+    }
+
+    // What the page is told for a window: its title, whether the walk found the box and the
+    // list, and the box's value. A chat's window (or a message list) with no box is a shape
+    // the shell doesn't know; any other window without one is no chat.
+    static func context(title: String, boxValue: String?, placeholder: String, hasList: Bool,
+                        from: String?, last: String?) -> TeamsContext {
+        let chat = Teams.chatName(title)
+        guard let boxValue else {
+            if chat != nil || hasList { return TeamsContext(open: true, chat: chat, from: nil, last: nil, draft: false, shape: "unknown") }
+            return .noChat
+        }
+        return TeamsContext(open: true, chat: chat, from: from, last: last, draft: !Teams.boxText(boxValue, placeholder: placeholder).isEmpty)
     }
 }
 
@@ -157,29 +339,35 @@ final class TeamsReader: @unchecked Sendable {
     // Teams builds its web content's accessibility tree only when asked: the app asks once
     // per Teams process. The read-only check doesn't.
     let asksForTree: Bool
+    var log: (String) -> Void = { _ in } // never gets text from Teams
     init(asksForTree: Bool = true) { self.asksForTree = asksForTree }
 
+    let live = LiveAX()
     var pid: pid_t = 0
     var app: AXUIElement?
     var window: AXUIElement?
     var title = ""
     var composer: AXUIElement?
+    var placeholder = TeamsShape.placeholder // the box's own, from its description
     var messages: AXUIElement? // the list of messages ("chat-pane-list")
     private var lastKey: (count: Int, item: AXUIElement)?
     private var lastFound: (from: String?, last: String?) = (nil, nil)
+    private var unknownLogged: Set<String> = [] // windows and titles already logged without a box
     private(set) var readMs = 0.0 // how long the last read took
     private(set) var walkMs = 0.0 // how long the last search for the box and the list took
     private(set) var nodes = 0 // elements the last search looked at
 
-    var isSelfChat: Bool { title.contains("(You)") }
+    var isSelfChat: Bool { Teams.isSelfChat(title) }
 
     func reset() {
         pid = 0; app = nil
+        unknownLogged = []
         forget()
     }
 
     private func forget() {
         window = nil; title = ""; composer = nil; messages = nil; lastKey = nil; lastFound = (nil, nil)
+        placeholder = TeamsShape.placeholder
     }
 
     // The Teams process to read, from now on.
@@ -191,6 +379,11 @@ final class TeamsReader: @unchecked Sendable {
         AXUIElementSetMessagingTimeout(a, 1.0)
         if asksForTree { AXUIElementSetAttributeValue(a, "AXManualAccessibility" as CFString, kCFBooleanTrue) }
         app = a
+    }
+
+    // What the box holds now, without its placeholder; nil when it can't be read.
+    func boxValue() -> String? {
+        composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }.map { Teams.boxText($0, placeholder: placeholder) }
     }
 
     func read() -> TeamsContext {
@@ -212,94 +405,141 @@ final class TeamsReader: @unchecked Sendable {
             find(in: main.element)
             value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
         }
-        guard let value else { return .noChat }
-        let (from, last) = lastMessage()
-        return TeamsContext(open: true, chat: Teams.chatName(title), from: from, last: last, draft: !Teams.boxText(value).isEmpty)
+        let (from, last) = value == nil ? (nil, nil) : lastMessage()
+        let context = TeamsScan.context(title: title, boxValue: value, placeholder: placeholder, hasList: messages != nil, from: from, last: last)
+        if context.shape == "unknown" {
+            // Once per window and title; the log never gets the title itself.
+            let key = "\(CFHash(main.element))|\(t.hashValue)"
+            if unknownLogged.insert(key).inserted {
+                log("teams: no message box in Teams' window after \(nodes) elements (Teams' shape changed?)")
+            }
+        }
+        return context
     }
 
-    // One walk of the window for the message box and the message list. The messages
-    // themselves are skipped: the walk stops at the list.
+    // One walk of the window for the message box and the message list.
     func find(in window: AXUIElement) {
         let start = DispatchTime.now()
-        composer = nil
-        messages = nil
+        let found = TeamsScan.find(in: window, live)
+        composer = found.box
+        placeholder = found.placeholder ?? TeamsShape.placeholder
+        messages = found.list
         lastKey = nil
-        nodes = 0
-        var stack: [(AXUIElement, Int)] = [(window, 0)]
-        while let (e, depth) = stack.popLast() {
-            nodes += 1
-            if nodes > 8000 || (composer != nil && messages != nil) { break }
-            let v = AX.attrs(e, [kAXRoleAttribute, kAXDescriptionAttribute, kAXChildrenAttribute])
-            let role = v[0] as? String ?? ""
-            let desc = v[1] as? String ?? ""
-            if role == "AXTextArea" && desc == Teams.placeholder && composer == nil { composer = e; continue }
-            if desc == "Message List" && messages == nil { messages = Self.list(in: e); continue }
-            guard depth < 80, let kids = v[2] as? [AXUIElement] else { continue }
-            for k in kids.reversed() { stack.append((k, depth + 1)) } // depth first, in order
-        }
+        nodes = found.nodes
         walkMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6
     }
 
-    // The list itself, a few levels under "Message List".
-    private static func list(in group: AXUIElement) -> AXUIElement? {
-        var level = [group]
-        for _ in 0..<8 {
-            var next: [AXUIElement] = []
-            for e in level {
-                let v = AX.attrs(e, ["AXDOMIdentifier", kAXChildrenAttribute])
-                if (v[0] as? String) == "chat-pane-list" { return e }
-                next += (v[1] as? [AXUIElement]) ?? []
-            }
-            if next.isEmpty || next.count > 40 { return nil }
-            level = next
-        }
-        return nil
-    }
-
-    // The last message from someone other than the user, else the last message: its author
-    // and text. Looked at again only when the list changed.
+    // The last message (TeamsScan.lastMessage), looked at again only when the list changed.
     private func lastMessage() -> (from: String?, last: String?) {
         guard let list = messages else { return (nil, nil) }
         let items = AX.children(list)
         guard let lastItem = items.last else { return (nil, nil) }
         if let k = lastKey, k.count == items.count, CFEqual(k.item, lastItem) { return lastFound }
-        var fallback: (from: String?, last: String?)?
-        var found: (from: String?, last: String?)?
-        var looked = 0
-        var i = items.count - 1
-        while i >= 0, looked < 15, found == nil {
-            defer { i -= 1 }
-            guard let m = Self.message(in: items[i]) else { continue }
-            looked += 1
-            var author: String?
-            if i > 0 {
-                let h = AX.attrs(items[i - 1], [kAXRoleAttribute, kAXTitleAttribute])
-                if (h[0] as? String) == "AXHeading" { author = (h[1] as? String).flatMap(Teams.author(fromHeading:)) }
-            }
-            if !m.mine { found = (author, m.text) } else if fallback == nil { fallback = (author, m.text) }
-        }
-        lastFound = found ?? fallback ?? (nil, nil)
+        lastFound = TeamsScan.lastMessage(items: items, live)
         lastKey = (items.count, lastItem)
         return lastFound
     }
+}
 
-    // A message's body: whether it's the user's own, and its whole text.
-    private static func message(in item: AXUIElement) -> (mine: Bool, text: String)? {
-        let v = AX.attrs(item, [kAXRoleAttribute, kAXChildrenAttribute])
-        guard (v[0] as? String) == "AXGroup", let kids = v[1] as? [AXUIElement] else { return nil }
-        for k in kids {
-            let b = AX.attrs(k, ["AXDOMIdentifier", "AXDOMClassList", kAXChildrenAttribute])
-            guard (b[0] as? String)?.hasPrefix("message-body-") == true else { continue }
-            let classes = (b[1] as? [String]) ?? []
-            let mine = classes.contains { $0.hasPrefix("fui-ChatMyMessage") }
-            for c in (b[2] as? [AXUIElement]) ?? [] {
-                let cv = AX.attrs(c, ["AXDOMIdentifier", kAXDescriptionAttribute])
-                guard (cv[0] as? String)?.hasPrefix("content-") == true else { continue }
-                let text = ((cv[1] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                return text.isEmpty ? nil : (mine, String(text.prefix(4000)))
+// Follows Teams' main window for the docking, on the app's dock queue only. Accessibility
+// says which window is the main one when something happened (a notification, Teams coming
+// forward, its main window changing); between those, the window list follows that window by
+// its number, with no call into Teams.
+final class TeamsFollower: @unchecked Sendable {
+    var notify: (String) -> Void = { _ in } // an Accessibility notification, on the main thread
+    var log: (String) -> Void = { _ in }
+
+    private(set) var pid: pid_t = 0
+    private(set) var app: AXUIElement?
+    private var observer: AXObserver?
+    private var watchFailed = false
+    private var windowID: CGWindowID?
+    private var lastAX = Date.distantPast
+
+    // Without an observer, Accessibility is asked again this often, in case the main window changed.
+    static let refreshWithoutObserver: TimeInterval = 5
+
+    func reset() {
+        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode) }
+        observer = nil
+        watchFailed = false
+        pid = 0
+        app = nil
+        windowID = nil
+        lastAX = .distantPast
+    }
+
+    // Where Teams' main window is now. `ax`: ask Accessibility, not just the window list.
+    func window(of teams: NSRunningApplication, ax: Bool) -> TeamsWindow? {
+        if pid != teams.processIdentifier || app == nil {
+            reset()
+            pid = teams.processIdentifier
+            let a = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(a, 0.5)
+            app = a
+        }
+        guard AXIsProcessTrusted(), let app else {
+            windowID = nil
+            return Teams.window(of: teams, app: nil)
+        }
+        if observer == nil && !watchFailed { watch(app) }
+
+        let stale = observer == nil && Date().timeIntervalSince(lastAX) > Self.refreshWithoutObserver
+        if !ax, !stale, let id = windowID {
+            if let w = Teams.listedWindow(id, pid: pid) {
+                return TeamsWindow(frame: w.frame, onScreen: w.onScreen && !teams.isHidden)
             }
+            windowID = nil // closed: ask Accessibility
+        }
+
+        lastAX = Date()
+        guard let main = Teams.mainWindow(app) else {
+            // Minimized or on its way out: keep following it while the window list still has it.
+            if let id = windowID, let w = Teams.listedWindow(id, pid: pid) { return TeamsWindow(frame: w.frame, onScreen: false) }
+            windowID = nil
             return nil
         }
-        return nil
+        let all = Teams.listedWindows(pid: pid, onScreenOnly: false)
+        let match = all.first { Teams.sameFrame($0.frame, main.frame) && $0.onScreen } ?? all.first { Teams.sameFrame($0.frame, main.frame) }
+        windowID = match?.id // nil: ambiguous, so Accessibility again next time
+        return TeamsWindow(frame: main.frame, onScreen: !teams.isHidden && (match?.onScreen ?? false))
+    }
+
+    // An Accessibility observer on Teams: its windows moving, resizing, minimizing and coming
+    // back, the app hidden or shown, and its main window changing. Delivered on the main run loop.
+    private func watch(_ app: AXUIElement) {
+        let callback: AXObserverCallback = { _, _, notification, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<TeamsFollower>.fromOpaque(refcon).takeUnretainedValue()
+            me.notify(notification as String)
+        }
+        var obs: AXObserver?
+        guard AXObserverCreate(pid, callback, &obs) == .success, let obs else {
+            log("couldn't watch Teams' window; following it through the window list")
+            watchFailed = true
+            return
+        }
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        for n in [kAXWindowMovedNotification, kAXWindowResizedNotification, kAXWindowMiniaturizedNotification,
+                  kAXWindowDeminiaturizedNotification, kAXApplicationHiddenNotification, kAXApplicationShownNotification,
+                  kAXMainWindowChangedNotification, kAXWindowCreatedNotification] {
+            AXObserverAddNotification(obs, app, n as CFString, refcon)
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
+        observer = obs
+    }
+
+    // A minimized main window comes back (the largest one), when no normal one is open.
+    func unminimize() {
+        guard AXIsProcessTrusted(), let app else { return }
+        let windows = (AX.attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
+        let minimized = windows.compactMap { w -> (AXUIElement, CGFloat)? in
+            let v = AX.attrs(w, [kAXSubroleAttribute, kAXMinimizedAttribute, kAXSizeAttribute])
+            guard (v[0] as? String) == kAXStandardWindowSubrole, (v[1] as? Bool) == true, let s = AX.size(v[2]) else { return nil }
+            return (w, s.width * s.height)
+        }.max { $0.1 < $1.1 }
+        if let w = minimized?.0, Teams.mainWindow(app) == nil {
+            AXUIElementSetAttributeValue(w, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
     }
 }

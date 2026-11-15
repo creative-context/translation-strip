@@ -1,15 +1,32 @@
 // A stand-in for `claude -p --input-format stream-json --output-format stream-json`, for the
 // tests. It speaks the same stream-json as Claude Code 2.1 (the shapes seen in real runs: a
 // system init on each turn, assistant messages with text blocks, a rate_limit_event, a result)
-// and answers by content, with made-up English:
+// and answers by content, with made-up English and the request's id:
 //   "UNCLEAR" → a question; "LIMIT" → the usage-limit error with a reset time; "CRASH" → exits;
-//   "SLOW" → answers after 1.5 s; "KINDLY" → English the stand-in linter flags;
-//   "CHATTY" → the JSON object with words around it.
-// Each start appends a line to $STRIP_DIR/fake-starts.jsonl with what it was started with.
-import { appendFileSync, readFileSync } from "node:fs";
+//   "SLOW" → answers after 1.5 s; "HANG" → never answers (the server's timeout ends it); "KINDLY" → English the stand-in linter flags;
+//   "CHATTY" → the JSON object with words around it; "WRONGID" → a reply carrying another id;
+//   "MEMORY" → English that says how many turns this process has seen and the texts before this one;
+//   "EXIT-LOGIN", "EXIT-UPDATE", "EXIT-OFFLINE", "EXIT-LIMIT" → made-up Claude Code words on stderr, then exits 1.
+// `--version` prints a made-up version. Each start appends a line to $STRIP_DIR/fake-starts.jsonl with
+// what it was started with, and each turn a line to fake-turns.jsonl (its pid, task, id and turn number).
+// When $STRIP_DIR/fake-exit-at-start exists, a start prints its text on stderr and exits 1 at once.
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
+const DIR = process.env.STRIP_DIR ?? ".";
+if (args.includes("--version")) {
+  console.log("2.1.0 (Claude Code stand-in)");
+  process.exit(0);
+}
+// A marker the tests look for in the server's log: it must never be there.
+const SECRET = "STDERR-SECRET-7f3a";
+const STDERR: Record<string, string> = {
+  LOGIN: `Invalid API key · Please run /login ${SECRET}`,
+  UPDATE: `error: unknown option '--strict-mcp-config' ${SECRET}`,
+  OFFLINE: `API Error: Connection error. getaddrinfo ENOTFOUND ${SECRET}`,
+  LIMIT: `Claude usage limit reached ${SECRET}`,
+};
 const arg = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
@@ -24,19 +41,24 @@ try {
 } catch {}
 
 appendFileSync(
-  join(process.env.STRIP_DIR ?? ".", "fake-starts.jsonl"),
+  join(DIR, "fake-starts.jsonl"),
   JSON.stringify({
     pid: process.pid,
     model,
     cwd: process.cwd(),
     args: args.filter((a) => a !== system),
-    systemHasProtocol: system.includes('{"english":'),
+    systemHasProtocol: system.includes('"english":') && system.includes('Copy it, unchanged, into your reply'),
     systemGuide: system.split("# The user's voice guide")[1]?.split("# Before you reply")[0].trim() ?? null,
     systemHasCheck: system.includes("# Before you reply"),
     disableClaudeMds: process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS ?? null,
     inheritedSessionVar: process.env.CLAUDECODE ?? null,
   }) + "\n",
 );
+
+if (existsSync(join(DIR, "fake-exit-at-start"))) {
+  process.stderr.write(readFileSync(join(DIR, "fake-exit-at-start"), "utf8") + "\n");
+  process.exit(1);
+}
 
 const out = (m: unknown) => process.stdout.write(JSON.stringify(m) + "\n");
 const init = () => out({ type: "system", subtype: "init", cwd: process.cwd(), session_id: session, tools: [], mcp_servers: [], model: `claude-${model}-test`, permissionMode: "default", slash_commands: [], apiKeySource: "none", claude_code_version: "2.1.0", uuid: crypto.randomUUID() });
@@ -46,20 +68,28 @@ const rateLimit = (status: string, resetsAt: number) => out({ type: "rate_limit_
 
 const LIMIT_RESETS_AT = 1893456000; // 2030-01-01T00:00:00Z
 
+let turns = 0;
+const seen: string[] = [];
+
 async function turn(content: string) {
   let req: any = {};
   try {
     req = JSON.parse(content);
   } catch {}
   const text: string = req.text ?? "";
+  turns++;
+  appendFileSync(join(DIR, "fake-turns.jsonl"), JSON.stringify({ pid: process.pid, task: req.task ?? null, id: req.id ?? null, turn: turns }) + "\n");
+  const before = [...seen];
+  seen.push(text);
   init();
-  if (req.task === "ready") {
-    await Bun.sleep(Number(process.env.FAKE_WARMUP_MS ?? 300));
-    assistant('{"ready": true}');
-    rateLimit("allowed", LIMIT_RESETS_AT);
-    return result('{"ready": true}');
+  const exit = text.match(/EXIT-(LOGIN|UPDATE|OFFLINE|LIMIT)/);
+  if (exit) {
+    process.stderr.write(STDERR[exit[1]] + "\n");
+    await Bun.sleep(20);
+    process.exit(1);
   }
   if (text.includes("CRASH")) process.exit(1);
+  if (text.includes("HANG")) return new Promise<void>(() => {});
   if (text.includes("SLOW")) await Bun.sleep(1500);
   else await Bun.sleep(30);
   if (text.includes("LIMIT")) {
@@ -68,10 +98,12 @@ async function turn(content: string) {
     return result("You've hit your limit · resets 3pm", true);
   }
   let reply: string;
-  if (text.includes("UNCLEAR")) reply = JSON.stringify({ question: "Which report do you mean, the weekly one or the budget one?" });
-  else if (req.task === "adjust") reply = JSON.stringify({ english: `${String(req.english).replace(/[.!]$/, "")}, thanks!` });
-  else if (text.includes("KINDLY")) reply = JSON.stringify({ english: "Could you kindly send me the slides before lunch?" });
-  else reply = JSON.stringify({ english: req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?" });
+  const id = text.includes("WRONGID") ? "zzzzzzzz" : req.id;
+  if (text.includes("UNCLEAR")) reply = JSON.stringify({ id, question: "Which report do you mean, the weekly one or the budget one?" });
+  else if (req.task === "adjust") reply = JSON.stringify({ id, english: `${String(req.english).replace(/[.!]$/, "")}, thanks!` });
+  else if (text.includes("KINDLY")) reply = JSON.stringify({ id, english: "Could you kindly send me the slides before lunch?" });
+  else if (text.includes("MEMORY")) reply = JSON.stringify({ id, english: `Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}` });
+  else reply = JSON.stringify({ id, english: req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?" });
   if (text.includes("CHATTY")) reply = `Here it is:\n${reply}\nHope that helps.`;
   assistant(reply);
   rateLimit("allowed", LIMIT_RESETS_AT);

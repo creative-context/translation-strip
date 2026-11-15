@@ -1,23 +1,48 @@
-// The hidden translator: one Claude Code process kept alive, fed stream-json turns on stdin and
-// read as stream-json on stdout. It runs with no tools, no MCP servers, no settings files (so no
-// hooks and no plugins of the user's), no CLAUDE.md or auto-memory and no saved session, so it
-// carries only what the server gives it: the protocol and the voice guide as its system prompt.
-// The system prompt goes in on file descriptor 3, so the guide's text is never on a command line
-// or in a file. Logs say what happened, never a message's text.
+// The hidden translator: a fresh Claude Code session for every request, so no request ever sees an
+// earlier one's text, chat or last message. One spare session is kept started ahead (spawned, the
+// system prompt fed in, no turn yet); a request takes it, gets its one reply, and the session is
+// stopped; the next spare starts right away in the background. Measured (notes, 2026-11-15): the
+// first reply on an idle spare is as fast as a warm one, so a spare gets no warm-up turn.
+//
+// Each session runs with no tools, no MCP servers, no settings files (so no hooks and no plugins
+// of the user's), no CLAUDE.md or auto-memory and no saved session, so it carries only what the
+// server gives it: the protocol and the voice guide as its system prompt. The system prompt goes
+// in on file descriptor 3, so the guide's text is never on a command line or in a file. Each
+// session's stderr is held in memory (the first 2 KB) only to name why it ended, in one word.
+// Logs say what happened, never a message's text or what Claude Code printed.
 import type { Subprocess } from "bun";
 import { close, mkdirSync, readFileSync, statSync, write } from "node:fs";
-import { CLAUDE, MAX_MESSAGES, TIMEOUT_MS, TRANSLATOR_DIR } from "./config";
-import { classify, type RateLimit } from "./errors";
-import { parseReply, systemPrompt, userTurn, WARMUP, type Reply, type Request } from "./protocol";
+import { CLAUDE, DAY_FILE, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TRANSLATOR_DIR } from "./config";
+import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
+import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
 import { fileThere } from "./settings";
 import { bump, state, type Model, type TranslatorError } from "./state";
 
 export type Outcome = { ok: true; reply: Reply } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true };
 
-type Turn = { kind: "warmup" | "request"; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null };
+type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null };
+type Session = {
+  proc: Subprocess<"pipe", "pipe", "pipe">;
+  pid: number;
+  model: Model;
+  err: string; // the first STDERR_KEEP bytes of stderr, in memory only
+  turn: Turn | null;
+  rateLimit: RateLimit;
+  retried: boolean; // Claude Code said it was retrying the API during the turn
+  retired: boolean; // stopped on purpose, or already ended: its exit means nothing more
+  stderrDone: Promise<void>;
+};
 
 const log = (words: string) => console.error(`${new Date().toISOString()} translator: ${words}`);
-const today = () => new Date().toDateString();
+function today() {
+  if (DAY_FILE) {
+    try {
+      const d = readFileSync(DAY_FILE, "utf8").trim();
+      if (d) return d;
+    } catch {}
+  }
+  return new Date().toDateString();
+}
 
 // Claude Code's own session variables, which a server started from inside a session would pass
 // on: without them the translator starts as a plain `claude -p` on the user's own login.
@@ -56,38 +81,43 @@ function feed(fd: number, text: string) {
   next();
 }
 
+// `claude --version`'s first line, cut to something safe for the log.
+const versionWords = (out: string) => (out.split("\n")[0] ?? "").replace(/[^\w .()+-]/g, "").trim().slice(0, 40) || "unknown";
+
+export type TranslatorOptions = { now?: () => number };
+
 export class Translator {
-  private proc: Subprocess<"pipe", "pipe", "pipe"> | null = null;
-  private gen = 0; // bumps on each start, so a stale process's exit is ignored
-  private queue: Turn[] = [];
-  private messages = 0;
-  private crashes = 0; // in a row, without a good turn between them
+  private spare: Session | null = null;
+  private active: Session | null = null;
+  private crashes = 0; // failures in a row (an exit or a timeout) without a good reply between them
+  private restarts: number[] = []; // when each start after a failure happened, for the cap
   private day = "";
   private guideStamp = 0;
-  private rateLimit: RateLimit = null;
-  private restartWanted = false;
+  private lastTick = 0;
   private error: { error: TranslatorError; until: string | null } | null = null;
+  private version: string | null = null;
+  private versionAsked = false;
+  private now: () => number;
   model: Model = "haiku";
   guidePath: string | null = null;
 
-  constructor(private settings: () => { voiceGuide: string | null; model: Model }) {}
+  constructor(private settings: () => { voiceGuide: string | null; model: Model }, opts: TranslatorOptions = {}) {
+    this.now = opts.now ?? Date.now;
+  }
 
   busy() {
-    return this.queue.some((t) => t.kind === "request");
+    return this.active !== null;
   }
 
-  alive() {
-    return this.proc !== null;
-  }
-
-  // Starts a fresh process: reads the guide now and holds it in memory only.
+  // Starts a fresh spare, replacing the one there is: reads the guide now and holds it in memory only.
+  // The session answering a request, if any, is left alone.
   start(reason: string) {
-    this.kill();
+    this.askVersion();
+    this.retire(this.spare);
+    this.spare = null;
     const s = this.settings();
     this.model = s.model;
     this.guidePath = s.voiceGuide;
-    this.rateLimit = null;
-    this.messages = 0;
     this.day = today();
     let guide: string;
     try {
@@ -101,209 +131,266 @@ export class Translator {
       return;
     }
     if (this.error?.error === "guide") this.error = null;
-    const gen = ++this.gen;
+    let proc: Subprocess<"pipe", "pipe", "pipe">;
     try {
       mkdirSync(TRANSLATOR_DIR, { recursive: true });
-      this.proc = Bun.spawn(translatorArgs(this.model), {
+      proc = Bun.spawn(translatorArgs(this.model), {
         cwd: TRANSLATOR_DIR,
         env: translatorEnv(),
         stdio: ["pipe", "pipe", "pipe", "pipe"],
       }) as any;
     } catch (e: any) {
-      this.proc = null;
       this.setError({ error: "failed", until: null });
       log(`couldn't start claude (${e?.code ?? "error"})`);
       return;
     }
-    const p = this.proc!;
-    const fd3 = (p as any).stdio?.[3];
+    const session: Session = { proc, pid: proc.pid, model: this.model, err: "", turn: null, rateLimit: null, retried: false, retired: false, stderrDone: Promise.resolve() };
+    this.spare = session;
+    const fd3 = (proc as any).stdio?.[3];
     if (typeof fd3 === "number") feed(fd3, systemPrompt(guide));
-    log(`started (${this.model}, ${reason}, pid ${p.pid})`);
-    this.read(p, gen);
-    this.drain(p.stderr);
-    p.exited.then((code) => this.exited(gen, code));
-    this.send({ kind: "warmup", text: [], resolve: (o) => this.warmed(o), timer: null }, WARMUP);
+    log(`spare started (${this.model}, ${reason}, pid ${proc.pid})`);
+    this.read(session);
+    session.stderrDone = this.keepStderr(session);
+    proc.exited.then((code) => this.exited(session, code));
+    this.refresh();
   }
 
-  // Stops the process; turns still waiting get `failed`.
+  // Stops every session; a request waiting for its reply gets `failed`.
   kill() {
-    const p = this.proc;
-    this.proc = null;
-    this.gen++;
-    this.failAll();
-    if (p) {
-      try {
-        p.kill();
-      } catch {}
+    const a = this.active;
+    this.active = null;
+    this.retire(this.spare);
+    this.spare = null;
+    if (a) {
+      this.retire(a);
+      this.end(a, { ok: false, error: "failed", aborted: true });
     }
     this.refresh();
   }
 
+  // A fresh start, asked for (the menu's Restart): stops everything, forgets past failures.
   restart(reason: string) {
+    this.kill();
     this.crashes = 0;
-    this.restartWanted = false;
+    this.restarts = [];
     this.error = null;
     this.start(reason);
   }
 
-  // A restart that waits for the request in progress, when there is one.
+  // A new spare for new settings. A request in progress keeps its session and finishes.
   restartWhenIdle(reason: string) {
-    if (this.busy()) {
-      this.restartWanted = true;
-      return;
-    }
-    this.restart(reason);
+    this.crashes = 0;
+    if (this.error?.error !== "limit") this.error = null;
+    this.start(reason);
   }
 
-  // One request. The caller checks busy() first.
+  // One request, on its own session. The caller checks busy() first.
   async request(req: Request): Promise<Outcome> {
-    if (!this.proc) {
-      this.crashes = 0;
+    if (!this.spare || this.spare.retired) {
+      this.crashes = 0; // a request always gets one try, past the cap too
       this.start("request");
-      if (!this.proc) return { ok: false, error: this.error?.error ?? "failed", until: this.error?.until ?? null };
+      if (!this.spare) return { ok: false, error: this.error?.error ?? "failed", until: this.error?.until ?? null };
     }
-    this.messages++;
-    const outcome = await new Promise<Outcome>((resolve) => this.send({ kind: "request", text: [], resolve, timer: null }, JSON.stringify(req)));
+    const s = this.spare!;
+    this.spare = null;
+    this.active = s;
+    const id = requestId();
+    const outcome = await new Promise<Outcome>((resolve) => {
+      const turn: Turn = { id, text: [], resolve, timer: null };
+      turn.timer = setTimeout(() => this.timedOut(s), TIMEOUT_MS);
+      s.turn = turn;
+      this.refresh();
+      try {
+        s.proc.stdin.write(userTurn(requestTurn(id, req)));
+        s.proc.stdin.flush();
+      } catch {
+        // The process is going away; its exit fails the turn.
+      }
+    });
     if (outcome.ok) {
       this.crashes = 0;
       this.setError(null);
-    } else if (outcome.error !== "failed") {
+    } else if (!outcome.aborted && outcome.error !== "failed") {
       this.setError({ error: outcome.error, until: outcome.until ?? null });
     }
-    if (this.restartWanted) this.restart("settings changed");
-    else if (this.messages >= MAX_MESSAGES) this.restart(`${MAX_MESSAGES} messages`);
+    if (!outcome.aborted) {
+      // The reply came: this session is done. The next request gets a fresh one.
+      if (this.active === s) this.active = null;
+      this.retire(s);
+      if (!this.spare) this.start("next");
+    }
     this.refresh();
     return outcome;
   }
 
-  // The clock's part: a fresh session on a new day, or when the guide file changed.
+  // The clock's part: a fresh spare after the Mac slept, on a new day, or when the guide file changed.
   tick() {
-    if (!this.proc || this.queue.length) return;
-    if (this.day !== today()) return this.restart("new day");
+    const now = this.now();
+    const slept = this.lastTick > 0 && now - this.lastTick > SLEEP_GAP_MS;
+    this.lastTick = now;
+    if (!this.spare) return;
+    if (slept) return this.start("woke");
+    if (this.day !== today()) return this.start("new day");
     if (this.guidePath && fileThere(this.guidePath)) {
       try {
-        if (statSync(this.guidePath).mtimeMs !== this.guideStamp) this.restart("guide changed");
+        if (statSync(this.guidePath).mtimeMs !== this.guideStamp) this.start("guide changed");
       } catch {}
     }
   }
 
-  private send(turn: Turn, content: string) {
-    const p = this.proc;
-    if (!p) return turn.resolve({ ok: false, error: "failed" });
-    turn.timer = setTimeout(() => this.timedOut(turn), TIMEOUT_MS);
-    this.queue.push(turn);
-    this.refresh();
-    try {
-      p.stdin.write(userTurn(content));
-      p.stdin.flush();
-    } catch {
-      // The process is going away; its exit fails the turn.
-    }
-  }
-
-  private timedOut(turn: Turn) {
-    if (!this.queue.includes(turn)) return;
-    log(`no reply in ${Math.round(TIMEOUT_MS / 1000)} s; restarting`);
-    this.queue = this.queue.filter((t) => t !== turn);
-    turn.resolve({ ok: false, error: "failed", aborted: true });
+  // After a failure: a new spare, unless failures came twice in a row, the last one said what a
+  // restart can't fix, or MAX_RESTARTS already happened in RESTART_WINDOW_MS.
+  private recover(reason: string, failure: TranslatorError) {
     this.crashes++;
+    if (failure === "login" || failure === "update") {
+      this.setError({ error: failure, until: null });
+      log(`${reason}: ${failure}; not restarting until a request or a restart`);
+      return;
+    }
+    if (failure !== "failed") this.setError({ error: failure, until: null });
+    if (this.spare) return;
     if (this.crashes > 1) {
-      this.kill();
+      if (failure === "failed") this.setError({ error: "failed", until: null });
+      log(`${reason} twice in a row; not restarting until a request or a restart`);
+      return;
+    }
+    const now = this.now();
+    this.restarts = this.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+    if (this.restarts.length >= MAX_RESTARTS) {
       this.setError({ error: "failed", until: null });
-    } else this.start("timeout");
+      log(`${MAX_RESTARTS} restarts in ${Math.round(RESTART_WINDOW_MS / 60_000)} minutes; not restarting until a request or a restart`);
+      return;
+    }
+    this.restarts.push(now);
+    this.start(reason);
   }
 
-  private warmed(o: Outcome) {
-    if (!o.ok && o.aborted) return; // the process went away; whoever stopped it decides what's next
-    if (o.ok) {
-      this.crashes = 0;
-      if (this.error?.error !== "guide") this.setError(null);
-      log("ready");
-    } else {
-      this.setError({ error: o.error, until: o.until ?? null });
-      log(`warm-up failed: ${o.error}`);
-    }
+  private timedOut(s: Session) {
+    if (this.active !== s || !s.turn || s.retired) return;
+    const word = stderrWord(s.err);
+    const error: TranslatorError = s.retried || word === "offline" ? "offline" : "failed";
+    log(`no reply in ${Math.round(TIMEOUT_MS / 1000)} s (${error}; claude ${this.version ?? "unknown"}); restarting`);
+    this.active = null;
+    this.retire(s);
+    this.end(s, { ok: false, error, aborted: true });
+    this.recover("timeout", error);
     this.refresh();
   }
 
-  private async read(p: Subprocess<"pipe", "pipe", "pipe">, gen: number) {
+  private async read(s: Session) {
     const dec = new TextDecoder();
     let buf = "";
     try {
-      for await (const chunk of p.stdout) {
-        if (gen !== this.gen) return;
+      for await (const chunk of s.proc.stdout) {
+        if (s.retired) return;
         buf += dec.decode(chunk, { stream: true });
         let i: number;
         while ((i = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, i).trim();
           buf = buf.slice(i + 1);
-          if (line) this.line(line);
+          if (line) this.line(s, line);
         }
       }
     } catch {}
   }
 
-  private async drain(stream: ReadableStream<Uint8Array>) {
+  // Keeps the first STDERR_KEEP bytes of stderr in memory and drops the rest.
+  private async keepStderr(s: Session): Promise<void> {
+    const dec = new TextDecoder();
     try {
-      for await (const _ of stream) {
+      for await (const chunk of s.proc.stderr) {
+        if (s.err.length < STDERR_KEEP) s.err = (s.err + dec.decode(chunk, { stream: true })).slice(0, STDERR_KEEP);
       }
     } catch {}
   }
 
-  private line(line: string) {
+  private line(s: Session, line: string) {
+    if (s.retired || this.active !== s || !s.turn) return;
     let m: any;
     try {
       m = JSON.parse(line);
     } catch {
       return;
     }
-    const head = this.queue[0];
+    const turn = s.turn;
     if (m.type === "rate_limit_event") {
-      this.rateLimit = { status: m.rate_limit_info?.status, resetsAt: Number(m.rate_limit_info?.resetsAt) || undefined };
+      s.rateLimit = { status: m.rate_limit_info?.status, resetsAt: Number(m.rate_limit_info?.resetsAt) || undefined };
       return;
     }
-    if (m.type === "assistant" && head) {
-      for (const c of m.message?.content ?? []) if (c?.type === "text" && typeof c.text === "string") head.text.push(c.text);
+    if (m.type === "system" && typeof m.subtype === "string" && /retry/i.test(m.subtype)) {
+      s.retried = true;
       return;
     }
-    if (m.type !== "result" || !head) return;
-    this.queue.shift();
-    if (head.timer) clearTimeout(head.timer);
-    const text = typeof m.result === "string" && m.result ? m.result : head.text.join("\n");
+    if (m.type === "assistant") {
+      for (const c of m.message?.content ?? []) if (c?.type === "text" && typeof c.text === "string") turn.text.push(c.text);
+      return;
+    }
+    if (m.type !== "result") return;
+    const text = typeof m.result === "string" && m.result ? m.result : turn.text.join("\n");
     const isError = m.is_error === true || (m.subtype && m.subtype !== "success");
-    const rl = this.rateLimit;
-    this.rateLimit = null;
-    const reply = isError ? null : parseReply(text);
-    if (reply) head.resolve({ ok: true, reply });
-    else if (!isError && head.kind === "warmup") head.resolve({ ok: true, reply: { ready: true } });
-    else {
-      const errText = [text, ...(Array.isArray(m.errors) ? m.errors.map(String) : [])].join(" ");
-      const c = isError || rl?.status === "rejected" ? classify(errText, rl) : { error: "failed" as const, until: null };
-      log(`turn failed: ${c.error}${isError ? "" : " (no JSON reply)"}`);
-      head.resolve({ ok: false, error: c.error, until: c.until });
-    }
+    const rl = s.rateLimit;
+    const reply = isError ? null : parseReply(text, turn.id);
+    if (reply) return this.end(s, { ok: true, reply });
+    const errText = [text, ...(Array.isArray(m.errors) ? m.errors.map(String) : [])].join(" ");
+    const c = isError || rl?.status === "rejected" ? classify(errText, rl) : { error: "failed" as const, until: null };
+    const why = isError ? "" : parseReply(text) ? " (a reply with another id)" : " (no JSON reply)";
+    log(`turn failed: ${c.error}${why}`);
+    this.end(s, { ok: false, error: c.error, until: c.until });
+  }
+
+  // A session ended without being asked to: names why in one word from its stderr (read to its
+  // end first, briefly), fails its turn if it had one, and recovers.
+  private async exited(s: Session, code: number | null) {
+    if (s.retired) return;
+    s.retired = true;
+    await Promise.race([s.stderrDone, Bun.sleep(300)]);
+    const word = stderrWord(s.err);
+    s.err = "";
+    const error = errorFor(word);
+    log(`${s.turn ? "session" : "spare"} exited (code ${code}, ${word}; claude ${this.version ?? "unknown"})`);
+    if (this.active !== s && this.spare !== s) return; // stopped meanwhile: whoever did it decides what's next
+    if (this.spare === s) this.spare = null;
+    if (this.active === s) this.active = null;
+    this.end(s, { ok: false, error, aborted: true });
+    this.recover("exit", error);
     this.refresh();
   }
 
-  private exited(gen: number, code: number | null) {
-    if (gen !== this.gen) return; // stopped on purpose, or an older process
-    this.proc = null;
-    this.gen++;
-    this.failAll();
-    this.crashes++;
-    log(`exited (code ${code}); ${this.crashes > 1 ? "not restarting" : "restarting once"}`);
-    if (this.crashes > 1) {
-      this.setError({ error: "failed", until: null });
-      this.refresh();
-    } else this.start("crash");
+  // Answers a session's turn once.
+  private end(s: Session, o: Outcome) {
+    const t = s.turn;
+    if (!t) return;
+    s.turn = null;
+    if (t.timer) clearTimeout(t.timer);
+    t.resolve(o);
   }
 
-  private failAll() {
-    const q = this.queue;
-    this.queue = [];
-    for (const t of q) {
-      if (t.timer) clearTimeout(t.timer);
-      t.resolve({ ok: false, error: "failed", aborted: true });
+  private retire(s: Session | null) {
+    if (!s || s.retired) return;
+    s.retired = true;
+    s.err = "";
+    try {
+      s.proc.kill();
+    } catch {}
+  }
+
+  // `claude --version`, once, for the log lines that say why a session ended.
+  private askVersion() {
+    if (this.versionAsked) return;
+    this.versionAsked = true;
+    try {
+      const p = Bun.spawn([CLAUDE, "--version"], { cwd: versionCwd(), env: translatorEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => p.kill(), 10_000);
+      new Response(p.stdout).text().then(
+        (out) => {
+          clearTimeout(timer);
+          this.version = versionWords(out);
+          log(`claude ${this.version}`);
+        },
+        () => clearTimeout(timer),
+      );
+    } catch {
+      this.version = "unknown";
     }
   }
 
@@ -315,7 +402,7 @@ export class Translator {
   // Puts the translator's part of the state in order, and bumps it when something changed.
   refresh() {
     const t = state.translator;
-    const status = this.busy() ? "busy" : this.error ? "error" : this.queue.length || !this.proc ? "starting" : "ready";
+    const status = this.busy() ? "busy" : this.error ? "error" : this.spare ? "ready" : "starting";
     const next = {
       status,
       error: this.busy() ? null : (this.error?.error ?? null),
@@ -327,5 +414,15 @@ export class Translator {
       Object.assign(t, next);
       bump();
     }
+  }
+}
+
+// The translator's folder (made if needed), else the server's own: where `claude --version` runs.
+function versionCwd() {
+  try {
+    mkdirSync(TRANSLATOR_DIR, { recursive: true });
+    return TRANSLATOR_DIR;
+  } catch {
+    return undefined;
   }
 }

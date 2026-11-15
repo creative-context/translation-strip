@@ -7,7 +7,10 @@
 //   UNCLEAR   a question instead of a polish        OFFLINE   error "offline"      LIMIT   error "limit" (until in 2 h)
 //   GUIDE     error "guide"                          FAILED    error "failed"       BUSY    409 busy twice, then a polish
 //   kindly    a polish with a voice-check finding    STARTING  the translator starts again (3 s) before it answers
+//   LOGIN     error "login" (Claude Code isn't signed in)      UPDATE    error "update" (Claude Code needs an update)
 // Adjust notes: "corto" or "short" gives a shorter English; "UNCLEAR" a question; "OFFLINE" and the others as above.
+// The page's own preview flags (in the URL, for the stand-in Teams): ?shape=unknown (Teams' message box can't be found),
+// ?send=no-paste or ?send=not-own-server (and the other send reasons), ?teams=closed|nochat, ?draft=1, ?access=0, ?mic=denied.
 import { join } from "node:path";
 
 const PORT = 4813;
@@ -64,6 +67,8 @@ async function trigger(text: string): Promise<Response | null> {
   if (t.includes("unclear")) return json({ question: "This Thursday or next week's?" });
   if (t.includes("offline")) return json({ error: "offline" }, 503);
   if (t.includes("limit")) return json({ error: "limit", until: new Date(Date.now() + 2 * 3600_000).toISOString() }, 503);
+  if (t.includes("login")) return json({ error: "login" }, 503);
+  if (t.includes("update")) return json({ error: "update" }, 503);
   if (t.includes("guide")) return json({ error: "guide" }, 503);
   if (t.includes("failed")) return json({ error: "failed" }, 503);
   if (t.includes("busy")) {

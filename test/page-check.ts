@@ -8,8 +8,13 @@
 // The window is a typical strip, 1200 x 145 (the strip is 145 tall and as wide as Teams), dark, device scale 2, in a browser (no shell), so the
 // page uses its stand-in bridge: nothing is ever sent. Made-up text only.
 //
-// Captures go to .local/page-check/ (kept out of git). The seven frames are saved by their state name:
-//   01-idle  02-ready-long  03-adjust-open  04-menu-open  05-send-error-long-chat  06-first-run  07-dictation-preparing
+// Then the column pass: the same controls pressed again in the strip's second shape, a window taller than wide
+// (360 x 900), with its layout checked, and checks and frames only the column has.
+//
+// Captures go to .local/page-check/ (kept out of git). The eight frames are saved by their state name:
+//   01-idle  02-ready-long  03-adjust-open  04-menu-open  05-send-error-long-chat  06-first-run  07-dictation-preparing  08-written-for
+// and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
+//   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
 import { join, resolve } from "node:path";
 import { mkdirSync, rmSync } from "node:fs";
@@ -19,7 +24,9 @@ const OUT = join(ROOT, ".local", "page-check");
 const BASE = process.env.PAGE_MOCK ?? "http://127.0.0.1:4813";
 const PW = process.env.PLAYWRIGHT_DIR ?? resolve(ROOT, "..", "mac-app-design", "node_modules", "playwright");
 
-const W = 1200, H = 145;
+// The window: the strip under Teams (1200 x 145) or the column beside it (360 x 900). The column pass sets it for its checks.
+let W = 1200, H = 145;
+const ROW = { w: 1200, h: 145 }, COL = { w: 360, h: 900 };
 const ES = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.";
 const EN_NORMAL = "Could you take a look at the budget before Thursday?";
 const EN_FORMAL = "Would you be able to review the budget before Thursday?";
@@ -53,8 +60,8 @@ async function open(query = "", wait = true): Promise<T> {
   p.on("console", (m: any) => { if (m.type() === "error" && !/status of (409|503)/.test(m.text())) pageErrors.push(m.text()); });
   await p.goto(`${BASE}/${query ? "?" + query : ""}`);
   if (wait) {
-    // srv and shell are the page's own top-level bindings (let/const, so not on window): read them by name.
-    await p.waitForFunction("(() => { try { return !!srv && shell.teams !== null; } catch (e) { return false; } })()", null, { timeout: 8000 });
+    // srv and st are the page's own top-level bindings (let/const, so not on window): read them by name.
+    await p.waitForFunction("(() => { try { return !!srv && st.teams !== null; } catch (e) { return false; } })()", null, { timeout: 8000 });
     // Record what the page tells the shell (the stand-in bridge answers as before).
     await p.evaluate(() => {
       const w = window as any;
@@ -111,7 +118,7 @@ const setMode = (mode: string) => fetch(`${BASE}/api/settings`, { method: "POST"
 // belongs to, no tag or button may be cut or overlap its neighbor. The chat's name may give way
 // (an ellipsis): that is the design, and it is reported as a note.
 async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
-  return p.evaluate(() => {
+  return p.evaluate((col: boolean) => {
     const issues: string[] = [], info: string[] = [];
     const Wd = window.innerWidth, Ht = window.innerHeight;
     const de = document.documentElement, bd = document.body;
@@ -120,7 +127,7 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
     if (sw > Wd) issues.push(`the page is wider than the window (${sw} > ${Wd})`);
     const strip = document.getElementById("strip")!;
     const sr = strip.getBoundingClientRect();
-    if (Math.abs(sr.height - 145) > 0.5) issues.push(`the strip is ${sr.height}px tall, not 145`);
+    if (Math.abs(sr.height - (col ? Ht : 145)) > 0.5) issues.push(`the strip is ${sr.height}px tall, not ${col ? Ht : 145}`);
     if (Math.abs(sr.width - Wd) > 0.5) issues.push(`the strip is ${sr.width}px wide, not ${Wd}`);
     const shown = (el: Element) => {
       const cs = getComputedStyle(el);
@@ -159,8 +166,25 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
     }
     // Both footers sit on one line, at one height, in every state.
     const fs = strip.querySelector(".f.es .foot")!.getBoundingClientRect(), fe = strip.querySelector(".f.en .foot")!.getBoundingClientRect();
-    if (Math.abs(fs.top - fe.top) > 0.5 || Math.abs(fs.height - fe.height) > 0.5)
+    if (!col && (Math.abs(fs.top - fe.top) > 0.5 || Math.abs(fs.height - fe.height) > 0.5))
       issues.push(`the footers don't line up (Spanish y ${fs.top}, ${fs.height} tall; English y ${fe.top}, ${fe.height} tall)`);
+    if (col) {
+      // The column: the English module on top, the Spanish below, each half the height, both whole inside the window,
+      // each footer inside its own module, and the English footer in two rows (the notice and Adjust, then the name, Send and ⋯).
+      const en = strip.querySelector(".f.en")!.getBoundingClientRect(), es = strip.querySelector(".f.es")!.getBoundingClientRect();
+      if (en.bottom > es.top + 0.5) issues.push(`the English module isn't above the Spanish one (English ends at ${en.bottom}, Spanish starts at ${es.top})`);
+      if (Math.abs(en.height - es.height) > 1) issues.push(`the modules aren't the same height (English ${en.height}, Spanish ${es.height})`);
+      if (Math.abs(en.left - es.left) > 0.5 || Math.abs(en.width - es.width) > 0.5) issues.push("the modules aren't the same width");
+      for (const [k, foot, mod] of [["English", fe, en], ["Spanish", fs, es]] as [string, DOMRect, DOMRect][])
+        if (foot.left < mod.left - 0.5 || foot.right > mod.right + 0.5 || foot.top < mod.top - 0.5 || foot.bottom > mod.bottom + 0.5) issues.push(`the ${k} footer leaves its module`);
+      const r = (sel: string) => { const e = strip.querySelector(sel); return e && shown(e) ? e.getBoundingClientRect() : null; };
+      const to = r(".to"), send = r("#send"), more = r("#more"), adj = r("#adjustBtn"), tagrow = r("#tagrow");
+      if (send && more && Math.abs(send.top - more.top) > 4) issues.push("Send and ⋯ aren't on one row");
+      if (to && send && Math.abs(to.top + to.height / 2 - (send.top + send.height / 2)) > 1) issues.push("the chat's name isn't on Send's row");
+      for (const top of [adj, tagrow]) if (top && send && top.bottom > send.top + 0.5) issues.push("the notice or Adjust isn't above Send's row");
+      if (adj && tagrow && Math.abs(adj.top + adj.height / 2 - (tagrow.top + tagrow.height / 2)) > 3) issues.push("the notice and Adjust aren't on one row");
+      if (more && adj && Math.abs(adj.right - more.right) > 0.5) issues.push("Adjust doesn't end at the right edge, where ⋯ ends");
+    }
     // A shortcut glyph is never translucent, itself or through a parent.
     for (const k of strip.querySelectorAll("kbd")) {
       if (!shown(k)) continue;
@@ -189,9 +213,16 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
       const m = menu.getBoundingClientRect();
       if (m.left < -0.5 || m.right > Wd + 0.5 || m.top < -0.5 || m.bottom > Ht + 0.5)
         issues.push(`the menu sticks out of the window (${Math.round(m.left)},${Math.round(m.top)} to ${Math.round(m.right)},${Math.round(m.bottom)})`);
+      if (col) {
+        const en = strip.querySelector(".f.en")!.getBoundingClientRect();
+        if (m.left < en.left - 0.5 || m.right > en.right + 0.5 || m.top < en.top - 0.5 || m.bottom > en.bottom + 0.5) issues.push("the menu isn't over the English module");
+        const cs = menu.querySelectorAll(".col");
+        for (let i = 1; i < cs.length; i++) { const a = cs[i - 1].getBoundingClientRect(), b = cs[i].getBoundingClientRect(); if (b.top < a.bottom - 0.5 || Math.abs(a.left - b.left) > 0.5) issues.push("the menu's groups aren't stacked in one column"); }
+        if (menu.scrollHeight > menu.clientHeight + 1) issues.push("the menu's groups are cut");
+      }
     }
     return { issues, info: [...new Set(info)] };
-  });
+  }, W < H);
 }
 async function expectLayout(p: any) {
   const r = await layout(p);
@@ -200,9 +231,16 @@ async function expectLayout(p: any) {
 }
 
 // ---------------------------------------------------------------------------------------- runner
-type Check = { group: string; name: string; fn: () => Promise<string | void> };
+type Check = { group: string; name: string; fn: () => Promise<string | void>; mode: "row" | "col" };
 const checks: Check[] = [];
-const check = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn });
+// check(): written for the strip under Teams (1200 x 145); the functional groups run again in the column (below).
+// colCheck(): only for the column (360 x 900).
+const check = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "row" });
+const colCheck = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "col" });
+// The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
+// about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
+const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "⋯ menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout"]);
+const ROW_ONLY: RegExp[] = [/its three columns/, /^its first column is titled/, /^a long message scrolls inside its box/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
 // ===================================================================================== typing and keys
@@ -659,7 +697,7 @@ check("Send", "Send button, mode send: Sending…, then 'Sent to <chat> · time'
   const done = (await t.p.locator("#doneMsg").innerText()).replace(/\s+/g, " ").trim();
   ok(/^Sent to .+ · \d{1,2}:\d{2} (AM|PM)$/.test(done), `message ${JSON.stringify(done)}`);
   eq(await tagText(t.p), "", "no tag in the footer while the message shows");
-  const box = await t.p.locator(".f.en .en-wrap").boundingBox(), msg = await t.p.locator("#doneMsg .who").boundingBox();
+  const box = await t.p.locator(W < H ? ".f.en" : ".f.en .en-wrap").boundingBox(), msg = await t.p.locator("#doneMsg .who").boundingBox();
   ok(!!box && !!msg && Math.abs((msg.y + msg.height / 2) - (box.y + box.height / 2)) < 3, "message centered in the English box");
   eq(await val(t.p, "es"), "", "Spanish box");
   eq(await val(t.p, "en"), "", "English box");
@@ -726,7 +764,7 @@ async function failedSend(reason: string) {
   const t = await open(`send=${reason}`);
   await translateFlow(t);
   await t.p.click("#send");
-  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "something-else"].includes(reason) ? "error" : "ready";
+  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
   await waitState(t.p, want, 4000).catch(() => {});
   await t.p.waitForTimeout(1100);
   return t;
@@ -799,7 +837,7 @@ check("Send reasons", "mismatch: 'Teams changed it. Not sent', no retry button",
   eq(await tagText(t.p), "Teams changed it. Not sent", "tag");
   eq((await actionLabels(t.p)).length, 0, "buttons");
   eq(await state(t.p), "error", "state");
-  return "the build notes say 'Teams didn't take the text. Nothing sent' + Try again; the code and contract say no retry";
+  return "the build notes say 'Teams didn't take it. Not sent' + Try again; the code and contract say no retry";
 });
 check("Send reasons", "not-sent: 'In Teams' box, not sent'", async () => {
   const t = await failedSend("not-sent");
@@ -817,6 +855,29 @@ check("Send reasons", "no-access: the first-run cover comes up", async () => {
   const t = await failedSend("no-access");
   eq(await t.p.locator("#strip").getAttribute("data-access"), "no", "data-access");
   ok(await vis(t.p, ".cover"), "cover visible");
+});
+
+check("Send reasons", "no-paste: 'Teams didn't take it. Not sent', no retry button, red box, the text stays", async () => {
+  const t = await failedSend("no-paste");
+  eq(await tagText(t.p), "Teams didn't take it. Not sent", "tag");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  eq(await state(t.p), "error", "state");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on to try again");
+});
+check("Send reasons", "not-own-server: 'Not the app's own page. Not sent', no retry button, red box", async () => {
+  const t = await failedSend("not-own-server");
+  eq(await tagText(t.p), "Not the app's own page. Not sent", "tag");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  eq(await state(t.p), "error", "state");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
+});
+check("Send reasons", "no-paste marks the English as a possible leftover: Teams may take the paste late, and that text is ours", async () => {
+  const t = await open("send=no-paste");
+  await translateFlow(t);
+  await t.p.click("#send");
+  await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 });
+  ok(await t.p.evaluate(() => (st as any).leftover !== null && (st as any).leftover === (st as any).lastText), "the English should be marked as a possible leftover after no-paste");
 });
 
 // ===================================================================================== Teams
@@ -848,6 +909,123 @@ check("Teams", "Teams closes while a translation is ready: tag appears, Send goe
   await setTeams(t.p, { open: true, chat: "Priya Raman", from: "Priya Raman", last: LAST, draft: false });
   eq(await tagText(t.p), "", "tag after Teams is back");
   ok(await t.p.locator("#send").isEnabled(), "Send should be back");
+});
+
+const DANIEL_TEAMS = { open: true, chat: "Daniel Okafor", from: "Daniel Okafor", last: "Thanks, see you then.", draft: false, shape: "ok" };
+const PRIYA_TEAMS = { open: true, chat: "Priya Raman", from: "Priya Raman", last: LAST, draft: false, shape: "ok" };
+check("Teams", "box not found (?shape=unknown): gray notice, no chat name, no button; Send stays off after a translation", async () => {
+  const t = await open("shape=unknown");
+  eq(await tagText(t.p), "Can't find Teams' message box", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  ok(!(await vis(t.p, "#to")), "the 'To' chat name should be hidden");
+  eq(await t.p.locator("#strip").getAttribute("data-teams"), "unknown", "data-teams");
+  await translateFlow(t);
+  eq(await tagText(t.p), "Can't find Teams' message box", "tag over a ready translation");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+  await t.p.keyboard.press("Meta+Enter");
+  await settle(t.p, 200);
+  eq((await sends(t)).length, 0, "send messages");
+  await setTeams(t.p, PRIYA_TEAMS);
+  eq(await tagText(t.p), "", "tag once the box is found");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be back");
+});
+check("Teams", "box not found while a translation is ready: the notice wins over a voice finding, and Send goes off", async () => {
+  const t = await open();
+  await translateFlow(t, "kindly revisa");
+  eq(await tagText(t.p), "\"Kindly\" sounds stiff", "voice finding");
+  await setTeams(t.p, { ...PRIYA_TEAMS, shape: "unknown" });
+  eq(await tagText(t.p), "Can't find Teams' message box", "tag");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+});
+check("Teams", "the chat changes while the English is ready: red 'Written for <chat>' and a red box, Send and Adjust off, ⌘⏎ and ⌘K do nothing", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await setTeams(t.p, DANIEL_TEAMS);
+  eq(await tagText(t.p), "Written for Priya Raman", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-error", "tag class (red)");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  eq(await state(t.p), "written", "state (the red box)");
+  has(await t.p.locator("#to").innerText(), "Daniel Okafor", "To label shows the chat that is open");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+  ok(!(await vis(t.p, "#adjustBtn")), "Adjust should be hidden");
+  await t.p.keyboard.press("Meta+Enter");
+  await t.p.keyboard.press("Meta+k");
+  await settle(t.p, 200);
+  eq((await sends(t)).length, 0, "send messages");
+  eq(await t.p.locator("#strip").getAttribute("data-adjust"), "", "adjust row");
+  ok(await t.p.locator("#translate").isEnabled(), "Translate should be on");
+  has(await val(t.p, "en"), EN_NORMAL, "the English stays");
+});
+check("Teams", "back in that chat: the tag goes and Send is on again, sending to it", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await setTeams(t.p, DANIEL_TEAMS);
+  await setTeams(t.p, PRIYA_TEAMS);
+  eq(await tagText(t.p), "", "tag");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  ok(await vis(t.p, "#adjustBtn"), "Adjust should show");
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  eq((await sends(t))[0].chat, "Priya Raman", "chat in the send message");
+});
+check("Teams", "translating again (⏎) in the other chat: asks with that chat, the tag goes, Send goes to it", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await setTeams(t.p, DANIEL_TEAMS);
+  await t.p.click("#es");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "translating");
+  await waitState(t.p, "ready");
+  const r = reqsTo(t, "/api/translate");
+  eq(r.length, 2, "translate requests");
+  eq(r[1].body.context?.chat, "Daniel Okafor", "context chat of the second request");
+  eq(await tagText(t.p), "", "tag");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  eq((await sends(t))[0].chat, "Daniel Okafor", "chat in the send message");
+});
+check("Teams", "the chat changes while it is translating: the tag shows when the English comes", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.fill("#es", ES);
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "translating");
+  await setTeams(t.p, DANIEL_TEAMS);
+  await waitState(t.p, "written");
+  eq(await tagText(t.p), "Written for Priya Raman", "tag");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+});
+check("Teams", "the chat closes (no chat) and comes back as another one: the notice for no chat first, then the tag", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await setTeams(t.p, { open: true, chat: null, from: null, last: null, draft: false, shape: "ok" });
+  eq(await tagText(t.p), "No chat open in Teams", "tag with no chat");
+  await setTeams(t.p, DANIEL_TEAMS);
+  eq(await tagText(t.p), "Written for Priya Raman", "tag in the other chat");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+});
+check("Teams", "a draft question in the other chat shows the tag, with no Add after draft", async () => {
+  const t = await open("send=draft");
+  await translateFlow(t);
+  await t.p.click("#send");
+  await waitState(t.p, "draft", 3000);
+  await setTeams(t.p, DANIEL_TEAMS);
+  eq(await tagText(t.p), "Written for Priya Raman", "tag");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  await setTeams(t.p, PRIYA_TEAMS);
+  eq(await tagText(t.p), "Teams has a draft", "tag back in that chat");
+  eq((await actionLabels(t.p)).join(","), "Add after draft,Cancel", "buttons");
+});
+check("Teams", "the Spanish edited while the chat is another one: out of date comes first", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await setTeams(t.p, DANIEL_TEAMS);
+  await t.p.click("#es");
+  await t.p.keyboard.press("End");
+  await t.p.keyboard.type("!");
+  eq(await tagText(t.p), "Translation out of date", "tag");
 });
 
 // ===================================================================================== first run
@@ -926,6 +1104,51 @@ check("Replies", "GUIDE: 'Voice guide not set' and Open guide settings asks the 
   eq((await actionLabels(t.p)).join(","), "Open guide settings", "buttons");
   await t.p.click("#actions [data-act=guide]");
   eq((await opens(t, "guide")).length, 1, "open guide messages");
+});
+check("Replies", "LOGIN: 'Sign in to Claude Code' in gray, Try again asks again", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.fill("#es", "LOGIN esto");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "login");
+  eq(await tagText(t.p), "Sign in to Claude Code", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
+  eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
+  await t.p.click("#actions [data-act=retry]");
+  await waitState(t.p, "translating");
+  await waitState(t.p, "login");
+  eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
+});
+check("Replies", "UPDATE: 'Claude Code needs an update' in gray, Try again asks again", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.fill("#es", "UPDATE esto");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "update");
+  eq(await tagText(t.p), "Claude Code needs an update", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
+  eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
+  await t.p.click("#actions [data-act=retry]");
+  await waitState(t.p, "translating");
+  await waitState(t.p, "update");
+  eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
+});
+check("Replies", "LOGIN and UPDATE in an adjust: the notice over the English, with Try again (adjust again)", async () => {
+  for (const [word, text] of [["LOGIN", "Sign in to Claude Code"], ["UPDATE", "Claude Code needs an update"]]) {
+    const t = await open();
+    await translateFlow(t);
+    await t.p.keyboard.press("Meta+k");
+    await t.p.fill("#adjIn", `${word} nota`);
+    await t.p.press("#adjIn", "Enter");
+    await t.p.waitForFunction((x: string) => document.getElementById("status")!.textContent!.includes(x), text, { timeout: 4000 });
+    eq(await state(t.p), "ready", `${word}: state`);
+    has(await val(t.p, "en"), EN_NORMAL, `${word}: the English stays`);
+    eq((await actionLabels(t.p)).join(","), "Try again", `${word}: buttons`);
+    await t.p.click("#actions [data-act=retry-adjust]");
+    await t.p.waitForFunction((x: string) => document.getElementById("status")!.textContent!.includes(x), text, { timeout: 4000 });
+    eq(reqsTo(t, "/api/adjust").length, 2, `${word}: adjust requests`);
+    for (const x of contexts.splice(0)) { try { await x.close(); } catch {} }
+  }
 });
 check("Replies", "BUSY: the page waits and asks again until it gets an answer", async () => {
   const t = await open();
@@ -1166,8 +1389,8 @@ check("Design", "the English footer: notice and Adjust buttons 24 px at 12 px, S
 });
 check("Design", "a send error beside a long chat name: no Try again, the notice stays whole, the name gives way down to 96 px and keeps its whole text in a title", async () => {
   const t = await open("send=not-front");
-  await ready(t);
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+  await ready(t);
   const fullName = await t.p.locator("#to").innerText();
   await t.p.click("#send");
   await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 });
@@ -1214,28 +1437,36 @@ const layoutCases: [string, () => Promise<T>][] = [
   ["idle", async () => open()],
   ["ready, short", async () => { const t = await open(); await ready(t); return t; }],
   ["ready, two lines", async () => { const t = await open(); await ready(t, LONG_EN); return t; }],
-  ["ready, two lines, long chat", async () => { const t = await open(); await ready(t, LONG_EN); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); return t; }],
+  ["ready, two lines, long chat", async () => { const t = await open(); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await ready(t, LONG_EN); return t; }],
   ["adjust open, two lines", async () => { const t = await open(); await ready(t, LONG_EN); await t.p.keyboard.press("Meta+k"); return t; }],
   ["adjust open, with text in the note", async () => { const t = await open(); await ready(t, LONG_EN); await t.p.keyboard.press("Meta+k"); await t.p.fill("#adjIn", "que suene menos seco y más cercano, sin perder el tono"); return t; }],
   ["adjusted + Undo", async () => { const t = await open(); await ready(t); await t.p.keyboard.press("Meta+k"); await t.p.click("#chip"); await waitState(t.p, "ready"); return t; }],
   ["menu open", async () => { const t = await open(); await ready(t, LONG_EN); await t.p.click("#more"); return t; }],
   ["menu open, idle", async () => { const t = await open(); await t.p.click("#more"); return t; }],
-  ["voice check + long chat", async () => { const t = await open(); await translateFlow(t, "kindly revisa"); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); return t; }],
-  ["send error notice + long chat", async () => { const t = await open("send=not-front"); await ready(t); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await t.p.click("#send"); await waitState(t.p, "sending"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 }); return t; }],
-  ["draft notice + long chat", async () => { const t = await open("send=draft"); await ready(t); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: true }); await t.p.click("#send"); await waitState(t.p, "draft", 3000); return t; }],
-  ["out of date + long chat", async () => { const t = await open(); await ready(t); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await t.p.click("#es"); await t.p.keyboard.type("!"); return t; }],
+  ["voice check + long chat", async () => { const t = await open(); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await translateFlow(t, "kindly revisa"); return t; }],
+  ["send error notice + long chat", async () => { const t = await open("send=not-front"); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await ready(t); await t.p.click("#send"); await waitState(t.p, "sending"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 }); return t; }],
+  ["draft notice + long chat", async () => { const t = await open("send=draft"); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: true }); await ready(t); await t.p.click("#send"); await waitState(t.p, "draft", 3000); return t; }],
+  ["out of date + long chat", async () => { const t = await open(); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await ready(t); await t.p.click("#es"); await t.p.keyboard.type("!"); return t; }],
   ["question", async () => { const t = await open(); await t.p.fill("#es", "UNCLEAR"); await t.p.press("#es", "Enter"); await waitState(t.p, "question"); return t; }],
   ["error offline", async () => { const t = await open(); await t.p.fill("#es", "OFFLINE"); await t.p.press("#es", "Enter"); await waitState(t.p, "error"); return t; }],
   ["plan limit", async () => { const t = await open(); await t.p.fill("#es", "LIMIT"); await t.p.press("#es", "Enter"); await waitState(t.p, "limit"); return t; }],
   ["no voice guide", async () => { const t = await open(); await t.p.fill("#es", "GUIDE"); await t.p.press("#es", "Enter"); await waitState(t.p, "noguide"); return t; }],
   ["translating", async () => { const t = await open(); await t.p.fill("#es", ES); await t.p.press("#es", "Enter"); await waitState(t.p, "translating"); return t; }],
   ["starting", async () => { const t = await open(); await t.p.fill("#es", "STARTING"); await t.p.press("#es", "Enter"); await waitState(t.p, "starting", 3000); return t; }],
-  ["sending + long chat", async () => { const t = await open(); await ready(t); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await t.p.click("#send"); await waitState(t.p, "sending"); return t; }],
-  ["sent + long chat", async () => { const t = await open(); await ready(t); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await t.p.click("#send"); await waitState(t.p, "sent"); return t; }],
+  ["sending + long chat", async () => { const t = await open(); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await ready(t); await t.p.click("#send"); await waitState(t.p, "sending"); return t; }],
+  ["sent + long chat", async () => { const t = await open(); await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false }); await ready(t); await t.p.click("#send"); await waitState(t.p, "sent"); return t; }],
   ["dictating", async () => { const t = await open(); await t.p.click("#mic"); await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.length > 20, null, { timeout: 3000 }); return t; }],
   ["mic denied", async () => open("mic=denied")],
   ["mic denied, as in the app (the Preview note hidden)", async () => { const t = await open("mic=denied"); await t.p.evaluate(() => { document.getElementById("preview")!.hidden = true; }); return t; }],
   ["Teams closed, ready", async () => { const t = await open("teams=closed"); await ready(t); return t; }],
+  ["written for another chat", async () => { const t = await open(); await ready(t, LONG_EN); await setTeams(t.p, DANIEL_TEAMS); return t; }],
+  ["written for a long chat, in another chat with a long name", async () => { const t = await open(); await t.p.evaluate((c: string) => (window as any).strip.teams({ open: true, chat: c, from: "A", last: "B", draft: false, shape: "ok" }), LONG_CHAT); await t.p.fill("#es", ES); await t.p.press("#es", "Enter"); await waitState(t.p, "ready"); await setTeams(t.p, { ...DANIEL_TEAMS, chat: "Okonkwo-Fitzgerald, Bartholomew Jr." }); return t; }],
+  ["box not found, ready", async () => { const t = await open("shape=unknown"); await ready(t); return t; }],
+  ["box not found, idle", async () => open("shape=unknown")],
+  ["sign in", async () => { const t = await open(); await t.p.fill("#es", "LOGIN"); await t.p.press("#es", "Enter"); await waitState(t.p, "login"); return t; }],
+  ["needs an update", async () => { const t = await open(); await t.p.fill("#es", "UPDATE"); await t.p.press("#es", "Enter"); await waitState(t.p, "update"); return t; }],
+  ["no-paste notice + long chat", async () => { const t = await open("send=no-paste"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 }); return t; }],
+  ["not-own-server notice + long chat", async () => { const t = await open("send=not-own-server"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 }); return t; }],
   ["no chat", async () => open("teams=nochat")],
   ["preview note, long Spanish", async () => { const t = await open(); await t.p.fill("#es", ES + " " + ES + " " + ES); return t; }],
 ];
@@ -1281,8 +1512,8 @@ const frames: Frame[] = [
   { file: "03-adjust-open", make: async (t) => { await ready(t, LONG_EN); await t.p.keyboard.press("Meta+k"); } },
   { file: "04-menu-open", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
   { file: "05-send-error-long-chat", query: "send=not-front", make: async (t) => {
-      await ready(t, LONG_EN);
       await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+      await ready(t, LONG_EN);
       await t.p.click("#send");
       await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 4000 });
   } },
@@ -1291,6 +1522,7 @@ const frames: Frame[] = [
       await t.p.click("#mic");
       await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting Spanish"), null, { timeout: 1200 });
   } },
+  { file: "08-written-for", make: async (t) => { await ready(t, LONG_EN); await setTeams(t.p, DANIEL_TEAMS); } },
 ];
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
@@ -1298,6 +1530,293 @@ for (const f of frames) {
     await f.make(t);
     await t.p.mouse.move(W / 2, 0);
     await settle(t.p, f.file.startsWith("07") ? 300 : 500);
+    await t.p.screenshot({ path: join(OUT, `${f.file}.png`) });
+    const r = await layout(t.p);
+    ok(!r.issues.length, r.issues.join("; "));
+    return r.info.length ? r.info.join("; ") : undefined;
+  });
+}
+
+// ===================================================================================== the column (360 x 900)
+// The strip's second shape, beside Teams: the window is taller than wide. Each check below is only for the column;
+// the functional groups above run again in it (see COLUMN_GROUPS).
+const rect = (p: any, sel: string) => p.evaluate((sel: string) => {
+  const e = document.querySelector(sel); if (!e) return null;
+  const cs = getComputedStyle(e), r = e.getBoundingClientRect();
+  if (cs.display === "none" || r.width === 0 && r.height === 0) return null;
+  return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+}, sel);
+const enBoxH = (p: any) => p.evaluate(() => document.getElementById("en")!.getBoundingClientRect().height);
+const asInApp = (p: any) => p.evaluate(() => { document.getElementById("preview")!.hidden = true; });
+
+colCheck("Column", "the English module is on top and the Spanish below, each half the window's height, with the strip filling it", async () => {
+  const t = await open();
+  const en = await rect(t.p, ".f.en"), es = await rect(t.p, ".f.es"), strip = await rect(t.p, "#strip");
+  eq(strip.w, 360, "strip width"); eq(strip.h, 900, "strip height");
+  eq(en.t, 8, "English module top"); eq(es.b, 892, "Spanish module bottom");
+  eq(en.h, 438, "English module height"); eq(es.h, 438, "Spanish module height");
+  eq(es.t - en.b, 8, "the gap between the modules");
+  eq(en.w, 344, "module width"); eq(en.l, 8, "module x");
+  // Tab goes Spanish, then English; the English sits above it.
+  const order = await t.p.evaluate(() => [...document.querySelectorAll(".fields > .f")].map((f) => f.classList.contains("en") ? "en" : "es").join(","));
+  eq(order, "es,en", "DOM order (the page's tab order)");
+  await expectLayout(t.p);
+});
+colCheck("Column", "the same page follows its window: wide and short is the strip, tall and narrow is the column", async () => {
+  const t = await open();
+  const row = await t.p.evaluate(() => { const e = document.querySelector(".f.en")!.getBoundingClientRect(), s = document.querySelector(".f.es")!.getBoundingClientRect(); return { enRight: e.left >= s.right - 0.5, h: document.getElementById("strip")!.getBoundingClientRect().height }; });
+  ok(!row.enRight, "in a column window the English isn't beside the Spanish");
+  await t.p.setViewportSize({ width: ROW.w, height: ROW.h });
+  await settle(t.p, 150);
+  const wide = await t.p.evaluate(() => { const e = document.querySelector(".f.en")!.getBoundingClientRect(), s = document.querySelector(".f.es")!.getBoundingClientRect(); return { beside: e.left >= s.right - 0.5, h: document.getElementById("strip")!.getBoundingClientRect().height }; });
+  ok(wide.beside, "in a wide window the English sits beside the Spanish");
+  eq(wide.h, 145, "the strip's height in a wide window");
+  await t.p.setViewportSize({ width: COL.w, height: COL.h });
+  await settle(t.p, 150);
+  eq((await rect(t.p, "#strip")).h, 900, "the strip's height back in the column");
+  await expectLayout(t.p);
+});
+colCheck("Column", "the English footer has two rows: the notice and Adjust, then 'To <chat>', Send (28) and ⋯ (28 × 28)", async () => {
+  const t = await open();
+  await ready(t, LONG_EN);
+  const a = await rect(t.p, "#adjustBtn"), to = await rect(t.p, "#to"), send = await rect(t.p, "#send"), more = await rect(t.p, "#more"), foot = await rect(t.p, ".f.en .foot"), mod = await rect(t.p, ".f.en");
+  ok(a && to && send && more, "a control is missing");
+  eq(a.h, 24, "Adjust height"); eq(send.h, 28, "Send height"); eq(more.w, 28, "⋯ width"); eq(more.h, 28, "⋯ height");
+  ok(a.b <= send.t, "Adjust is above Send's row");
+  ok(to.r <= send.l && send.r <= more.l, "the second row runs To, Send, ⋯");
+  eq(Math.round(send.cy), Math.round(more.cy), "Send and ⋯ on one line");
+  eq(Math.round(to.cy), Math.round(send.cy), "the name on Send's line");
+  ok(Math.abs(a.r - more.r) <= 4.5, `Adjust ends at the right edge (${a.r} against ${more.r})`);
+  eq(foot.h, 56, "the footer's height (28 + 28)");
+  eq(mod.b - foot.b, 8, "the footer's distance from the module's bottom");
+  eq(await t.p.locator("#adjustBtn").evaluate((e: any) => getComputedStyle(e).fontSize), "12px", "Adjust font");
+  await expectLayout(t.p);
+});
+colCheck("Column", "the English text doesn't move when a notice comes, and Adjust takes the footer's first row for its note", async () => {
+  const t = await open("send=not-front");
+  const h0 = await enBoxH(t.p);
+  await ready(t, LONG_EN);
+  const h1 = await enBoxH(t.p);
+  eq(h1, h0, "text height after the English is ready");
+  await t.p.click("#send");
+  await waitState(t.p, "error");
+  await settle(t.p, 400);
+  eq(await enBoxH(t.p), h0, "text height with a notice");
+  const foot0 = await rect(t.p, ".f.en .foot");
+  await t.p.click("#es");
+  await t.p.keyboard.type("!");
+  eq(await state(t.p), "stale", "state");
+  eq((await rect(t.p, ".f.en .foot")).t, foot0.t, "the footer's y with another notice");
+  const t2 = await open();
+  await ready(t2, LONG_EN);
+  const f0 = await rect(t2.p, ".f.en .foot");
+  await t2.p.keyboard.press("Meta+k");
+  ok(await vis(t2.p, "#adjIn"), "the note field shows");
+  const f1 = await rect(t2.p, ".f.en .foot"), row = await rect(t2.p, ".adjust-row");
+  eq(f1.h, 28, "the footer with Adjust open is one row");
+  ok(row.b <= f1.t, "the note row sits above the footer");
+  ok(f1.t > f0.t, "the footer is lower, the note row sits above it");
+  ok((await enBoxH(t2.p)) >= 300, "the English text still has most of the module");
+  await expectLayout(t2.p);
+});
+colCheck("Column", "the Spanish footer is today's row: Normal / Formal, the mic, Translate; the Preview note takes a row of its own above it", async () => {
+  const t = await open();
+  const foot = await rect(t.p, ".f.es .foot"), mod = await rect(t.p, ".f.es"), note = await rect(t.p, "#preview");
+  ok(note, "the preview note shows in a browser");
+  ok(note.b <= (await rect(t.p, "#translate")).t, "the preview note is above the footer's row");
+  await asInApp(t.p);
+  const tone = await rect(t.p, "#tone"), mic = await rect(t.p, "#mic"), tr = await rect(t.p, "#translate"), f2 = await rect(t.p, ".f.es .foot");
+  eq(f2.h, 28, "the Spanish footer's height, as in the app");
+  eq(mod.b - f2.b, 8, "the footer's distance from the module's bottom");
+  ok(tone.r <= mic.l && mic.r <= tr.l, "the row runs Normal / Formal, mic, Translate");
+  eq(Math.round(mic.cy), Math.round(tr.cy), "the mic and Translate on one line");
+  eq(mic.w, 28, "mic width"); eq(tr.h, 28, "Translate height");
+  ok(foot.h > f2.h, "the note adds a row");
+});
+colCheck("Column", "'Sent to <chat> · time' sits in the middle of the English module, and the ⋯ under it still works", async () => {
+  const t = await open();
+  await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+  await ready(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sent");
+  await settle(t.p, 400);
+  const mod = await rect(t.p, ".f.en"), msg = await rect(t.p, "#doneMsg");
+  ok(Math.abs(msg.cx - mod.cx) <= 1 && Math.abs(msg.cy - mod.cy) <= 1, `the message isn't in the module's middle (${msg.cx},${msg.cy} against ${mod.cx},${mod.cy})`);
+  const inner = await t.p.evaluate(() => { const k = document.querySelector("#doneMsg .who") as HTMLElement; return { w: k.clientWidth, full: k.scrollWidth, t: k.textContent }; });
+  ok(inner.t!.startsWith("Sent to"), "the message says who");
+  await expectLayout(t.p);
+  await t.p.click("#more");
+  ok(await vis(t.p, "#menu"), "⋯ opens the menu while the message shows");
+});
+colCheck("Column", "'Left in Teams, not sent' sits in the middle too", async () => {
+  await setMode("leave");
+  const t = await open();
+  await ready(t);
+  await t.p.click("#send");
+  await waitState(t.p, "leave");
+  await settle(t.p, 400);
+  const mod = await rect(t.p, ".f.en"), msg = await rect(t.p, "#doneMsg");
+  ok(Math.abs(msg.cx - mod.cx) <= 1 && Math.abs(msg.cy - mod.cy) <= 1, "the message isn't in the module's middle");
+  await resetSettings();
+});
+colCheck("Column", "the ⋯ menu stacks its three groups in one column over the English module, above its footer, inside the window", async () => {
+  const t = await open();
+  await ready(t, LONG_EN);
+  await t.p.click("#more");
+  const m = await rect(t.p, "#menu"), mod = await rect(t.p, ".f.en"), foot = await rect(t.p, ".f.en .foot");
+  ok(m.l >= mod.l && m.r <= mod.r && m.t >= mod.t && m.b <= foot.t, `the menu isn't over the English module, above its footer (${JSON.stringify(m)})`);
+  const cols = await t.p.evaluate(() => [...document.querySelectorAll("#menu .col")].map((c) => { const r = c.getBoundingClientRect(); return [r.left, r.top, r.bottom]; }));
+  eq(cols.length, 3, "groups");
+  ok(cols.every((c, i) => c[0] === cols[0][0] && (i === 0 || c[1] >= cols[i - 1][2])), `the groups aren't stacked: ${JSON.stringify(cols)}`);
+  const heads = await t.p.locator("#menu .mh").evaluateAll((els: any[]) => els.map((e) => [e.textContent.trim(), getComputedStyle(e).display]));
+  eq(heads[0][0], "On ⌘⏎", "first group title"); eq(heads[1][0], "Model", "second group title");
+  eq(heads[2][1], "none", "the third group has no blank title row");
+  const dividers = await t.p.evaluate(() => [...document.querySelectorAll("#menu hr")].map((h) => { const r = h.getBoundingClientRect(); return [r.width, r.height]; }));
+  ok(dividers.length === 2 && dividers.every(([w, h]) => w > 100 && h === 1), `the dividers should run across: ${JSON.stringify(dividers)}`);
+  eq(await t.p.locator("#menu button").count(), 6, "items");
+  await expectLayout(t.p);
+  await t.p.click("#menu [data-mode=leave]");
+  await settle(t.p, 250);
+  eq(await t.p.locator("#menu [data-mode=leave]").getAttribute("aria-checked"), "true", "Put in Teams checked");
+  await t.p.keyboard.press("Escape");
+  ok(!(await vis(t.p, "#menu")), "Esc closes it");
+  await resetSettings();
+});
+colCheck("Column", "the menu stays inside a shorter column too (360 x 520)", async () => {
+  const t = await open();
+  await t.p.setViewportSize({ width: 360, height: 520 });
+  await ready(t, LONG_EN);
+  await t.p.click("#more");
+  await settle(t.p, 200);
+  const m = await rect(t.p, "#menu"), mod = await rect(t.p, ".f.en");
+  ok(m.t >= mod.t - 0.5 && m.b <= mod.b && m.b <= 520, `the menu leaves the window (${JSON.stringify(m)})`);
+  const reach = await t.p.evaluate(() => { const me = document.getElementById("menu")!; return { sh: me.scrollHeight, ch: me.clientHeight, oy: getComputedStyle(me).overflowY }; });
+  ok(reach.sh <= reach.ch + 1 || reach.oy === "auto", "a menu that doesn't fit scrolls");
+});
+colCheck("Column", "the dictation label takes the row above the Spanish footer, and the mic stays where it is", async () => {
+  const t = await open();
+  await asInApp(t.p);
+  const mic0 = await rect(t.p, "#mic");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Listening"), null, { timeout: 3000 });
+  const label = await rect(t.p, "#dictLabel"), mic1 = await rect(t.p, "#mic"), mod = await rect(t.p, ".f.es");
+  ok(label.b <= mic1.t, "the label is above the mic's row");
+  eq(mic1.t - mic0.t, 0, "the mic's y while listening (the label grows the footer upward)");
+  ok(label.l >= mod.l && label.r <= mod.r, "the label is inside the module");
+  await expectLayout(t.p);
+  for (const q of ["dict=prep", "dict=unavailable", "mic=denied"]) {
+    const t2 = await open(q);
+    await asInApp(t2.p);
+    if (q === "mic=denied") ok(await vis(t2.p, "#dictLabel .btn"), "Open Settings shows");
+    else { await t2.p.click("#mic"); await t2.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.length > 5, null, { timeout: 2000 }); }
+    await settle(t2.p, 250);
+    const l = await rect(t2.p, "#dictLabel"), m = await rect(t2.p, ".f.es");
+    ok(l && l.l >= m.l && l.r <= m.r, `the label ${q} sits inside the module`);
+    const full = await t2.p.evaluate(() => { const e = document.getElementById("dictLabel")!; return e.scrollWidth <= e.clientWidth + 1; });
+    ok(full, `the label ${q} isn't cut`);
+    await expectLayout(t2.p);
+  }
+});
+colCheck("Column", "first run: one veil over both modules, the sentence over its button, the fields hidden and locked", async () => {
+  const t = await open("access=0");
+  const c = await rect(t.p, ".cover"), span = await rect(t.p, ".cover span"), btn = await rect(t.p, "#accessBtn"), en = await rect(t.p, ".f.en"), es = await rect(t.p, ".f.es");
+  eq([c.l, c.t, c.r, c.b].join(","), [en.l, en.t, en.r, es.b].join(","), "the veil against the two modules");
+  ok(span.b <= btn.t, "the sentence is above the button");
+  eq(span.l, (await rect(t.p, "#es")).l, "the sentence at the message text's x");
+  ok(span.r <= c.r && btn.r <= c.r, "the sentence and button stay inside the veil");
+  eq(await t.p.locator("#fields").evaluate((e: any) => getComputedStyle(e).visibility), "hidden", "fields visibility");
+  await expectLayout(t.p);
+  const msgs0 = (await t.msgs()).length;
+  await t.p.click("#accessBtn");
+  eq((await opens(t, "accessibility")).length, 1, "the button asks the shell");
+  ok((await t.msgs()).length > msgs0, "a message went out");
+});
+colCheck("Column", "a send error beside a long chat name: the notice on the first row, the name giving way on the second", async () => {
+  const t = await open("send=not-front");
+  await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+  await ready(t, LONG_EN);
+  await t.p.click("#send");
+  await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 });
+  await settle(t.p);
+  const m = await t.p.evaluate(() => { const to = document.getElementById("to")!, w = document.querySelector("#status > span:not(.sdot)") as HTMLElement; return { to: to.clientWidth, toFull: to.scrollWidth, tag: w.clientWidth, tagFull: w.scrollWidth }; });
+  ok(m.tag + 0.01 >= m.tagFull, `the notice's words are cut: ${m.tag} of ${m.tagFull}px`);
+  ok(m.to >= 96, `the name is below 96px: ${m.to}`);
+  const tag = await rect(t.p, "#status"), send = await rect(t.p, "#send"), adj = await rect(t.p, "#adjustBtn");
+  ok(tag.b <= send.t, "the notice is above Send's row");
+  ok(adj.t < send.t, "Adjust on the first row");
+  await expectLayout(t.p);
+  return `name ${m.to} of ${m.toFull} px, notice ${m.tag} of ${m.tagFull} px`;
+});
+colCheck("Column", "the longest notices: whole beside Adjust, or shortened with their title; never over a neighbor", async () => {
+  const notes: string[] = [];
+  const t = await open("send=no-paste");
+  await ready(t, LONG_EN);
+  await t.p.click("#send");
+  await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 });
+  await settle(t.p);
+  const m = await t.p.evaluate(() => { const w = document.querySelector("#status > span:not(.sdot)") as HTMLElement; return { tag: w.clientWidth, tagFull: w.scrollWidth, title: document.getElementById("status")!.title }; });
+  if (m.tag + 0.01 < m.tagFull) { has(m.title, "Teams didn't take it", "the title holds the whole words"); notes.push(`no-paste notice ${m.tag} of ${m.tagFull} px`); }
+  await expectLayout(t.p);
+  const t2 = await open("send=draft");
+  await setTeams(t2.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: true });
+  await ready(t2, LONG_EN);
+  await t2.p.click("#send");
+  await waitState(t2.p, "draft", 3000);
+  await settle(t2.p);
+  eq((await actionLabels(t2.p)).join(","), "Add after draft,Cancel", "the draft's buttons");
+  await expectLayout(t2.p);
+  return notes.join("; ") || undefined;
+});
+colCheck("Column", "typing and translating in the column: the English comes in on top while the Spanish stays below", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.keyboard.type("Hola, necesito el reporte");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "ready");
+  const en = await rect(t.p, "#en"), es = await rect(t.p, "#es");
+  ok(en.b < es.t, "the English text is above the Spanish");
+  eq(await val(t.p, "es"), "Hola, necesito el reporte", "Spanish stays");
+  ok((await val(t.p, "en")).length > 10, "English came in");
+  await t.p.click("#en");
+  eq(await focused(t.p), "en", "the English can be focused and edited");
+});
+colCheck("Column", "a long message scrolls inside its module in both boxes; a short window keeps every control", async () => {
+  const t = await open();
+  await ready(t);
+  const many = Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of a made-up message about the budget.`).join("\n");
+  await t.p.fill("#en", many);
+  await t.p.fill("#es", many);
+  await settle(t.p);
+  const m = await t.p.evaluate(() => { const en = document.getElementById("en")!, es = document.getElementById("es")!; return { en: en.scrollHeight > en.clientHeight, es: es.scrollHeight > es.clientHeight, enH: en.clientHeight, esH: es.clientHeight }; });
+  ok(m.en && m.es, "both boxes scroll");
+  ok(m.enH >= 300 && m.esH >= 300, `the boxes are tall (${m.enH}, ${m.esH})`);
+  await expectLayout(t.p);
+  await t.p.setViewportSize({ width: 360, height: 420 });
+  await settle(t.p, 200);
+  await expectLayout(t.p);
+});
+
+// Frames of the column, 360 x 900, dark, scale 2 (kept in .local/page-check/ with the strip's, named v01 to v07).
+const colFrames: Frame[] = [
+  { file: "v01-idle", make: async () => {} },
+  { file: "v02-ready", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#es"); } },
+  { file: "v03-sent", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#send"); await waitState(t.p, "sent"); } },
+  { file: "v04-send-error-long-chat", query: "send=not-front", make: async (t) => {
+      await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+      await ready(t, LONG_EN);
+      await t.p.click("#send");
+      await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 4000 });
+  } },
+  { file: "v05-adjust-open", make: async (t) => { await ready(t, LONG_EN); await t.p.keyboard.press("Meta+k"); } },
+  { file: "v06-menu-open", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
+  { file: "v07-first-run", query: "access=0", make: async () => {} },
+];
+for (const f of colFrames) {
+  colCheck("Frames", `capture ${f.file}`, async () => {
+    const t = await open(f.query ?? "");
+    await f.make(t);
+    await t.p.mouse.move(W / 2, 0);
+    await settle(t.p, 500);
     await t.p.screenshot({ path: join(OUT, `${f.file}.png`) });
     const r = await layout(t.p);
     ok(!r.issues.length, r.issues.join("; "));
@@ -1325,22 +1844,31 @@ async function main() {
   await resetSettings();
   let failed = 0, passed = 0;
   const only = process.argv[2] ? new RegExp(process.argv[2], "i") : null;
-  for (const c of checks) {
-    if (only && !only.test(`${c.group} ${c.name}`)) continue;
+  // The strip's own checks, then the functional groups again in the column, then the column's own, the page's errors last.
+  type Run = Check & { label: string };
+  const runs: Run[] = [];
+  const column = (c: Check) => c.mode === "row" && COLUMN_GROUPS.has(c.group) && !ROW_ONLY.some((re) => re.test(c.name));
+  for (const c of checks) if (c.mode === "row" && c.group !== "Page") runs.push({ ...c, label: c.group });
+  for (const c of checks) if (column(c)) runs.push({ ...c, mode: "col", label: `${c.group} (column)` });
+  for (const c of checks) if (c.mode === "col") runs.push({ ...c, label: `${c.group} (column)` });
+  for (const c of checks) if (c.group === "Page") runs.push({ ...c, label: c.group });
+  for (const c of runs) {
+    if (only && !only.test(`${c.label} ${c.name}`)) continue;
+    ({ w: W, h: H } = c.mode === "col" ? COL : ROW);
     lastPage = null;
     let line = "", note: string | void;
     try {
       note = await Promise.race([c.fn(), new Promise<never>((_, rej) => setTimeout(() => rej(new Fail("timed out after 40 s")), 40000))]);
       passed++;
-      line = `PASS  ${c.group} · ${c.name}${note ? `  [${note}]` : ""}`;
+      line = `PASS  ${c.label} · ${c.name}${note ? `  [${note}]` : ""}`;
     } catch (e: any) {
       failed++;
       let shot = "";
       if (lastPage) {
-        shot = join(OUT, "failed", `${slug(c.group + "-" + c.name)}.png`);
+        shot = join(OUT, "failed", `${slug(c.label + "-" + c.name)}.png`);
         try { await lastPage.screenshot({ path: shot, timeout: 5000 }); } catch { shot = ""; }
       }
-      line = `FAIL  ${c.group} · ${c.name}\n      ${e instanceof Fail ? e.message : String(e?.message ?? e).split("\n")[0]}${shot ? `\n      capture: ${shot.replace(ROOT + "/", "")}` : ""}`;
+      line = `FAIL  ${c.label} · ${c.name}\n      ${e instanceof Fail ? e.message : String(e?.message ?? e).split("\n")[0]}${shot ? `\n      capture: ${shot.replace(ROOT + "/", "")}` : ""}`;
     }
     console.log(line);
     for (const x of contexts.splice(0)) { try { await x.close(); } catch {} }

@@ -1,7 +1,7 @@
 // The shared state the page sees, and the version that bumps on each change.
 export type Model = "haiku" | "sonnet";
 export type Mode = "send" | "leave";
-export type TranslatorError = "offline" | "limit" | "guide" | "failed";
+export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "failed";
 export type Status = "starting" | "ready" | "busy" | "error";
 
 export type Settings = { voiceGuide: string | null; linter: string | null; model: Model; mode: Mode };

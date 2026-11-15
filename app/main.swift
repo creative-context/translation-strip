@@ -1,6 +1,7 @@
-// Translation Strip: a strip docked in the gap right under the Teams window. The page
+// Translation Strip: a strip docked in the gap right under the Teams window, or a column beside
+// it when there's no room below (the Layout setting, Dock.swift). The page
 // (http://127.0.0.1:4810/, served by the app's own copy of the server) fills it; the shell
-// keeps it under Teams as Teams moves, tells the page which chat is open, puts the English
+// keeps it with Teams as Teams moves, tells the page which chat is open, puts the English
 // into that chat (Send.swift), dictates Spanish (Dictation.swift) and answers a global
 // shortcut (Hotkey.swift). The bridge is in docs/contract.md, "Page ↔ shell".
 
@@ -13,6 +14,8 @@ let appBundleID = "com.creativecontext.TranslationStrip"
 let port = 4810
 let pageURL = URL(string: "http://127.0.0.1:\(port)/")!
 let stateURL = URL(string: "http://127.0.0.1:\(port)/api/state")!
+let settingsURL = URL(string: "http://127.0.0.1:\(port)/api/settings")!
+let pageOrigin = "http://127.0.0.1:\(port)" // the Origin the server takes POSTs from
 let stripCornerRadius: CGFloat = 10 // the page's --radius-raised, which its .strip uses
 
 // The app folder, the same one the server uses: STRIP_DIR, else ~/.translation-strip.
@@ -33,17 +36,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var keeper: ServerKeeper!
     var pageReady = false // the page said ready; it has window.strip
 
-    // Teams: read on their own queue (the send shares it), docked from the main thread.
+    // Teams: read on their own queue (the send shares it), followed for the docking on another;
+    // the main thread only moves and orders the window.
     let teamsQueue = DispatchQueue(label: "translation-strip.teams", qos: .userInitiated)
+    let dockQueue = DispatchQueue(label: "translation-strip.dock", qos: .userInitiated)
     let reader = TeamsReader()
+    let follower = TeamsFollower() // used on dockQueue only
     var published: TeamsContext? // what the page was last told
     var reading = false
     var nextRead = Date.distantPast
     var sending = false
-    var teamsAX: AXUIElement? // Teams' app element, for its frame
-    var observer: AXObserver?
-    var observedPid: pid_t = 0
-    var watchFailed = false // the observer couldn't be made for this Teams: the 1 s check alone
+    var docking = false // a dock is being worked out on dockQueue
+    var dockAgain = false // and another was asked for meanwhile
+    var dockRaise = false
+    var dockAX = false
+    var dockShow = false
+    var firstPlace = true // the strip's first placement at launch also makes it active
+    var followedPid: pid_t = 0
+    var layoutMenu: NSMenu? // the app menu's Layout submenu
+
+    // The server answering on the port: whether it's this app's own, by pid.
+    var checkedServers: [pid_t: Bool] = [:]
 
     let dictation = Dictation()
     let shortcut = GlobalShortcut()
@@ -60,10 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         ShellLog.path = stripDir.appendingPathComponent("server.log").path
         ShellLog.rotate = true
         keeper = ServerKeeper(.init(port: port, version: version, versionEnv: "STRIP_VERSION", parentEnv: "STRIP_PARENT_PID",
-                                    bundleID: appBundleID, logStarts: true, ownWords: "this app's"))
+                                    portEnv: "STRIP_PORT", bundleID: appBundleID, logStarts: true, ownWords: "this app's"))
         keeper.launch()
         buildMenu()
         buildWindow()
+        reader.log = { ShellLog.write($0) }
+        follower.log = { ShellLog.write($0) }
+        follower.notify = { [weak self] name in
+            MainActor.assumeIsolated { self?.teamsWindowChanged(name) }
+        }
 
         dictation.log = { ShellLog.write($0) }
         dictation.onUpdate = { [weak self] state, text in
@@ -84,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { n in
             guard teamsNote(n) else { return }
             MainActor.assumeIsolated {
-                self.dock(raise: true)
+                self.dock(raise: true, ax: true)
                 self.readTeams(now: true)
             }
         }
@@ -93,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             ws.addObserver(forName: name, object: nil, queue: .main) { n in
                 guard teamsNote(n) else { return }
                 MainActor.assumeIsolated {
-                    self.dock()
+                    self.dock(ax: true)
                     self.readTeams(now: true)
                 }
             }
@@ -114,7 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         tick.tolerance = 0.2
 
         dock()
-        if window.isVisible {
+        if window.isVisible { // Teams isn't running: the strip is out already (with Teams, place() does this)
+            firstPlace = false
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
         }
@@ -180,6 +199,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var screenAreas: [ScreenArea] { NSScreen.screens.map { ScreenArea(frame: $0.frame, visible: $0.visibleFrame) } }
 
     // The last place the strip was docked, if it's still on a screen.
+    // The layout setting: automatic (the default), under Teams or beside it.
+    var layout: DockLayout {
+        get { defaults.string(forKey: "layout").flatMap(DockLayout.init(rawValue:)) ?? .automatic }
+        set { defaults.set(newValue.rawValue, forKey: "layout") }
+    }
+
     var savedFrame: NSRect? {
         guard let s = defaults.string(forKey: "stripFrame") else { return nil }
         let r = NSRectFromString(s)
@@ -193,71 +218,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     // MARK: docking
 
-    // Under Teams' main window, as wide as it. Out of sight while Teams' window isn't on
+    // Under Teams' main window, as wide as it, or a column beside it, as tall as it: the layout
+    // setting and the room around Teams decide (Dock.frame(for:)). Out of sight while Teams' window isn't on
     // screen; where it last was while Teams isn't running. `raise` orders it in front of
-    // other windows without activating the app.
-    func dock(raise: Bool = false) {
-        guard !NSApp.isHidden else { return }
-        guard let teams = Teams.running() else {
-            if observedPid != 0 { stopWatching() }
+    // other windows without activating the app; `ax` asks Accessibility which window is
+    // Teams' main one (otherwise the window list follows the one it was); `show` keeps the
+    // strip out even when Teams' window isn't on screen (the shortcut). Worked out on
+    // dockQueue; only the frame and the ordering change here, on the main thread.
+    func dock(raise: Bool = false, ax: Bool = false, show: Bool = false) {
+        dockRaise = dockRaise || raise
+        dockAX = dockAX || ax
+        dockShow = dockShow || show
+        guard !docking else { dockAgain = true; return }
+        guard !NSApp.isHidden else { dockRaise = false; dockAX = false; dockShow = false; return }
+        let raise = dockRaise, ax = dockAX, show = dockShow
+        dockRaise = false
+        dockAX = false
+        dockShow = false
+        let teams = Teams.running()
+        if teams == nil && followedPid != 0 {
+            followedPid = 0
+            let f = follower
+            dockQueue.async { f.reset() }
+        }
+        guard let teams else {
             if !window.isVisible { window.orderFrontRegardless() }
             return
         }
-        if observedPid != teams.processIdentifier || (observer == nil && !watchFailed && AXIsProcessTrusted()) { watch(teams) }
-        guard let w = Teams.window(of: teams, app: teamsAX), w.onScreen else {
-            if window.isVisible { window.orderOut(nil) }
+        followedPid = teams.processIdentifier
+        docking = true
+        let screens = screenAreas
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        let layout = self.layout
+        let f = follower
+        dockQueue.async {
+            let w = f.window(of: teams, ax: ax)
+            let frame = w.flatMap { $0.onScreen ? Dock.frame(for: $0.frame, layout: layout, screens: screens, mainHeight: mainHeight) : nil }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.place(frame, raise: raise, show: show)
+                    self.docking = false
+                    if self.dockAgain {
+                        self.dockAgain = false
+                        self.dock()
+                    }
+                }
+            }
+        }
+    }
+
+    // nil: Teams' window isn't on screen, so the strip steps out (unless `show`).
+    func place(_ f: NSRect?, raise: Bool, show: Bool) {
+        guard !NSApp.isHidden else { return }
+        let first = firstPlace
+        firstPlace = false
+        guard let f else {
+            if window.isVisible && !show { window.orderOut(nil) }
             return
         }
-        let f = Dock.frame(under: w.frame, screens: screenAreas, mainHeight: NSScreen.screens.first?.frame.height ?? 0)
         let moved = !NSEqualRects(window.frame, f)
-        if moved {
-            window.setFrame(f, display: true)
+        if moved { // one setFrame, origin and size together, so a change of shape doesn't flicker
+            window.setFrame(f, display: true, animate: false)
             defaults.set(NSStringFromRect(f), forKey: "stripFrame")
         }
         if raise || moved || !window.isVisible { window.orderFrontRegardless() }
+        if first {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
-    // An Accessibility observer on Teams: its windows moving, resizing, minimizing and coming back.
-    func watch(_ teams: NSRunningApplication) {
-        stopWatching()
-        observedPid = teams.processIdentifier
-        let app = AXUIElementCreateApplication(observedPid)
-        AXUIElementSetMessagingTimeout(app, 0.5)
-        teamsAX = app
-        guard AXIsProcessTrusted() else { return }
-        let callback: AXObserverCallback = { _, _, notification, refcon in
-            guard let refcon else { return }
-            let me = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
-            let name = notification as String
-            MainActor.assumeIsolated { me.teamsWindowChanged(name) }
-        }
-        var obs: AXObserver?
-        guard AXObserverCreate(observedPid, callback, &obs) == .success, let obs else {
-            ShellLog.write("couldn't watch Teams' window; checking once a second")
-            watchFailed = true
-            return
-        }
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        for n in [kAXWindowMovedNotification, kAXWindowResizedNotification, kAXWindowMiniaturizedNotification,
-                  kAXWindowDeminiaturizedNotification, kAXApplicationHiddenNotification, kAXApplicationShownNotification,
-                  kAXMainWindowChangedNotification] {
-            AXObserverAddNotification(obs, app, n as CFString, refcon)
-        }
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
-        observer = obs
-    }
-
-    func stopWatching() {
-        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode) }
-        observer = nil
-        observedPid = 0
-        watchFailed = false
-        teamsAX = nil
-    }
-
+    // An Accessibility notification from Teams (TeamsFollower's observer), on the main thread.
     func teamsWindowChanged(_ name: String) {
         let away = name == kAXWindowMiniaturizedNotification || name == kAXApplicationHiddenNotification
-        dock(raise: !away)
+        dock(raise: !away, ax: true)
         if !away { readTeams(now: true) }
     }
 
@@ -343,20 +377,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let m = message.body as? [String: Any], let type = m["type"] as? String else { return }
+        let mainFrame = message.frameInfo.isMainFrame
+        let origin = message.frameInfo.securityOrigin
+        let localOrigin = origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == port
+        guard mainFrame && localOrigin else {
+            ShellLog.write("ignored a message that isn't from the local page's main frame")
+            if type == "send" { call("sent", ["ok": false, "reason": "not-own-server"]) }
+            return
+        }
         switch type {
         case "ready":
             pageReady = true
             published = nil
             sendAccess(force: true)
             readTeams(now: true)
+            checkServer { own in
+                if !own { ShellLog.write("the server on port \(port) isn't this app's own; nothing will be sent") }
+            }
         case "send":
-            send(m)
+            checkServer { own in
+                if let reason = OwnServer.refusal(mainFrame: mainFrame, localOrigin: localOrigin, own: own) {
+                    ShellLog.write("send: not sent (\(reason))")
+                    return self.call("sent", ["ok": false, "reason": reason])
+                }
+                self.send(m)
+            }
         case "dictation":
             if (m["action"] as? String) == "start" { dictation.start() } else { dictation.stop() }
         case "open":
             open(m["what"] as? String ?? "")
         default:
             ShellLog.write("the page sent an unknown message: \(type.prefix(20))")
+        }
+    }
+
+    // Whether the server on the port is this app's own: the process listening on it, asked of the
+    // system (lsof), not of the server, so a slow or hostile server can't answer for itself. It
+    // must be the one the keeper started or, checked with ServerKeeper.isAppServer, a server
+    // inside an app with this bundle ID. Asked when the page says ready and before each send; the
+    // answer for a pid is kept.
+    func checkServer(_ done: @escaping @MainActor (Bool) -> Void) {
+        let keeperPid = keeper.process?.processIdentifier
+        let port = port
+        let known = checkedServers
+        DispatchQueue.global(qos: .userInitiated).async {
+            let pid = ServerKeeper.portHolder(port)
+            let own = pid.flatMap { known[$0] } ?? OwnServer.isOwn(pid: pid, keeperPid: keeperPid) { ServerKeeper.isAppServer($0, bundleID: appBundleID) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if let pid { self.checkedServers[pid] = own }
+                    else { ShellLog.write("couldn't tell which process listens on port \(port)") }
+                    done(own)
+                }
+            }
         }
     }
 
@@ -433,8 +506,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.accessTimer?.invalidate()
                 self.accessTimer = nil
                 ShellLog.write("Accessibility granted")
-                self.stopWatching() // watch again, now with the observer
-                self.dock()
+                let f = self.follower
+                self.dockQueue.async { f.reset() } // follow again, now with the observer
+                self.dock(ax: true)
                 self.sendAccess()
                 self.readTeams(now: true)
             }
@@ -444,36 +518,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     // MARK: the shortcut
 
     // Teams forward first if its window is out of sight, then the strip under it, active,
-    // with the Spanish field focused.
+    // with the Spanish field focused. Teams is looked at on dockQueue.
     func shortcutPressed() {
-        if let teams = Teams.running(), !(Teams.window(of: teams, app: teamsAX)?.onScreen ?? false) {
-            bringTeamsForward(teams)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.showStrip() }
-        } else {
-            showStrip()
-        }
-    }
-
-    func bringTeamsForward(_ teams: NSRunningApplication) {
-        teams.unhide()
-        if AXIsProcessTrusted() {
-            let app = teamsAX ?? AXUIElementCreateApplication(teams.processIdentifier)
-            // A minimized main window comes back: the largest one.
-            let windows = (AX.attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
-            let minimized = windows.compactMap { w -> (AXUIElement, CGFloat)? in
-                let v = AX.attrs(w, [kAXSubroleAttribute, kAXMinimizedAttribute, kAXSizeAttribute])
-                guard (v[0] as? String) == kAXStandardWindowSubrole, (v[1] as? Bool) == true, let s = AX.size(v[2]) else { return nil }
-                return (w, s.width * s.height)
-            }.max { $0.1 < $1.1 }
-            if let w = minimized?.0, Teams.mainWindow(app) == nil {
-                AXUIElementSetAttributeValue(w, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        guard let teams = Teams.running() else { return showStrip() }
+        let f = follower
+        dockQueue.async {
+            let away = !(f.window(of: teams, ax: true)?.onScreen ?? false)
+            if away { f.unminimize() } // a minimized main window comes back
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard away else { return self.showStrip() }
+                    teams.unhide()
+                    teams.activate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.showStrip() }
+                }
             }
         }
-        teams.activate()
     }
 
     func showStrip() {
-        dock(raise: true)
+        dock(raise: true, ax: true, show: true)
         if !window.isVisible { window.orderFrontRegardless() }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
@@ -504,38 +568,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { self.writeSetting(key, url.path) }
+            MainActor.assumeIsolated { self.postSetting(key, url.path) }
         }
     }
 
-    var settingsFile: URL { stripDir.appendingPathComponent("settings.json") }
-
+    // The app folder's settings.json, read only for the chooser's starting folder: the server
+    // is its one writer.
     func readSettings() -> [String: Any] {
-        guard let data = try? Data(contentsOf: settingsFile),
+        let file = stripDir.appendingPathComponent("settings.json")
+        guard let data = try? Data(contentsOf: file),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         return obj
     }
 
-    // One key changed, every other key kept. The server reads the file again on its own.
-    func writeSetting(_ key: String, _ value: String) {
-        var raw = readSettings()
-        raw[key] = value
-        do {
-            try FileManager.default.createDirectory(at: stripDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            var data = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-            data.append(0x0A)
-            let tmp = stripDir.appendingPathComponent("settings.json.\(getpid()).tmp")
-            try data.write(to: tmp)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
-            guard rename(tmp.path, settingsFile.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
-            ShellLog.write("settings: \(key) chosen")
-        } catch {
-            ShellLog.write("settings: couldn't save \(key) (\(error.localizedDescription))")
-            let alert = NSAlert()
-            alert.messageText = "Couldn't save the setting"
-            alert.informativeText = "The settings file in the app folder couldn't be written."
-            alert.runModal()
+    // The chosen path goes to the server (POST /api/settings), which checks it, writes the
+    // file and restarts the translator. Only to this app's own server.
+    func postSetting(_ key: String, _ path: String) {
+        checkServer { own in
+            guard own else {
+                ShellLog.write("settings: \(key) not saved (the server isn't this app's own)")
+                return self.settingFailed("The app's server isn't the one answering. Quit the app and open it again.")
+            }
+            var req = URLRequest(url: settingsURL)
+            req.httpMethod = "POST"
+            req.timeoutInterval = 5
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue(pageOrigin, forHTTPHeaderField: "Origin")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: [key: path])
+            URLSession.shared.dataTask(with: req) { data, response, _ in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let error = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        if status == 200 { return ShellLog.write("settings: \(key) chosen") }
+                        ShellLog.write("settings: \(key) not saved (\(status == 0 ? "no answer" : "\(status) \(error ?? "")"))")
+                        self.settingFailed(error == "path" ? "That file can't be used. Choose another one."
+                                                           : "The app's server didn't save it. Try again in a moment.")
+                    }
+                }
+            }.resume()
         }
+    }
+
+    func settingFailed(_ why: String) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't save the setting"
+        alert.informativeText = why
+        alert.runModal()
     }
 
     // MARK: menus
@@ -557,6 +636,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             .separator(),
             item("Choose Voice Guide…", #selector(chooseGuide), ""),
             item("Choose Voice Linter…", #selector(chooseLinter), ""),
+            .separator(),
+            layoutItem(),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             .separator(),
@@ -588,6 +669,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     @objc func showStripFromMenu() { shortcutPressed() }
+
+    // "Layout" in the app menu: Automatic, Under Teams and Beside Teams as radio items, a check
+    // on the current one.
+    func layoutItem() -> NSMenuItem {
+        let menu = NSMenu(title: "Layout")
+        let titles: [DockLayout: String] = [.automatic: "Automatic", .under: "Under Teams", .beside: "Beside Teams"]
+        for l in DockLayout.allCases {
+            let i = item(titles[l] ?? l.rawValue, #selector(chooseLayout(_:)), "")
+            i.representedObject = l.rawValue
+            menu.addItem(i)
+        }
+        let top = NSMenuItem(title: "Layout", action: nil, keyEquivalent: "")
+        top.submenu = menu
+        layoutMenu = menu
+        updateLayoutMenu()
+        return top
+    }
+
+    func updateLayoutMenu() {
+        let current = layout.rawValue
+        for i in layoutMenu?.items ?? [] { i.state = (i.representedObject as? String) == current ? .on : .off }
+    }
+
+    @objc func chooseLayout(_ sender: NSMenuItem) {
+        guard let l = (sender.representedObject as? String).flatMap(DockLayout.init(rawValue:)), l != layout else { return }
+        layout = l
+        updateLayoutMenu()
+        ShellLog.write("layout: \(l.rawValue)")
+        dock()
+    }
 
     // MARK: requirements
 

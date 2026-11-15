@@ -7,17 +7,19 @@ This is **Translation Strip** (working name): a Mac app that sits in the gap und
 - `src/server-kit.ts`, `app/ShellKit.swift` and `kit.json`: the server's life and the shell's shared parts, vendored from the family's `mac-app-kit` (`bun ../mac-app-kit/tools/vendor.ts .`). Never edit them.
 - `public/design-*.css`, `public/design-icons.js` and `public/design.json`: the family's design system, vendored from `mac-app-design` (`bun ../mac-app-design/tools/vendor.ts public`). Never edit them. A new token, component or icon goes into `mac-app-design` first.
 - `server.ts` and `src/`: the Bun server. It keeps the hidden translator session alive, answers the page's requests and runs the voice linter. `docs/contract.md` is the contract between the server, the page and the native shell.
-- `public/index.html`: the strip's page, its script and its own layout.
+- `public/index.html`: the strip's page: its layout, the DOM, the events and the bridge. `public/strip-state.js`: the page's state, its transitions and what it shows, as plain functions with no DOM.
 - `app/`: the native shell (Swift): the window docked under Teams, sending to Teams through Accessibility, dictation, the global shortcut.
-- `test/`: tests with a stand-in `claude` command and a stand-in linter, in temp folders.
+- `test/`: tests with a stand-in `claude` command and a stand-in linter, in temp folders. `server.test.ts` also runs servers with a short timeout and their own clock (`STRIP_TIMEOUT_MS`, `STRIP_DAY_FILE`, `STRIP_CLOCK_FILE`, which only tests set). `state.test.ts` tests the page's state in `public/strip-state.js` with tables of cases. `swift-check.swift` checks `app/Dock.swift` and `app/Teams.swift`.
 
 ## Commands
 
 ```bash
-bun test                   # port 4811
+bun test                   # the server and the vendored-files check, port 4811
+bun test test/vendored.test.ts  # the kit's and the design system's files weren't edited
+sh test/swift-check.sh     # the docking math and the Teams helpers, with made-up frames (needs swiftc)
 bun test/page-mock.ts      # port 4813, the page with canned replies and a stand-in Teams
 bun test/page-check.ts     # every control of the page in WebKit, with the page mock running
-bun server.ts              # port 4810, the app's own
+bun server.ts              # port 4812 (the app runs its own on 4810)
 sh app/build.sh --install  # build, copy to ~/Applications, reopen
 ```
 

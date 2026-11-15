@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+- A column beside Teams for when there's no room under it: as tall as Teams' window, on its right edge or else its left, with the English on top and your Spanish below. Layout in the app menu picks Automatic, Under Teams or Beside Teams.
+- A translation out of date, or one written for another chat, now shows in red like an error, since Send stays off until you translate again.
+- If Teams takes the paste late, your clipboard can no longer end up in its message box: the app keeps the English on the clipboard a few seconds more and puts yours back after.
+- The app checks which process really listens on its port before it sends, instead of asking the server, so a slow server no longer reads as someone else's.
+- Shorter notices: "Teams didn't take it. Not sent" and "Not the app's own page. Not sent".
+
+## 0.4.0
+
+- Every message goes to a fresh Claude Code session, so none of them sees what you wrote before, to whom, or what they wrote you. The next session is always started ahead, and replies stay as fast as before.
+- If you switch chats after translating, the strip says "Written for <name>" and Send stays off until you translate again or go back to that chat.
+- The clipboard comes back only once Teams has taken the paste, and only if you didn't copy something else meanwhile. If Teams never takes it, the strip says "Teams didn't take the text. Nothing sent".
+- When Claude Code needs you, the strip says so: "Sign in to Claude Code" or "Claude Code needs an update". The translator stops after 5 restarts in 10 minutes instead of retrying forever, and starts fresh after the Mac sleeps.
+- The local server takes requests only from the app's own page, and the app sends only for its own server. Run by hand, the server uses port 4812.
+- The app reads Teams in the background, so the strip doesn't freeze when Teams does, and if Teams changes its layout the strip says "Can't find Teams' message box".
+- The strip docks under Teams' main window, not under a chat popped out of it, and only a chat view counts as a chat.
+- The voice guide and linter paths go through the server, the only one that writes the settings file.
+- Tests: the page's state has its own tests, the vendored kit and design files are checked against their manifests, and a Swift check covers the docking and reading Teams.
+
 ## 0.3.0
 
 - ⌘⏎ sends only to the chat shown next to Send. If Teams switched to another chat, nothing is pasted and the strip says "Chat changed. Not sent".

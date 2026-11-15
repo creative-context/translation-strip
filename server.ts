@@ -1,8 +1,9 @@
 // Translation Strip's local server: keeps the hidden translator session alive, answers the page
 // and runs the voice linter. Its life (the host check, exit 3, stopping with the app, the state
 // stream) comes from the family's kit. It starts only when run.
+import { isAbsolute } from "node:path";
 import pkg from "./package.json";
-import { PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
+import { clock, PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
 import { lint } from "./src/lint";
 import type { Context, Register, Request as Ask } from "./src/protocol";
 import { createServer } from "./src/server-kit";
@@ -14,7 +15,7 @@ const VERSION = process.env.STRIP_VERSION || pkg.version; // the app says its ow
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
-export const translator = new Translator(() => state.settings);
+export const translator = new Translator(() => state.settings, { now: clock });
 
 let stamp = 0;
 // Reads settings.json into the state. Returns what changed that the translator cares about.
@@ -29,6 +30,26 @@ function readSettings() {
     bump();
   }
   return { model: before.model !== s.model, guide: before.voiceGuide !== s.voiceGuide };
+}
+
+// A POST comes from the app's own page or not at all: JSON (so a browser asks first, and the server
+// never says yes to another site), and an Origin, when there is one, of this server's own address.
+const OWN_ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
+export function postAllowed(req: Request) {
+  const type = (req.headers.get("content-type") ?? "").toLowerCase();
+  if (!/^application\/json\s*(;|$)/.test(type)) return false;
+  const origin = req.headers.get("origin");
+  return origin === null || OWN_ORIGINS.has(origin);
+}
+
+// A path setting: an absolute path to a file that's there, or "" to clear it. undefined: not given.
+// null: not valid.
+function pathSetting(v: unknown): string | undefined | null {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string") return null;
+  if (v === "") return "";
+  if (v.length > 4096 || v !== v.trim() || v.includes("\0") || !isAbsolute(v) || !fileThere(v)) return null;
+  return v;
 }
 
 const str = (v: unknown, max = 8000) => (typeof v === "string" ? v.slice(0, max) : "");
@@ -65,8 +86,9 @@ async function run(r: Ask) {
 }
 
 async function routes(req: Request, url: URL): Promise<Response | undefined> {
-  if (!url.pathname.startsWith("/api/")) return undefined;
   const post = req.method === "POST";
+  if (post && !postAllowed(req)) return json({ error: "forbidden" }, 403);
+  if (!url.pathname.startsWith("/api/")) return undefined;
 
   if (url.pathname === "/api/translate" && post) {
     const b = await body(req);
@@ -86,12 +108,18 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
 
   if (url.pathname === "/api/settings" && post) {
     const b = await body(req);
-    const model = b?.model as Model | undefined;
-    const mode = b?.mode as Mode | undefined;
+    if (!b || typeof b !== "object" || Array.isArray(b)) return json({ error: "settings" }, 400);
+    const model = b.model as Model | undefined;
+    const mode = b.mode as Mode | undefined;
     if ((model !== undefined && !MODELS.includes(model)) || (mode !== undefined && !MODES.includes(mode))) return json({ error: "settings" }, 400);
-    saveSettings({ model, mode });
+    const voiceGuide = pathSetting(b.voiceGuide);
+    const linter = pathSetting(b.linter);
+    if (voiceGuide === null || linter === null) return json({ error: "path" }, 400);
+    // The only writer of settings.json: the page's choices and the paths the app's menu sends.
+    saveSettings({ model, mode, voiceGuide, linter });
     const changed = readSettings();
-    if (changed.model) translator.restartWhenIdle("model changed");
+    if (changed.model || changed.guide) translator.restartWhenIdle(changed.model ? "model changed" : "guide setting changed");
+    else translator.refresh();
     return json({ settings: { model: state.settings.model, mode: state.settings.mode } });
   }
 
@@ -121,7 +149,7 @@ export const server = createServer({
   },
   stop: () => translator.kill(),
   ticks: [
-    // settings.json edited outside the server (the app's menu), the guide file, a new day.
+    // settings.json edited by hand, the guide file, a new day, a Mac that slept.
     [2, "settings", () => {
       if (settingsStamp() === stamp) return translator.tick();
       const changed = readSettings();

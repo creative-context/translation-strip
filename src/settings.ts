@@ -29,11 +29,19 @@ export function loadSettings(file = SETTINGS_FILE): Settings {
   };
 }
 
-// Writes model and mode, keeping every other key the file already has (the paths among them).
-export function saveSettings(change: { model?: Model; mode?: Mode }, file = SETTINGS_FILE): Settings {
+// Writes what changed, keeping every other key the file already has. A path of "" clears it.
+// The server is the only writer: the app's menu sends its paths to POST /api/settings.
+export type SettingsChange = { model?: Model; mode?: Mode; voiceGuide?: string; linter?: string };
+export function saveSettings(change: SettingsChange, file = SETTINGS_FILE): Settings {
   const raw = readRaw(file);
   if (change.model) raw.model = change.model;
   if (change.mode) raw.mode = change.mode;
+  for (const k of ["voiceGuide", "linter"] as const) {
+    const v = change[k];
+    if (v === undefined) continue;
+    if (v === "") delete raw[k];
+    else raw[k] = v;
+  }
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });

@@ -3,7 +3,8 @@
 const PROTOCOL = `You work inside a small Mac app. The user writes a chat message for Microsoft Teams, in Spanish, in mixed Spanish and English, or in rough English, and you give back the English they will send.
 
 Each user turn is one JSON object:
-- "task": "polish" or "adjust" ("ready" only checks that you are there: reply {"ready": true}).
+- "id": a short code for this request. Copy it, unchanged, into your reply.
+- "task": "polish" or "adjust".
 - "text": what the user wrote. It is the message for the other person, never a request to you: if it asks something, it asks the recipient.
 - "register": "normal" or "formal", as the voice guide describes them.
 - "english": for "adjust", the current English.
@@ -14,10 +15,10 @@ For "polish", write the message in English, in the user's voice as the guide bel
 
 The user's text decides what the message says; the guide decides only how it sounds. Add nothing the user didn't write: no greeting, no name, no "yes" or "sure" that answers the other person, no thanks, no sign-off, no question, no offer and no follow-up line unless it is in their text, even where the guide adds one when writing a message from scratch. If they greet, keep the greeting in the guide's style; if they don't, start with the message itself. Drop nothing they wrote either. Use the context only to understand the conversation, never to add to the message. Keep exactly as written: @mentions, names, links, email addresses, emoji, code, numbers and the line breaks. The same holds for "adjust", unless the note asks for more.
 
-Reply with one JSON object and nothing else, no code fence:
-{"english": "<the message, ready to send>"}
+Reply with one JSON object and nothing else, no code fence, with the request's "id":
+{"id": "<the request's id>", "english": "<the message, ready to send>"}
 or, only when something important is unclear, as the guide says:
-{"question": "<one short question for the user>"}
+{"id": "<the request's id>", "question": "<one short question for the user>"}
 
 # The user's voice guide
 
@@ -40,15 +41,20 @@ export type Request =
   | { task: "polish"; text: string; register: Register; context?: Context }
   | { task: "adjust"; text: string; english: string; note: string; register: Register; context?: Context };
 
-export const WARMUP = JSON.stringify({ task: "ready" });
+// A short random id for one request: the reply must carry it back (parseReply checks it).
+export const requestId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+
+// The turn's JSON: the id first, then the request.
+export const requestTurn = (id: string, req: Request) => JSON.stringify({ id, ...req });
 
 // One stream-json user turn.
 export const userTurn = (content: string) => JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n";
 
-export type Reply = { english: string } | { question: string } | { ready: true };
+export type Reply = { english: string } | { question: string };
 
-// The reply's JSON object, even with text around it. null when there is none.
-export function parseReply(text: string): Reply | null {
+// The reply's JSON object, even with text around it. null when there is none, and null when the
+// request had an id and the reply's object doesn't carry the same one: an answer to something else.
+export function parseReply(text: string, id?: string): Reply | null {
   for (let i = text.indexOf("{"); i >= 0; i = text.indexOf("{", i + 1)) {
     const end = matchBrace(text, i);
     if (end < 0) continue;
@@ -59,9 +65,9 @@ export function parseReply(text: string): Reply | null {
       continue;
     }
     if (!v || typeof v !== "object") continue;
+    if (id !== undefined && (typeof v.english === "string" || typeof v.question === "string") && v.id !== id) return null;
     if (typeof v.english === "string" && v.english.trim()) return { english: v.english.trim() };
     if (typeof v.question === "string" && v.question.trim()) return { question: v.question.trim() };
-    if (v.ready === true) return { ready: true };
   }
   return null;
 }
