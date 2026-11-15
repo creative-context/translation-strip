@@ -1,7 +1,7 @@
 <h1 align="center">Translation Strip</h1>
 
 <p align="center">
-  A Mac app that sits in the gap under your Teams window:<br>
+  A companion for your Teams:<br>
   write in Spanish, get English in your own voice, and send it with ⌘⏎.
 </p>
 
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.7.1-6FA6E8?labelColor=1A1D21" alt="Version 0.7.1">
+  <img src="https://img.shields.io/badge/version-0.7.2-6FA6E8?labelColor=1A1D21" alt="Version 0.7.2">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="The strip with made-up text: on the left, a Spanish message with Normal and Formal, the mic and Translate; on the right, its English, ready to go to Priya Raman, with Adjust, Send and the settings gear" width="100%">
+  <img src="docs/demo.gif" alt="The strip at work under a simplified chat window, with made-up text: a Spanish message is typed, Return turns it into English, Command-Return sends it, and it shows in the chat while the strip says Sent to Priya Raman" width="100%">
 </p>
 
 ## Overview
@@ -56,10 +56,41 @@ Write the message the way it comes out: in Spanish, mixing Spanish and English, 
    ```bash
    sh app/build.sh --install
    ```
-2. From the app menu, use Choose Voice Guide… to pick your guide, a Markdown file that describes how you write. Choose Voice Linter… is optional: the app runs it as `bun <linter> <file> --todo` on each reply.
+2. From the app menu, use Choose Voice Guide… to pick your guide, a Markdown file that describes how you write ([how to write one](#write-your-voice-guide)). Choose Voice Linter… is optional ([what it does](#a-voice-linter-optional)).
 3. Allow Accessibility when the strip asks. The app needs it to put the message in Teams and to see which chat is open.
 
 macOS ties the Accessibility permission to the app's signature. If your keychain has a code-signing identity named "Translation Strip Local Signing", `build.sh` signs with it and the permission stays after a rebuild. Without one, `build.sh` signs ad hoc and you allow each new build again.
+
+### Write your voice guide
+
+The guide is a Markdown file that tells the hidden session how you sound in English. It shapes how the English sounds, never what it says: the strip adds nothing you didn't write, even where your guide describes greetings or sign-offs for emails. The app only reads the file, and a new session picks up your changes on its own.
+
+1. Create a Markdown file anywhere on your Mac, for example `~/Documents/my-voice.md`.
+2. Say in a sentence or two how you sound. For example: "Warm and to the point. Plain words, short paragraphs, the occasional emoji."
+3. Describe your two registers, since the strip has Normal and Formal: how each one sounds and when you use it.
+4. List what you never write: words, phrases and punctuation, for example "per my last email", "circle back" or a row of exclamation marks. Before it answers, the strip rereads its English against this list, in Formal too.
+5. Add a few examples of what you write and what should come out:
+
+   | You write | It comes out |
+   |---|---|
+   | ¿Me pasas el reporte cuando puedas? | Could you send me the report when you get a chance? |
+   | Perdón, no llego a la de las 3, ¿la movemos? | Sorry, I can't make the 3 o'clock. Can we move it? |
+
+6. Note the names and terms that stay as they are: your products, acronyms and people's names.
+7. From the app menu, use Choose Voice Guide… and pick the file.
+
+A quick way to start: give Claude a handful of messages you've sent in English and ask it to draft a guide with these parts. Then read it and fix whatever doesn't sound like you.
+
+### A voice linter (optional)
+
+A linter checks each reply against your guide's rules with plain patterns, to catch what slips through. The app runs it as `bun <linter> <file> --todo`, where `<file>` holds the English, and reads one finding per line:
+
+```
+<file>:<line> error [<id>] <message>
+<file>:<line> warning [<id>] <message>
+```
+
+It exits with 0 when it found no errors and 1 when it did. When it finds an error, the app asks the translator for one fix before you see the English, and keeps the fix only if it's better. A warning shows above the English. Pick it with Choose Voice Linter… in the app menu.
 
 ## Use it
 
@@ -142,7 +173,7 @@ sh app/build.sh            # build into build/
 sh app/build.sh --install  # build, copy to ~/Applications and open it
 ```
 
-`bun docs/screenshot.ts` redraws `docs/screenshot.png` from the page mock, with made-up text.
+`bun docs/demo-gif.ts` records `docs/demo.gif` from the page mock, with made-up text (it needs Playwright and ffmpeg).
 
 The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data.
 

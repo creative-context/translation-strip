@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2
+
+- The README opens with an animation of the strip at work under a simplified chat window: a message typed in Spanish, translated with ⏎ and sent with ⌘⏎. It says what the app is in one line, a companion for your Teams.
+- The README has the steps to write your voice guide, with made-up examples, and what a voice linter has to print.
+
 ## 0.7.1
 
 - The settings menu has no empty row on top: what ⌘⏎ does is a row of buttons too (Send, Put in Teams), beside Model and Position, each with its label on the left. The menu is narrower and its commands sit level with the first row.
