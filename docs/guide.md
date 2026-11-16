@@ -79,6 +79,8 @@ Example: with Auto on and a last message from Priya Raman in Português, a reply
 
 The app brings Teams forward, pastes the reply into the message box, checks that the box holds exactly that text and then presses Return. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. A quote you're replying to isn't a draft: the message goes under it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
 
+To send something as it is, with no translation, type it in the reply box while the strip is empty: it goes to the chat open in Teams, as you wrote it.
+
 ## Write your voice guide
 
 The guide is a Markdown file that tells the hidden session how you sound. One guide serves every language. It shapes how the reply sounds, never what it says: the strip adds nothing you didn't write, even where your guide describes greetings or sign-offs for emails. A rule in the guide about one language applies only to replies in that language, so say which language a rule is for (for example "In Português, never …"); a rule that names none applies to all of them. What your guide can't cover for one language goes in that language's [notes](#languages) in Settings. The app only reads the file, and a new session picks up your changes on its own.

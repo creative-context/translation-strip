@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- You can type the message yourself in the reply box while the strip is empty: it goes as you wrote it, with no translation, to the chat open in Teams.
+- The README's animation has two more chats: a message in a mix of Spanish and English, and one in Swahili, both into English.
+
 ## 0.8.2
 
 - Replying to a quoted message works: Teams puts the quote inside its message box, and the strip took it for a draft and asked to add after it. It now reads only what you wrote after the quote, and sends the reply under it.

@@ -561,7 +561,8 @@ function paint() {
   $("chat").textContent = (t && t.chat) || "";
   $("to").title = (t && t.chat) || "";
   esIn.readOnly = st.phase === "sending";
-  enOut.readOnly = st.phase !== "ready";
+  // Ready, or an empty strip, where what you type in it is the message (SS.editedEnglish).
+  enOut.readOnly = !(st.phase === "ready" || (st.phase === "idle" && st.dict !== "on"));
 
   const send = $("send");
   send.disabled = !SS.canSend(st, f, false);
@@ -750,7 +751,7 @@ function toggleDictation() { if (st.dict === "on") stopDictation(); else startDi
 // The Spanish changed: an answer for the old text no longer counts; a translation of it is out of date.
 function onSpanishInput() { commit(SS.typed(st, fields())); paint(); }
 esIn.addEventListener("input", onSpanishInput);
-enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value)); paint(); });
+enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value, fields(), settings().target)); paint(); });
 
 function clearAll() {
   const r = SS.clearAll(st);

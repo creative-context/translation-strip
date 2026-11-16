@@ -2,7 +2,8 @@
 // on top (a generic chat, not any real app's look) and the strip is docked under it, as wide, as
 // in the app. The story, with Auto on: in a chat in English you write in Spanish, ⏎ translates, ⌘⏎
 // sends, and the message shows in the chat; then a chat in Portuguese, where you write in English and
-// the same steps give Portuguese. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
+// the same steps give Portuguese; then two more chats in English, one written in a mix of Spanish and
+// English and one in Swahili. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
 // window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
 // theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
 // Starts its own page mock (port 4816) and answers the translations itself, so each one fits what
@@ -19,7 +20,8 @@ const PW = process.env.PLAYWRIGHT_DIR ?? resolve(ROOT, "..", "mac-app-design", "
 const { webkit } = await import(PW);
 
 const W = 880, CHAT_H = 300, STRIP_H = 145;
-// The two chats, each with what you write and what comes out. Made up.
+// The chats, each with what you write and what comes out. Made up; the replies are the real
+// translator's, with the example voice guide and Auto on.
 const CHATS = [
   { id: "en", name: "Priya Raman", initials: "PR", color: "#3d5a80", language: "English",
     msgs: ["Morning! I'm back from the offsite.", "Anything you need from me this week?"],
@@ -29,6 +31,14 @@ const CHATS = [
     msgs: ["Oi! Tudo bem por aí?", "Você consegue me mandar a apresentação até amanhã?"],
     write: "Sure, I will send it over today before 6 pm.",
     out: "Claro, vou mandar hoje antes das 6 da tarde." },
+  { id: "mix", name: "Hannah Brooks", initials: "HB", color: "#6b4f8a", language: "English",
+    msgs: ["How's the release looking?", "Can we still ship it today?"],
+    write: "sí, ya hice el fix del login, nada más falta que pase el CI y hacemos el deploy en la tarde",
+    out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon." },
+  { id: "sw", name: "Omar Haddad", initials: "OH", color: "#8a6a3d", language: "English",
+    msgs: ["Thanks for the numbers yesterday.", "When do you think the report will be ready?"],
+    write: "Habari! Nimemaliza ripoti, nitaituma kesho asubuhi.",
+    out: "Hi! I've finished the report, I'll send it tomorrow morning." },
 ];
 
 // The scene: the chat window, the strip in a frame under it, and the key hint.
@@ -170,11 +180,13 @@ await openChat(CHATS[0]);
 await frame.waitForTimeout(300);
 await snap(1200); // the chat, and the strip waiting
 await tell(CHATS[0]);
-await snap(1600);
-await openChat(CHATS[1]);
-await record(300, 60);
-await snap(900);
-await tell(CHATS[1]);
+for (const c of CHATS.slice(1)) {
+  await snap(1600);
+  await openChat(c);
+  await record(300, 60);
+  await snap(900);
+  await tell(c);
+}
 await snap(2500);
 await browser.close();
 

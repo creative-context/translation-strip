@@ -53,7 +53,7 @@ Page → shell (`msg.type`):
 - `ready` `{}`: the page has loaded; the shell answers with `teams` and `access`.
 
 Shell → page (`window.strip.<fn>(arg)`):
-- `teams({ open, chat, from, last, draft })`: Teams is running or not, the chat open in it (`null` when no chat is open), the last message's author and text (for context, `null` when unknown), whether the message box already holds a draft (text the user left there; a reply's quote isn't one, [below](#teams-tree-a-replys-quote-and-copying-081-082)), and `shape`: `"ok"`, `"unknown"` when a Teams window is there but its message box can't be found, or `"several"` when it has more than one message box (a channel with a reply open) and none has Teams' cursor; the page then shows an orange "Click the box in Teams first" and keeps Send off. Sent when it changes.
+- `teams({ open, chat, from, last, draft })`: Teams is running or not, the chat open in it (`null` when no chat is open), the last message's author and text (for context, `null` when unknown), whether the message box already holds a draft (text the user left there; a reply's quote isn't one, [below](#teams-tree-a-replys-quote-copying-and-typing-the-reply-081-to-083)), and `shape`: `"ok"`, `"unknown"` when a Teams window is there but its message box can't be found, or `"several"` when it has more than one message box (a channel with a reply open) and none has Teams' cursor; the page then shows an orange "Click the box in Teams first" and keeps Send off. Sent when it changes.
 - `sent({ ok, reason? })`: after `send`. `reason`: `no-teams`, `no-chat`, `draft` (a draft is there and `afterDraft` wasn't set), `not-front` (Teams didn't come forward; the page offers no retry button, Send is the retry), `mismatch` (the box didn't hold the text; what was pasted stays in the box, so the page offers no retry), `no-access` (no Accessibility permission), `no-paste` (the box never changed after ⌘V: nothing was pasted), `which-box` (more than one message box and none with the cursor, found at send time: nothing was pasted), `not-own-server` (the page or the server isn't this app's own: nothing is done), `chat-changed` (Teams has another chat open than the one in `chat`; nothing was pasted, and the page says so with no retry), `not-sent` (Return was pressed, or Teams lost the front before it, and the box didn't empty: the text stays in the box and the page offers no retry).
 - `dictation({ state: "on" | "off" | "denied" | "preparing" | "unavailable", text?, progress? })`: `text` is the whole transcript so far, which replaces what dictation added to the field. `progress` (0 to 1, in whole percents) comes with `preparing` while macOS downloads the dictation model for the chosen language.
 - `access({ accessibility: true | false, microphone: "granted" | "denied" | "unknown" })`.
@@ -199,7 +199,7 @@ Page:
   - Dictation: Dictate in, a select of `options.dictation`.
 - In a browser, with no shell, Choose… does nothing.
 
-## Teams' tree, a reply's quote and copying (0.8.1, 0.8.2)
+## Teams' tree, a reply's quote, copying and typing the reply (0.8.1 to 0.8.3)
 
 Shell:
 - Teams builds its page's accessibility tree only when asked. The shell asks the way a screen reader does, with `AXEnhancedUserInterface` (Teams answers "not implemented" and builds the tree anyway), and with `AXManualAccessibility`, which older Teams answered; both live in `TeamsShape.treeAsks`. It asks when it finds the Teams process and again every 5 s while it can't see the message box, since a Teams that just opened, as at login, may not have its page up yet. Teams keeps the tree until it quits.
@@ -207,3 +207,4 @@ Shell:
 
 Page:
 - In the app, `body.embed` turns text selection off for the page; the text boxes turn it back on (`user-select: text`), read-only too. WebKit won't select inside a read-only box under `user-select: none`, and the translation is read-only in every phase but ready, so without it the translation couldn't be copied while Teams had a draft, the text was out of date, a question showed or a send was on its way.
+- The reply box also takes typing in an empty strip (idle, not dictating). What you type there is the message itself (`SS.editedEnglish`): the phase turns ready, for the chat open now (`chatFor`), in the settings' target language (`from: "target"`), with no voice findings, so Send and Adjust work. Emptying it while the other box is empty too puts the strip back to idle; writing in the other box afterwards puts it out of date, like any translation.

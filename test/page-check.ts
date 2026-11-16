@@ -1005,6 +1005,34 @@ check("Send", "Send is off before there is English", async () => {
   await settle(t.p, 200);
   eq((await sends(t)).length, 0, "send messages");
 });
+check("Send", "in an empty strip, what you type in the English box is the message: Send turns on and sends it to the open chat; emptying it turns Send off", async () => {
+  const t = await open();
+  eq(await t.p.evaluate(() => (document.getElementById("en") as HTMLTextAreaElement).readOnly), false, "the empty English box takes typing");
+  await t.p.click("#en");
+  await t.p.keyboard.type("Running five minutes late, start without me.");
+  await waitState(t.p, "ready");
+  ok(!(await t.p.locator("#send").isDisabled()), "Send should be on");
+  eq((await t.p.locator("#lang").innerText()).trim(), "English", "the language button names the target");
+  await t.p.keyboard.press("Meta+a");
+  await t.p.keyboard.press("Backspace");
+  await waitState(t.p, "idle");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off again");
+  await t.p.keyboard.type("On my way.");
+  await waitState(t.p, "ready");
+  await t.p.keyboard.press("Meta+Enter");
+  await waitState(t.p, "sending");
+  const s = await sends(t);
+  eq(s.length, 1, "send messages");
+  eq(s[0].text, "On my way.", "sent text");
+  ok(!!s[0].chat, "the send names the open chat");
+  await waitState(t.p, "sent");
+});
+check("Send", "while dictating, the empty English box stays read-only", async () => {
+  const t = await open();
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.dict === "on" || (document.getElementById("es") as HTMLTextAreaElement).value.length > 0, null, { timeout: 3000 });
+  eq(await t.p.evaluate(() => (document.getElementById("en") as HTMLTextAreaElement).readOnly), true, "read-only while dictating");
+});
 async function sendFlow(how: "click" | "key", query = "") {
   const t = await open(query);
   await translateFlow(t);

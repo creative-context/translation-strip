@@ -197,6 +197,45 @@ describe("out of date after an edit", () => {
     expect(labels(s)).toEqual([]);
   });
 
+  // Writing the English yourself, in an empty strip.
+  function writeEnglish(s: S, en: string, target = "English"): S {
+    const f = { ...s.f, en };
+    return { st: SS.editedEnglish(s.st, en, f, target), f };
+  }
+  test("in an empty strip, what you type in the English box is the message: ready, for the chat open, in your target", () => {
+    const s = writeEnglish(start(), "Running five minutes late, start without me.");
+    expect(s.st.phase).toBe("ready");
+    expect(s.st.chatFor).toBe("Priya Raman");
+    expect([s.st.language, s.st.from]).toEqual(["English", "target"]);
+    expect(canSend(s)).toBe(true);
+    const go = SS.sendStart(s.st, s.f, false, "send");
+    expect(go.msg).toEqual({ type: "send", text: "Running five minutes late, start without me.", mode: "send", chat: "Priya Raman" });
+  });
+  test("a message typed in the English box takes the target language's name", () => {
+    expect(writeEnglish(start(), "Claro, já vou.", "Português").st.language).toBe("Português");
+  });
+  test("emptying it again, with the Spanish box empty, empties the strip", () => {
+    const s = writeEnglish(writeEnglish(start(), "On my way"), "");
+    expect(s.st.phase).toBe("idle");
+    expect(s.st.chatFor).toBe("");
+    expect(canSend(s)).toBe(false);
+  });
+  test("writing in the other box afterwards puts the typed English out of date", () => {
+    const s = type(writeEnglish(start(), "On my way"), "Ya voy");
+    expect(s.st.phase).toBe("stale");
+    expect(canSend(s)).toBe(false);
+  });
+  test("with no chat open, the typed English can't be sent", () => {
+    const s = writeEnglish(start(NOCHAT), "On my way");
+    expect(s.st.phase).toBe("ready");
+    expect(canSend(s)).toBe(false);
+  });
+  test("after a translation, emptying the English keeps it ready (the Spanish is still there)", () => {
+    const s = ready();
+    const f = { ...s.f, en: "" };
+    expect(SS.editedEnglish(s.st, "", f, "English").phase).toBe("ready");
+  });
+
   test("editing the English by hand keeps it ready and drops the voice findings", () => {
     const s = ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }]);
     expect(tagOf(s)).toBe("needs: Stiff");

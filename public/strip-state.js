@@ -266,7 +266,19 @@
     }
     return n;
   }
-  const editedEnglish = (st, value) => next(st, { en: value, lint: [] });
+  // The English box, edited by hand: a change to the translation on show. In an empty strip (idle:
+  // nothing translated yet, or the last send has faded), what you type there is the message itself,
+  // in your target language, for the chat open now, so Send works. Emptying it while the Spanish box
+  // is empty too empties the strip again. f: the fields; target: the settings' target language.
+  function editedEnglish(st, value, f, target) {
+    if (st.phase === "idle" && trim(value)) {
+      const t = st.teams;
+      return next(st, { en: value, lint: [], phase: "ready", es: trim(f && f.es), chatFor: (t && t.chat) || "", language: target || "", from: "target",
+        langAuto: false, langWho: "", notice: null, err: null, adjusted: false, adjustOpen: false, prev: "", prevLint: [], prevLang: null, once: "", onceFor: "" });
+    }
+    if (st.phase === "ready" && !trim(value) && f && !trim(f.es)) return next(st, { en: value, lint: [], phase: "idle", chatFor: "", language: "", from: "" });
+    return next(st, { en: value, lint: [] });
+  }
   const setAdjustOpen = (st, open) => next(st, { adjustOpen: !!open });
   const clearNotice = st => next(st, { notice: null });
   // "Cancel" on the draft notice: back to the translation as it was.

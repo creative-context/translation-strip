@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-    <img src="docs/demo-light.gif" alt="The strip at work under a simplified chat window, with made-up text and Auto on: in a chat in English, a Spanish message is typed, Return turns it into English and Command-Return sends it; then in a chat in Portuguese, the same steps give Portuguese" width="100%">
+    <img src="docs/demo-light.gif" alt="The strip at work under a simplified chat window, with made-up text and Auto on: in a chat in English, a Spanish message is typed, Return turns it into English and Command-Return sends it; in a chat in Portuguese, a message in English comes out in Portuguese; then a mix of Spanish and English, and a message in Swahili, both come out in English" width="100%">
   </picture>
 </p>
 
