@@ -278,7 +278,7 @@ describe("what a send leaves behind", () => {
     const s = sendAnd(ready(), { ok: true });
     expect(s.st.phase).toBe("sent");
     expect([s.f.es, s.f.en]).toEqual(["", EN]);
-    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent to Priya Raman · 9:41 AM" });
+    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent to Priya Raman · 9:41 AM", short: "Sent · 9:41 AM" });
     expect(SS.view(s.st, null).sent).toBe(true);
     expect(canSend(s)).toBe(false);
     expect(s.st.chatFor).toBe("");
@@ -321,7 +321,7 @@ describe("what a send leaves behind", () => {
     ["chat-changed", "ready", "error: Chat changed. Not sent", []],
     ["mismatch", "ready", "error: Teams changed it. Not sent", []],
     ["not-sent", "ready", "error: In Teams' box, not sent", []],
-    ["not-posted", "ready", "error: Not in the chat. Check it before sending again", []],
+    ["not-posted", "ready", "error: Not in the chat. Check it", []],
     ["no-paste", "ready", "error: Teams didn't take it. Not sent", []],
     ["not-own-server", "ready", "error: Not the app's own page. Not sent", []],
     ["something new", "ready", "error: Couldn't send", []],

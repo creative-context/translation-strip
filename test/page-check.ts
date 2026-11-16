@@ -1089,7 +1089,8 @@ check("Send", "Send button, mode send: Sending…, then 'Sent to <chat> · time'
   const done = (await tagText(t.p)).replace(/\s+/g, " ").trim();
   ok(/^Sent to .+ · \d{1,2}:\d{2} (AM|PM)$/.test(done), `footer tag ${JSON.stringify(done)}`);
   eq(await t.p.evaluate(() => document.getElementById("status")!.className), "status tag s-done", "the tag's kind");
-  ok(await t.p.evaluate(() => !!document.querySelector("#status .ok svg")), "the tag has its check");
+  ok(await t.p.evaluate(() => !!document.querySelector("#status .ico svg")), "the tag has its check");
+  ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
   eq(await val(t.p, "en"), english, "the English stays in its box");
   ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).visibility === "visible"), "the English shows");
   ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).color !== getComputedStyle(document.getElementById("es")!).color), "the sent English is dimmed");
@@ -1241,7 +1242,9 @@ check("Send reasons", "mismatch: 'Teams changed it. Not sent', no retry button",
 check("Send", "not in the chat: Teams emptied its box but the message never showed; the English stays, the notice says to check the chat, and Send works again", async () => {
   const t = await failedSend("not-posted");
   eq(await state(t.p), "error", "state");
-  eq(await tagText(t.p), "Not in the chat. Check it before sending again", "notice");
+  eq(await tagText(t.p), "Not in the chat. Check it", "notice");
+  ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return !!w && w.scrollWidth <= w.clientWidth + 1; }), "the notice shows whole, not cut off");
+  ok(await t.p.evaluate(() => !!document.querySelector("#status .ico svg") && !document.querySelector("#status .sdot")), "an error tag has its exclamation in a circle, not a dot");
   ok((await val(t.p, "en")).length > 0, "the English should stay in the box");
   ok(!(await t.p.locator("#send").isDisabled()), "Send should be on");
 });
@@ -2052,6 +2055,18 @@ narrowCheck("Narrow", "microphone denied: Open Settings stays whole; Normal and 
   ok(await vis(t.p, "#dictLabel [data-act=mic-settings]"), "Open Settings should show");
   ok(await t.p.evaluate(() => { const b = document.querySelector("#dictLabel [data-act=mic-settings]")!; return b.scrollWidth <= (b as HTMLElement).clientWidth + 1; }), "Open Settings shouldn't be cut");
   eq(await t.p.locator("#dictLabel").getAttribute("title"), "Microphone not allowed", "the label's words in its title");
+  await expectLayout(t.p);
+});
+narrowCheck("Narrow", "after a send, a short footer turns 'Sent to <chat> · time' into 'Sent · time', whole, with To still naming the chat", async () => {
+  const t = await open();
+  await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
+  await ready(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sent");
+  await settle(t.p, 300);
+  const txt = (await tagText(t.p)).replace(/\s+/g, " ").trim();
+  ok(/^Sent( to .+)? · \d{1,2}:\d{2} (AM|PM)$/.test(txt), `tag ${JSON.stringify(txt)}`);
+  ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
   await expectLayout(t.p);
 });
 narrowCheck("Narrow", "a failed translation: the notice and Try again in the footer, whole", async () => {

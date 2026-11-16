@@ -82,8 +82,11 @@
   [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
   /* Sent: the English stays in its box, dimmed, under the green "Sent to …" in the footer. */
   [data-sent="yes"] .en-out { color: var(--color-text-secondary); }
-  .status .ok { display: inline-flex; flex: none; }
-  .status .ok svg.i { width: 12px; height: 12px; }
+  /* A done tag has a check in a circle, an error tag an exclamation in one; the rest keep the family's dots. */
+  .status .ico { display: inline-flex; flex: none; }
+  #status .short, [data-fit~="shorttag"] #status .long { display: none; }
+  [data-fit~="shorttag"] #status .short { display: inline; }
+  .status .ico svg.i { width: 14px; height: 14px; stroke-width: 1.6px; }   /* the banners' size, a firmer line: legible in a 20 px tag */
   [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
   [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
   [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
@@ -209,6 +212,9 @@
     /* Spanish footer: the same row; a label that needs room goes above it. */
     .f.es .foot { flex-wrap: wrap; height: auto; row-gap: 4px; }
     .f.es .foot .preview, .f.es .foot .dict-label { order: -1; flex: 1 0 100%; min-height: 20px; }
+    /* "Detected · …" takes the same line above the buttons (it hides while dictating), so the mic never moves. */
+    .f.es .foot .detected { order: -1; flex: 1 0 100%; min-height: 20px; margin-right: 0; display: flex; align-items: center; }
+    .f.es .foot .detected[hidden] { display: none; }
 
     /* The menu stacks its groups in one column and opens over the English box, above its footer. */
     .menu { left: 8px; right: 8px; bottom: calc(50% + 74px); width: auto; max-width: none; max-height: calc(50% - 82px); overflow-y: auto; flex-direction: column; }
@@ -513,13 +519,16 @@ function fitSteps() {
   // Both footers lose their shortcut hints together, so the buttons look alike.
   if (over(en) || over(es)) step("keys");
   // The English footer, in its order. Every step is undone on the next paint or resize.
+  if (over(en) && $("status").querySelector(".short")) step("shorttag");   // "Sent to <chat> · time" becomes "Sent · time"; To still names the chat
   if (over(en)) step("pencil");
   if (over(en) && !$("lang").hidden && !$("lang").querySelector(".auto").hidden) step("lang");   // "Auto · " leaves; the title still says it
-  if (over(en)) notice(true);          // the notice shortens down to its dot; its buttons stay whole
+  // "Sent · time" stays whole: the chat's name gives way first (its title keeps it). Other notices shorten first.
+  const keepTag = !!$("status").querySelector(".short");
+  if (over(en) && !keepTag) notice(true);          // the notice shortens down to its dot; its buttons stay whole
   if (over(en)) step("name");
   if (over(en)) step("noname");
   if (over(en) && !$("lang").hidden) step("nolang");   // a notice with its buttons wins over the language, for now
-  if (over(en)) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
+  if (over(en) && !keepTag) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
   // The Spanish footer: Normal and Formal step aside last, only while a dictation label needs the room.
   if (over(es) && !$("detected").hidden) step("detectword");   // "Detected · " leaves first; the title still says it
   if (over(es) && !$("detected").hidden) step("nodetect");
@@ -602,10 +611,12 @@ function paint() {
       status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
       const mark = document.createElement("span");
       if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
-      else if (v.tag.kind === "done") { mark.className = "ok"; mark.innerHTML = ic("check"); }
+      else if (v.tag.kind === "done" || v.tag.kind === "error") { mark.className = "ico"; mark.innerHTML = ic(v.tag.kind === "done" ? "check" : "alert"); }
       else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
       const words = document.createElement("span");
-      words.textContent = v.tag.text;
+      // A tag with a short form ("Sent · 10:42 AM") switches to it when the footer is short of room.
+      if (v.tag.short) { words.innerHTML = `<span class="long"></span><span class="short"></span>`; words.firstChild.textContent = v.tag.text; words.lastChild.textContent = v.tag.short; }
+      else words.textContent = v.tag.text;
       status.append(mark, words);
     } else { status.className = "status"; status.removeAttribute("title"); }
     for (const a of v.actions) {

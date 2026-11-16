@@ -104,7 +104,7 @@
     else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
     else if (p === "adjusting") tag("working", "Adjusting…");
     // Sent: in the footer, with the English still in the box (dimmed), until the next message.
-    else if (p === "sent") tag("done", st.sentTo ? `Sent to ${st.sentTo} · ${st.sentAt}` : `Sent · ${st.sentAt}`);
+    else if (p === "sent") { tag("done", st.sentTo ? `Sent to ${st.sentTo} · ${st.sentAt}` : `Sent · ${st.sentAt}`); v.tag.short = `Sent · ${st.sentAt}`; }
     else if (p === "leave") tag("idle", "Left in Teams, not sent");
     else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "question") tag("asks", "Asks you");
@@ -335,7 +335,7 @@
       case "not-sent": n.leftover = st.lastText; n.notice = { kind: "error", text: "In Teams' box, not sent" }; break;
       // Teams emptied its box but the message never showed in the chat: the English stays here, so
       // nothing is lost. It may still show late, so the notice says to look before sending again.
-      case "not-posted": n.notice = { kind: "error", text: "Not in the chat. Check it before sending again" }; break;
+      case "not-posted": n.notice = { kind: "error", text: "Not in the chat. Check it" }; break;
       // The box never changed after the paste: nothing is in it.
       // Teams may still take the paste late (the clipboard keeps the English a few seconds): if it
       // lands, the next send finds our own text there, never offers to add it again.
