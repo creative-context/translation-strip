@@ -322,6 +322,7 @@ describe("what a send leaves behind", () => {
     ["mismatch", "ready", "error: Teams changed it. Not sent", []],
     ["not-sent", "ready", "error: In Teams' box, not sent", []],
     ["not-posted", "ready", "error: Not in the chat. Check it", []],
+    ["cleared", "ready", "error: Teams cleared it. Not sent", []],
     ["no-paste", "ready", "error: Teams didn't take it. Not sent", []],
     ["not-own-server", "ready", "error: Not the app's own page. Not sent", []],
     ["something new", "ready", "error: Couldn't send", []],

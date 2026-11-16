@@ -336,6 +336,8 @@
       // Teams emptied its box but the message never showed in the chat: the English stays here, so
       // nothing is lost. It may still show late, so the notice says to look before sending again.
       case "not-posted": n.notice = { kind: "error", text: "Not in the chat. Check it" }; break;
+      // Teams emptied its box after the paste, twice, before Return: nothing went out, the English stays.
+      case "cleared": n.notice = { kind: "error", text: "Teams cleared it. Not sent" }; break;
       // The box never changed after the paste: nothing is in it.
       // Teams may still take the paste late (the clipboard keeps the English a few seconds): if it
       // lands, the next send finds our own text there, never offers to add it again.

@@ -79,7 +79,7 @@ To build it yourself, run `sh app/build.sh --install`. [The guide](docs/guide.md
 
 ## Use it
 
-- **⏎** translates, **⇧⏎** starts a new line.
+- **⏎** translates, **⇧⏎** or **⌥⏎** starts a new line.
 - **⌘⏎** sends to the open chat. **⌘K** adjusts the translation with a note. **⌘D** dictates, in the language you set.
 - The language beside "To" says what the translation is in. **⌘,** opens Settings.
 - **⌃⌥T** brings up the strip from any app.

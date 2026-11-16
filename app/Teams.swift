@@ -255,13 +255,37 @@ enum Teams {
         return lines(a) == lines(b)
     }
 
-    // Whether a message in the chat is the one just sent: its first 40 letters and digits are in
-    // the message, whatever the spacing, punctuation or case, and whatever Teams adds (a link's
-    // preview, say).
+    // Whether the message box holds the text that was pasted: the same lines, or, after Teams' own
+    // touch-ups (its autocorrect, a link made a link), the same letters and digits within about one
+    // in ten, and about as many of them (a paste that landed twice, or half of one, isn't it).
+    static func holds(_ box: String, _ text: String, placeholder: String = TeamsShape.placeholder) -> Bool {
+        if sameText(box, text, placeholder: placeholder) { return true }
+        func count(_ s: String) -> Int { s.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.count }
+        let n = count(text), m = count(boxText(box, placeholder: placeholder))
+        guard n > 0, abs(m - n) <= max(2, n / 8) else { return false }
+        return postedAs(text, boxText(box, placeholder: placeholder))
+    }
+
+    // Whether a box or a message in the chat holds the text just sent: its letters and digits (the
+    // first 160), whatever the spacing, punctuation or case, anywhere in the message (a reply's quote
+    // comes before it, a link's preview after), with about one in ten different (Teams' autocorrect
+    // fixes a word).
     static func postedAs(_ sent: String, _ message: String) -> Bool {
-        func key(_ s: String) -> String { String(String.UnicodeScalarView(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })) }
-        let head = String(key(sent).prefix(40))
-        return !head.isEmpty && key(message).contains(head)
+        func key(_ s: String) -> [Unicode.Scalar] { s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) } }
+        let a = Array(key(sent).prefix(160))
+        guard !a.isEmpty else { return false }
+        let b = Array(key(message).prefix(TeamsShape.textLimit))
+        // Edits to turn `a` into some stretch of `b` (what comes before and after it is free).
+        var row = Array(repeating: 0, count: b.count + 1)
+        for i in 1...a.count {
+            var next = [i] + Array(repeating: 0, count: b.count)
+            for j in 1...max(b.count, 1) where j <= b.count {
+                next[j] = Swift.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
+            }
+            row = next
+        }
+        let best = row.min() ?? a.count
+        return best <= Swift.max(1, a.count / 10)
     }
 }
 

@@ -95,7 +95,8 @@ enum OwnServer {
 
 extension TeamsReader {
     // Runs on the Teams queue and blocks it for a few seconds at most. `log` never gets text.
-    func send(_ text: String, to chat: String?, leave: Bool, afterDraft: Bool, log: @escaping (String) -> Void) -> SendOutcome {
+    // attempt 2: Teams emptied its box after the first paste, before Return, and nothing was posted.
+    func send(_ text: String, to chat: String?, leave: Bool, afterDraft: Bool, log: @escaping (String) -> Void, attempt: Int = 1) -> SendOutcome {
         guard AXIsProcessTrusted() else { return SendOutcome(ok: false, reason: "no-access") }
         guard Teams.running() != nil else { return SendOutcome(ok: false, reason: "no-teams") }
         let context = read() // a fresh look at the window, the box and the draft
@@ -201,12 +202,13 @@ extension TeamsReader {
             return SendOutcome(ok: false, reason: "no-paste")
         }
 
-        // The box must hold exactly the text the user saw (after the draft, when asked).
+        // The box must hold the text the user saw (after the draft, when asked): the same lines, or the
+        // same words after Teams' own touch-ups, such as its autocorrect fixing a word (Teams.holds).
         let expected = addsToDraft ? before + "\n" + text : text
-        var holds = value().map { Teams.sameText($0, expected, placeholder: ph) } ?? false
+        var holds = value().map { Teams.holds($0, expected, placeholder: ph) } ?? false
         if !holds {
             Thread.sleep(forTimeInterval: 0.3)
-            holds = value().map { Teams.sameText($0, expected, placeholder: ph) } ?? false
+            holds = value().map { Teams.holds($0, expected, placeholder: ph) } ?? false
         }
         guard holds else {
             log("send: the message box didn't hold the text; nothing pressed")
@@ -217,10 +219,25 @@ extension TeamsReader {
         // The newest message of the user's own before Return, to tell the new one from it.
         let ownBefore = lastOwn()
         // A moment for Teams to take the paste in: Return right as the text shows has emptied the
-        // box without posting it. Then the box must still hold the text.
+        // box without posting it. Teams may touch up the text meanwhile (its autocorrect, a link's
+        // preview), so the same check again.
         Thread.sleep(forTimeInterval: TeamsShape.pasteSettle)
-        guard value().map({ Teams.sameText($0, expected, placeholder: ph) }) == true else {
-            log("send: the message box changed after the paste; nothing pressed")
+        let settled = value()
+        guard settled.map({ Teams.holds($0, expected, placeholder: ph) }) == true else {
+            // Teams has emptied its box on its own, right after a paste, without posting anything.
+            // Unless the message is in the chat after all, paste once more; a second time, say so.
+            if settled?.isEmpty == true {
+                if let now = lastOwn(), Teams.postedAs(text, now.text), !(ownBefore.map { CFEqual($0.item, now.item) && $0.text == now.text } ?? false) {
+                    return SendOutcome(ok: true, sent: true)
+                }
+                if attempt == 1, !leave {
+                    log("send: Teams emptied its box after the paste; pasting again")
+                    return send(text, to: chat, leave: leave, afterDraft: afterDraft, log: log, attempt: 2)
+                }
+                log("send: Teams emptied its box after the paste again; nothing pressed")
+                return SendOutcome(ok: false, reason: "cleared")
+            }
+            log("send: the message box lost the text after the paste; nothing pressed")
             return SendOutcome(ok: false, reason: "mismatch")
         }
         guard key(36) else { // ⏎

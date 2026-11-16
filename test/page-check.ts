@@ -318,6 +318,17 @@ check("Keys", "⇧⏎ adds a line and doesn't translate", async () => {
   eq(reqsTo(t, "/api/translate").length, 0, "translate requests");
   eq(await state(t.p), "idle", "state");
 });
+check("Keys", "⌥⏎ adds a line too and doesn't translate", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.keyboard.type("uno");
+  await t.p.keyboard.press("Alt+Enter");
+  await t.p.keyboard.type("dos");
+  eq(await val(t.p, "es"), "uno\ndos", "Spanish box");
+  await settle(t.p, 200);
+  eq(reqsTo(t, "/api/translate").length, 0, "translate requests");
+  eq(await state(t.p), "idle", "state");
+});
 check("Keys", "Esc clears everything and returns to the Spanish box", async () => {
   const t = await open();
   await translateFlow(t);
@@ -1164,7 +1175,7 @@ async function failedSend(reason: string) {
   const t = await open(`send=${reason}`);
   await translateFlow(t);
   await t.p.click("#send");
-  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "not-posted", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
+  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "not-posted", "cleared", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
   await waitState(t.p, want, 4000).catch(() => {});
   await t.p.waitForTimeout(1100);
   return t;

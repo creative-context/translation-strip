@@ -790,7 +790,14 @@ document.addEventListener("keydown", e => {
     else if (st.phase !== "sending") clearAll();
     return;
   }
-  if (k === "Enter" && !e.shiftKey) {
+  // ⇧⏎ and ⌥⏎ add a line, as in a chat; ⏎ alone translates (or sends the adjust note). WebKit adds
+  // nothing for ⌥⏎ in a text box, so the page adds the line itself (as typing would, with its undo).
+  if (k === "Enter" && e.altKey && !e.shiftKey && (e.target === esIn || e.target === enOut) && !e.target.readOnly) {
+    e.preventDefault();
+    document.execCommand("insertText", false, "\n");
+    return;
+  }
+  if (k === "Enter" && !e.shiftKey && !e.altKey) {
     if (e.target === esIn) { e.preventDefault(); if (st.dict === "on") stopDictation(translate); else translate(); }
     else if (e.target === adjIn) { e.preventDefault(); adjust(adjIn.value); }
   }
