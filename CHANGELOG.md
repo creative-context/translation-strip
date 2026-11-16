@@ -2,6 +2,7 @@
 
 ## 0.8.7
 
+- A new translator session no longer risks getting its instructions cut short: the server hands them over through a pipe it owns, which the cleanup of an older session can't close. It showed on slow machines, where the tests failed, and could leave a session without part of your guide.
 - Once your message shows in the chat, the reply box empties again, with "✓ Sent · <time>" in the footer for a few seconds, then it fades out. The reply stays only while the send isn't confirmed, or when it fails.
 - An error tag's mark is the warning triangle.
 - After a send the green tag says "✓ Sent · <time>": "To <chat>" is right beside it, so the name no longer shows twice. Its title still says to whom.

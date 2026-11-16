@@ -17,7 +17,8 @@
 // turn with "Error reading system prompt file: EACCES … /dev/fd/3", only inside the server, never
 // when the same spawn runs on its own; a fresh session answers.
 import type { Subprocess } from "bun";
-import { close, mkdirSync, readFileSync, statSync, write } from "node:fs";
+import { close, closeSync, constants, mkdirSync, openSync, readFileSync, statSync, unlinkSync, write } from "node:fs";
+import { join } from "node:path";
 import { claudeCommand, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TOOL_PATH, TRANSLATOR_DIR } from "./config";
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
 import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
@@ -80,6 +81,29 @@ export function translatorArgs(model: Model): string[] {
     "--tools", "", "--strict-mcp-config", "--setting-sources", "",
     "--disable-slash-commands", "--no-session-persistence",
   ];
+}
+
+// The pipe the system prompt reaches the session's fd 3 by. The server makes and owns it (a FIFO whose
+// name is removed as soon as both ends are open, so the text stays in memory and never reaches the
+// disk): an fd Bun made for the child, Bun closes again when it collects that child, by then maybe
+// another session's fd 3 under the same number, which cut the next session's prompt short.
+let pipes = 0;
+function promptPipe(): { read: number; write: number } | null {
+  const path = join(TRANSLATOR_DIR, `.prompt-${process.pid}-${pipes++}`);
+  try {
+    if (Bun.spawnSync(["/usr/bin/mkfifo", "-m", "600", path]).exitCode !== 0) return null;
+    // A reader that doesn't wait lets the writer open without waiting; then the child's own reader,
+    // which waits for data as a pipe should, and the first reader goes.
+    const probe = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const w = openSync(path, constants.O_WRONLY);
+    const r = openSync(path, constants.O_RDONLY);
+    closeSync(probe);
+    return { read: r, write: w };
+  } catch {
+    return null;
+  } finally {
+    try { unlinkSync(path); } catch {}
+  }
 }
 
 // Writes all of `text` to a pipe's fd without blocking the server, then closes it.
@@ -148,14 +172,18 @@ export class Translator {
     }
     if (this.error?.error === "guide") this.error = null;
     let proc: Subprocess<"pipe", "pipe", "pipe">;
+    let pipe: { read: number; write: number } | null = null;
     try {
       mkdirSync(TRANSLATOR_DIR, { recursive: true });
+      pipe = promptPipe();
       proc = Bun.spawn(translatorArgs(this.model), {
         cwd: TRANSLATOR_DIR,
         env: translatorEnv(),
-        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe", pipe ? pipe.read : "pipe"],
       }) as any;
+      if (pipe) closeSync(pipe.read); // the child has its own copy
     } catch (e: any) {
+      if (pipe) { try { closeSync(pipe.read); } catch {} try { closeSync(pipe.write); } catch {} }
       // ENOENT: there's no claude to start, so Claude Code isn't installed (or not where it installs to).
       this.setError({ error: e?.code === "ENOENT" ? "missing" : "failed", until: null });
       log(`couldn't start claude (${e?.code ?? "error"})`);
@@ -163,7 +191,8 @@ export class Translator {
     }
     const session: Session = { proc, pid: proc.pid, model: this.model, err: "", turn: null, rateLimit: null, retried: false, retired: false, stderrDone: Promise.resolve() };
     this.spare = session;
-    const fd3 = (proc as any).stdio?.[3];
+    // The server's own pipe; without one (mkfifo failed), the one Bun made, as before.
+    const fd3 = pipe ? pipe.write : (proc as any).stdio?.[3];
     if (typeof fd3 === "number") feed(fd3, systemPrompt(guide));
     log(`spare started (${this.model}, ${reason}, pid ${proc.pid})`);
     this.read(session);

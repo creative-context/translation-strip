@@ -9,7 +9,7 @@ Through the hidden Claude Code session on your plan:
 - What you write, the register and, for Adjust, the current reply and your note.
 - Your language settings: the target language, whether Auto is on and, if you wrote any, your notes for each language (the text you typed in Settings). The notes go with every request, and only the ones you filled in.
 - For context, the open chat's name, the author of its last message and that message. The session treats it as quoted text and never follows instructions in it. With Auto on, it reads that message to see which language it's in, and nothing more is kept about it.
-- Your voice guide's text, as the session's instructions. The app reads it from your file when the session starts and never writes it anywhere.
+- Your voice guide's text, as the session's instructions. The app reads it from your file when the session starts and never writes it anywhere: it reaches the session through a pipe in memory. The pipe's name shows in `~/.translation-strip/translator` for an instant and holds nothing.
 
 Every message goes to a fresh session, so none of them sees what you wrote before, to whom, or what they wrote you.
 
