@@ -275,8 +275,8 @@
         <button role="menuitemradio" data-mode="leave" aria-checked="false" title="Put in Teams without sending">Put in Teams</button>
       </div></div>
       <div class="prow"><span class="pl" id="modelLabel">Model</span><div class="posrow" role="group" aria-labelledby="modelLabel">
-        <button role="menuitemradio" data-model="haiku" aria-checked="true">Haiku</button>
-        <button role="menuitemradio" data-model="sonnet" aria-checked="false">Sonnet</button>
+        <button role="menuitemradio" data-model="haiku" aria-checked="false">Haiku</button>
+        <button role="menuitemradio" data-model="sonnet" aria-checked="true">Sonnet</button>
         <button role="menuitemradio" data-model="opus" aria-checked="false">Opus</button>
       </div></div>
       <div class="prow"><span class="pl" id="replyLabel">Reply in</span><div class="posrow reply" role="group" aria-labelledby="replyLabel">
@@ -426,7 +426,7 @@ window.strip = {
 
 // ------------------------------------------------------------------------------ the server
 let srv = null;       // { translator, settings, … } from /api/state
-const DEFAULT_SETTINGS = { model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], dictation: "es-MX" };
+const DEFAULT_SETTINGS = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], dictation: "es-MX" };
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, srv && srv.settings);
 // Each language's code, for the boxes' and the buttons' lang attribute (spelling and voices).
 const LANG_CODES = { English: "en", "Español": "es", "Português": "pt", "Français": "fr", Deutsch: "de", Italiano: "it", Nederlands: "nl", Polski: "pl", Svenska: "sv", "Türkçe": "tr", "日本語": "ja", "한국어": "ko", "中文": "zh" };

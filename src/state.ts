@@ -20,14 +20,14 @@ export type Settings = {
   dictation: string;
 };
 
-export const DEFAULT_SETTINGS: Settings = { voiceGuide: null, linter: null, model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX" };
+export const DEFAULT_SETTINGS: Settings = { voiceGuide: null, linter: null, model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX" };
 
 export const state = {
   translator: {
     status: "starting" as Status,
     error: null as TranslatorError | null,
     until: null as string | null,
-    model: "haiku" as Model,
+    model: "sonnet" as Model,
     guide: "missing" as "ok" | "missing",
     linter: "missing" as "ok" | "missing",
   },

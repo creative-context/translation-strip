@@ -1,4 +1,4 @@
-// settings.json in the app folder. Missing file or keys: haiku, send, no guide, no linter, target
+// settings.json in the app folder. Missing file or keys: sonnet, send, no guide, no linter, target
 // English, Auto off, your languages English, no notes, dictation es-MX. The paths are the user's;
 // code never holds a default path.
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";

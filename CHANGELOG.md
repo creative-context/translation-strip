@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A new install starts with Sonnet instead of Haiku. Haiku is faster, but its replies sound less natural. If you already picked a model in the menu, it stays.
+
 ## 0.8.3
 
 - You can type the message yourself in the reply box while the strip is empty: it goes as you wrote it, with no translation, to the chat open in Teams.

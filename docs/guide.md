@@ -58,7 +58,7 @@ The strip docks under the Teams window, as wide as it, and moves with it. When t
 
 ## The settings menu
 
-Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku, Sonnet or Opus, which runs at low effort), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide and restarts the translator. The language, the guide, the linter and dictation are set once in Settings.
+Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku, the fastest; Sonnet, which a new install starts with; or Opus, which writes the most natural replies and runs at low effort), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide and restarts the translator. The language, the guide, the linter and dictation are set once in Settings.
 
 ## Languages
 

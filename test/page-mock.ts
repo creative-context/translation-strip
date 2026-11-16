@@ -32,7 +32,7 @@ const DICTATION = [
 ];
 type Settings = { model: "haiku" | "sonnet" | "opus"; mode: "send" | "leave"; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string };
 // The mock starts with two languages, so the menu's Reply in row has a choice (the app's default is English alone).
-const MOCK_DEFAULTS: Settings = { model: "haiku", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX" };
+const MOCK_DEFAULTS: Settings = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX" };
 const settings: Settings = structuredClone(MOCK_DEFAULTS);
 const translator = { status: "ready" as "starting" | "ready" | "busy" | "error", error: null as string | null, until: null as string | null, guide: "ok", linter: "ok" };
 let version = 0;

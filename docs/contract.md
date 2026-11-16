@@ -5,7 +5,7 @@ Three pieces, built apart, meet here. Change this file first when a piece needs 
 ## Where things live
 
 - App folder: `~/.translation-strip/` (`STRIP_DIR` overrides it; the tests always set it to a temp folder).
-- `settings.json` in that folder: `{ "voiceGuide": "<path>", "linter": "<path>", "model": "haiku" | "sonnet" | "opus", "mode": "send" | "leave", "target": "<language>", "auto": true | false, "languages": ["<language>"], "notes": { "<language>": "<text>" }, "dictation": "<locale id>" }` (the last five are the 0.8.0 keys, [below](#multi-language-080)). The paths are set by the user in Settings (Choose… beside Guide and Linter), which sends them to `POST /api/settings`; only the server writes the file. Code never holds a default path. Missing file or missing keys: `model` `"haiku"`, `mode` `"send"`, no guide, no linter, `target` `"English"`, `auto` off, `languages` `["English"]`, no notes, `dictation` `"es-MX"`.
+- `settings.json` in that folder: `{ "voiceGuide": "<path>", "linter": "<path>", "model": "haiku" | "sonnet" | "opus", "mode": "send" | "leave", "target": "<language>", "auto": true | false, "languages": ["<language>"], "notes": { "<language>": "<text>" }, "dictation": "<locale id>" }` (the last five are the 0.8.0 keys, [below](#multi-language-080)). The paths are set by the user in Settings (Choose… beside Guide and Linter), which sends them to `POST /api/settings`; only the server writes the file. Code never holds a default path. Missing file or missing keys: `model` `"sonnet"` (`"haiku"` before 0.8.4), `mode` `"send"`, no guide, no linter, `target` `"English"`, `auto` off, `languages` `["English"]`, no notes, `dictation` `"es-MX"`.
 - `translator/` in that folder: the hidden session's working folder. Nothing in it is read back by the app.
 - The `claude` command: `STRIP_CLAUDE` overrides it (tests use a stand-in); otherwise `claude` from the user's PATH, as Claude Code itself installs it.
 
@@ -32,7 +32,7 @@ After every reply, in any language, the server writes it to a temp file, runs `b
   { "now": 0, "server": { "version": "x.y.z", "pid": 0 },
     "translator": { "status": "starting" | "ready" | "busy" | "error", "error": null | "offline" | "limit" | "login" | "update" | "guide" | "missing" | "failed", "until": null,
                     "model": "haiku" | "sonnet" | "opus", "guide": "ok" | "missing", "linter": "ok" | "missing" },
-    "settings": { "model": "haiku", "mode": "send", "target": "English", "auto": false, "languages": ["English"], "notes": {}, "dictation": "es-MX",
+    "settings": { "model": "sonnet", "mode": "send", "target": "English", "auto": false, "languages": ["English"], "notes": {}, "dictation": "es-MX",
                   "files": { "voiceGuide": "<file name>" | null, "linter": "<file name>" | null } },
     "options": { "languages": ["English", "…"], "dictation": [ { "id": "es-MX", "name": "Español (México)" } ] } }
   ```

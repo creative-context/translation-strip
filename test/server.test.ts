@@ -156,6 +156,7 @@ describe("pure parts", () => {
   test("settings.json read by hand: wrong values fall back, the target is always in the languages", () => {
     const f = join(mkdtempSync(join(tmpdir(), "strip-settings-")), "settings.json");
     expect(loadSettings(f)).toEqual(DEFAULT_SETTINGS);
+    expect(loadSettings(f).model).toBe("sonnet"); // a new install starts with Sonnet
     writeFileSync(f, JSON.stringify({ target: "Deutsch", auto: "yes", languages: ["English", "Klingon", "English", "Italiano"], notes: { Italiano: "  Informal uses tu. ", Klingon: "x", Deutsch: "", Polski: 3 }, dictation: "xx-XX" }));
     expect(loadSettings(f)).toMatchObject({ target: "Deutsch", auto: false, languages: ["English", "Italiano", "Deutsch"], notes: { Italiano: "Informal uses tu." }, dictation: "es-MX" });
     writeFileSync(f, JSON.stringify({ target: "中文", languages: LANGUAGES.slice(0, 8) }));

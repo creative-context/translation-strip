@@ -114,7 +114,7 @@ export class Translator {
   private version: string | null = null;
   private versionAsked = false;
   private now: () => number;
-  model: Model = "haiku";
+  model: Model = "sonnet";
   guidePath: string | null = null;
 
   constructor(private settings: () => { voiceGuide: string | null; model: Model }, opts: TranslatorOptions = {}) {

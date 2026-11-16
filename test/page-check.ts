@@ -107,7 +107,7 @@ const MOCK_LANGS = ["English", "Português"];
 async function resetSettings() {
   const s = await (await fetch(`${BASE}/api/state`)).json();
   const patch: any = {};
-  if (s.settings.model !== "haiku") patch.model = "haiku";
+  if (s.settings.model !== "sonnet") patch.model = "sonnet";
   if (s.settings.mode !== "send") patch.mode = "send";
   if (s.settings.target !== "English") patch.target = "English";
   if (s.settings.auto !== false) patch.auto = false;
@@ -663,26 +663,27 @@ check("Settings menu", "Put in Teams item (its title says 'without sending'): se
   eq((await t.p.locator("#send").innerText()).replace(/\s+/g, " "), "Put in Teams ⌘⏎", "Send button label");
   await resetSettings();
 });
-check("Settings menu", "Model: Haiku, Sonnet and Opus in one row; Sonnet and Opus set the model (request, pressed); Haiku sets it back", async () => {
+check("Settings menu", "Model: Haiku, Sonnet and Opus in one row; Sonnet to start; Haiku and Opus set the model (request, pressed); Sonnet sets it back", async () => {
   await resetSettings();
   const t = await open();
   await t.p.click("#more");
-  await t.p.click("#menu [data-model=sonnet]");
+  eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "true", "Sonnet checked to start");
+  await t.p.click("#menu [data-model=haiku]");
   await settle(t.p, 300);
-  eq(JSON.stringify(reqsTo(t, "/api/settings")[0]?.body), JSON.stringify({ model: "sonnet" }), "settings request");
-  eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "true", "Sonnet checked");
-  eq(await t.p.locator("#menu [data-model=haiku]").getAttribute("aria-checked"), "false", "Haiku unchecked");
+  eq(JSON.stringify(reqsTo(t, "/api/settings")[0]?.body), JSON.stringify({ model: "haiku" }), "settings request");
+  eq(await t.p.locator("#menu [data-model=haiku]").getAttribute("aria-checked"), "true", "Haiku checked");
+  eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "false", "Sonnet unchecked");
   await t.p.click("#menu [data-model=opus]");
   await settle(t.p, 300);
   eq(JSON.stringify(reqsTo(t, "/api/settings")[1]?.body), JSON.stringify({ model: "opus" }), "second settings request");
   eq(await t.p.locator("#menu [data-model=opus]").getAttribute("aria-checked"), "true", "Opus checked");
-  eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "false", "Sonnet unchecked");
+  eq(await t.p.locator("#menu [data-model=haiku]").getAttribute("aria-checked"), "false", "Haiku unchecked");
   const tops = await t.p.locator("#menu [data-model]").evaluateAll((bs: any[]) => bs.map((b) => Math.round(b.getBoundingClientRect().top)));
   ok(tops.length === 3 && new Set(tops).size === 1, `one row of three: ${tops.join(", ")}`);
-  await t.p.click("#menu [data-model=haiku]");
+  await t.p.click("#menu [data-model=sonnet]");
   await settle(t.p, 300);
-  eq(JSON.stringify(reqsTo(t, "/api/settings")[2]?.body), JSON.stringify({ model: "haiku" }), "third settings request");
-  eq(await t.p.locator("#menu [data-model=haiku]").getAttribute("aria-checked"), "true", "Haiku checked");
+  eq(JSON.stringify(reqsTo(t, "/api/settings")[2]?.body), JSON.stringify({ model: "sonnet" }), "third settings request");
+  eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "true", "Sonnet checked");
   await new Promise((r) => setTimeout(r, 1800));
 });
 check("Settings menu", "a short strip (110 pt, the least the edge drag allows): the menu opens left of the gear, whole and inside the window, and the gear still closes it", async () => {
