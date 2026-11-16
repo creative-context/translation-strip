@@ -62,7 +62,7 @@ Normal and Formal pick the register, as your guide describes them. The settings 
 
 ## Languages
 
-The strip writes in the language you choose, not only English. You write in any language, in a mix, or as a rough draft: the message box says so.
+The strip writes in the language you choose, not only English. You write in any language, in a mix, or as a rough draft: the message box says so, and the language your Mac reads in what you wrote shows before the mic, as "Detected · Español".
 
 - **Target.** In Settings, Reply in › Target language is what replies are written in. It starts as English. Your languages come first in the list, then the rest: English, Español, Português, Français, Deutsch, Italiano, Nederlands, Polski, Svenska, Türkçe, 日本語, 한국어 and 中文. Each is named in its own language.
 - **Auto.** With Auto on, the reply is in the language of the other person's last message in the open chat, when that's clear. When it isn't (no messages yet, none from them, or a mix of languages), it's in your target. Auto reads only that one message, and nothing about it is kept.

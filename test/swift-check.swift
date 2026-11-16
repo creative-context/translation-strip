@@ -250,6 +250,18 @@ enum SwiftCheck {
               TeamsScan.boxValue(quoteBox([paragraph("Sure, ", "sending it now.")], value: shortQuote + "Sure, sending it now."), FakeAX()).map { Teams.boxText($0) }, "Sure, sending it now.")
         check("boxValue: a quote and two paragraphs: one per line",
               TeamsScan.boxValue(quoteBox([paragraph("Sure."), paragraph("It's in the shared folder.")], value: shortQuote + "Sure.\nIt's in the shared folder."), FakeAX()).map { Teams.boxText($0) }, "Sure.\nIt's in the shared folder.")
+        // The language of what's being written, on the Mac: named in itself, only when it's clear.
+        check("detect: Spanish", DetectedLanguage.of("¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada."), "Español")
+        check("detect: English", DetectedLanguage.of("Could you take a look at the budget before Thursday? We can go over it on the call."), "English")
+        check("detect: Italian", DetectedLanguage.of("Ciao! Ho finito le slide per domani, ci dai un'occhiata stasera se hai tempo?"), "Italiano")
+        check("detect: Portuguese", DetectedLanguage.of("Você consegue me mandar a apresentação até amanhã? Obrigado!"), "Português")
+        check("detect: too short says nothing", DetectedLanguage.of("ok"), String?.none)
+        check("detect: no letters says nothing", DetectedLanguage.of("12345 !!! 678"), String?.none)
+        check("detect: a language off the list is named in itself", DetectedLanguage.name(code: "sw"), "Kiswahili")
+        check("detect: a region or script is dropped", DetectedLanguage.name(code: "pt-BR"), "Português")
+        check("detect: zh-Hans is 中文", DetectedLanguage.name(code: "zh-Hans"), "中文")
+        check("detect: und is none", DetectedLanguage.name(code: "und"), String?.none)
+
         // A sent message, as the chat shows it: the same first 40 letters and digits are enough.
         check("postedAs: the same text", Teams.postedAs("Can you send me the slides?", "Can you send me the slides?"), true)
         check("postedAs: other spacing, punctuation and case", Teams.postedAs("Sure,  I'll send it\ntoday.", "sure i'll send it today"), true)

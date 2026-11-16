@@ -100,6 +100,11 @@
   .lang { all: unset; box-sizing: border-box; flex: none; display: inline-flex; align-items: center; gap: 0; height: 24px; padding: 0 4px; margin-right: 8px; border-radius: 6px;
     white-space: nowrap; color: var(--color-text-secondary); cursor: default; transition: background-color 160ms var(--ease-standard); }
   .lang[hidden] { display: none; }
+  /* The language of what's being written, as macOS reads it: plain words before the mic. */
+  .detected { flex: none; white-space: nowrap; margin-right: 6px; color: var(--color-text-secondary); }
+  .detected b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+  .detected .word { white-space: pre; }
+  .detected[hidden], [data-fit~="nodetect"] #detected, [data-fit~="detectword"] #detected .word { display: none; }
   .lang b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
   .lang .auto { white-space: pre; }
   .lang[aria-disabled="false"] { cursor: pointer; }
@@ -229,6 +234,7 @@
         <div class="pseg tone" id="tone"><button data-register="normal" aria-pressed="true">Normal</button><button data-register="formal" aria-pressed="false">Formal</button></div>
         <span class="preview" id="preview" title="Preview · nothing is sent" hidden>Preview · nothing is sent</span>
         <span class="grow"></span>
+        <span class="detected" id="detected" hidden></span>
         <span class="dict-label" id="dictLabel"></span>
         <button class="icon-btn mic" id="mic" title="Dictate ⌘D" aria-label="Dictate" aria-pressed="false"></button>
         <button class="btn" id="translate" disabled>Translate <kbd>⏎</kbd></button>
@@ -346,6 +352,10 @@ function standIn(msg) {
       window.strip.teams(previewTeams());
       window.strip.layout({ value: "automatic" });
     }, 0);
+  } else if (msg.type === "detect") {
+    const t = msg.text || "", letters = (t.match(/\p{L}/gu) || []).length;
+    const language = letters < 6 ? null : /[¿¡ñ]|\b(el|los|las|que|para|por|hace|puedes)\b/i.test(t) ? "Español" : /[ãõç]|\b(você|não|obrigado)\b/i.test(t) ? "Português" : /\b(ciao|grazie|domani)\b/i.test(t) ? "Italiano" : "English";
+    setTimeout(() => window.strip.detected({ language, seq: msg.seq }), 0);
   } else if (msg.type === "layout") {
     setTimeout(() => window.strip.layout({ value: msg.value }), 0); // the stand-in moves nothing
   } else if (msg.type === "send") {
@@ -386,13 +396,14 @@ function standIn(msg) {
 // st is strip-state.js's state, replaced whole by each transition. commit() takes the new one and
 // writes the boxes the state wrote (the English that came back, the Spanish dictation heard).
 let st = SS.create();
+let detectSeq = 0, detectTimer = 0, detected = null;   // the language of what's being written (askDetect)
 let sendWatch = 0, dictTimer = 0, dictThen = null;
 const fields = () => ({ es: esIn.value, en: enOut.value });
 function commit(n) {
   const old = st;
   st = n;
   if (n.enSeq !== old.enSeq) enOut.value = n.en;
-  if (n.esSeq !== old.esSeq) esIn.value = n.esText;
+  if (n.esSeq !== old.esSeq) { esIn.value = n.esText; setTimeout(askDetect, 0); }   // dictation, a send, Esc: its language too
   if (!n.dictStopping && dictThen) { dictThen = null; clearTimeout(dictTimer); }   // what waited on the last words is dropped
 }
 const stopMsg = { type: "dictation", action: "stop" };
@@ -409,6 +420,7 @@ window.strip = {
   },
   focus() { esIn.focus(); },
   layout(m) { commit(SS.shellLayout(st, m)); paint(); },
+  detected(m) { if (m && m.seq === detectSeq) { detected = typeof m.language === "string" && m.language ? m.language : null; paintDetected(); } },
 };
 
 // ------------------------------------------------------------------------------ the server
@@ -509,6 +521,8 @@ function fitSteps() {
   if (over(en) && !$("lang").hidden) step("nolang");   // a notice with its buttons wins over the language, for now
   if (over(en)) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
   // The Spanish footer: Normal and Formal step aside last, only while a dictation label needs the room.
+  if (over(es) && !$("detected").hidden) step("detectword");   // "Detected · " leaves first; the title still says it
+  if (over(es) && !$("detected").hidden) step("nodetect");
   if (over(es)) step("tone");
 }
 window.addEventListener("resize", () => fitFooter());
@@ -620,6 +634,7 @@ function paint() {
   // (the preview note: fitFooter, below, which knows the room it has)
 
   fitFooter();
+  paintDetected();
 }
 
 // ------------------------------------------------------------------------------ translating and adjusting
@@ -717,7 +732,24 @@ function toggleDictation() { if (st.dict === "on") stopDictation(); else startDi
 
 // ------------------------------------------------------------------------------ the fields
 // The Spanish changed: an answer for the old text no longer counts; a translation of it is out of date.
-function onSpanishInput() { commit(SS.typed(st, fields())); paint(); }
+function onSpanishInput() { commit(SS.typed(st, fields())); paint(); askDetect(); }
+
+// The language of what's being written, guessed on the Mac by the shell (detect, then detected),
+// a moment after the typing stops. The page keeps only the language's name.
+function askDetect() {
+  clearTimeout(detectTimer);
+  const text = esIn.value.trim();
+  if (!text) { detectSeq++; detected = null; paintDetected(); return; }
+  detectTimer = setTimeout(() => { detectSeq++; post({ type: "detect", text: text.slice(0, 2000), seq: detectSeq }); }, 250);
+}
+function paintDetected() {
+  const d = $("detected"), show = !!detected && !!esIn.value.trim() && st.dict !== "on";
+  // "Detected · <b>Español</b>", like the reply's "Auto · <b>Português</b>".
+  if (show) { d.innerHTML = `<span class="word">Detected · </span><b></b>`; d.querySelector("b").textContent = detected; }
+  else d.replaceChildren();
+  d.title = show ? `Written in ${detected}, as macOS reads it` : "";
+  if (d.hidden === show) { d.hidden = !show; fitFooter(); }
+}
 esIn.addEventListener("input", onSpanishInput);
 enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value, fields(), settings().target)); paint(); });
 

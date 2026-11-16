@@ -996,6 +996,41 @@ check("Mic", "the dictation start message carries the settings' locale (es-MX, t
   } finally { await resetSettings(); }
 });
 
+// ===================================================================================== the language written in
+const detectedText = (p: any) => p.evaluate(() => { const d = document.getElementById("detected")!; return d.hidden || d.offsetWidth === 0 ? "" : (d.textContent ?? "").replace(/\s+/g, " ").trim(); });
+const detectedName = (p: any) => p.evaluate(() => document.querySelector("#detected b")?.textContent ?? "");
+check("Detect", "the language of what you write shows before the mic as 'Detected · <language>', named in itself; short, empty or dictating, nothing", async () => {
+  const t = await open();
+  eq(await detectedText(t.p), "", "nothing before typing");
+  await t.p.click("#es");
+  await t.p.keyboard.type("¿Puedes revisar el presupuesto antes del jueves?");
+  await t.p.waitForFunction(() => document.querySelector("#detected b")?.textContent === "Español", null, { timeout: 3000 });
+  eq(await detectedText(t.p), "Detected · Español", "Spanish, said as detected");
+  eq(await t.p.evaluate(() => getComputedStyle(document.querySelector("#detected b")!).fontWeight !== getComputedStyle(document.querySelector("#detected .word")!).fontWeight), true, "the language stands out from 'Detected ·'");
+  has(await t.p.locator("#detected").getAttribute("title"), "Español", "its title");
+  await t.p.fill("#es", "");
+  await t.p.keyboard.type("Could you take a look at the budget before Thursday?");
+  await t.p.waitForFunction(() => document.querySelector("#detected b")?.textContent === "English", null, { timeout: 3000 });
+  await t.p.fill("#es", "ok");
+  await t.p.dispatchEvent("#es", "input");
+  await settle(t.p, 600);
+  eq(await detectedText(t.p), "", "too short");
+  await t.p.fill("#es", "");
+  await t.p.dispatchEvent("#es", "input");
+  await settle(t.p, 300);
+  eq(await detectedText(t.p), "", "empty");
+  await t.p.click("#mic");
+  await settle(t.p, 900);
+  eq(await detectedText(t.p), "", "hidden while dictating");
+});
+narrowCheck("Narrow", "'Detected · ' leaves first, then the language, before Normal and Formal, when the input footer is short of room, and nothing overflows", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.keyboard.type("¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.");
+  await settle(t.p, 700);
+  await expectLayout(t.p);
+});
+
 // ===================================================================================== Send
 check("Send", "Send is off before there is English", async () => {
   const t = await open();

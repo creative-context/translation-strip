@@ -17,13 +17,15 @@ Claude Code adds its own context, as it does in any session, such as details abo
 
 ## What it reads from Teams
 
-Through Accessibility, about once a second while the strip is on screen: the window's position and size, its title for the chat's name, the message box to spot a draft and check what was pasted, and the latest messages in the open chat for context. It stores none of it.
+Through Accessibility, about once a second while the strip is on screen: the window's position and size, its title for the chat's name, the message box to spot a draft and check what was pasted, the latest messages in the open chat for context, and, right after a send, whether your message showed up there. It stores none of it.
 
 Teams shows its page to Accessibility only when an app asks, so the strip asks the way a screen reader does: when it finds Teams, and every few seconds while it can't see the message box. Teams keeps its page visible to Accessibility until it quits.
 
 ## The clipboard and the microphone
 
 To paste, the app borrows the clipboard for a moment and puts back what was there once Teams has taken the paste, unless you copied something else meanwhile. It marks what it puts there as temporary and private, so clipboard managers that respect those marks don't keep your message.
+
+As you write, the app asks Apple's NaturalLanguage, on your Mac, which language your text is in, and shows the answer in the strip. The text goes nowhere else for this, and the app keeps neither the text nor the answer.
 
 The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in the language you chose in Settings (Mexican Spanish unless you pick another), and the audio never leaves it. The first time for each language, macOS downloads that model from Apple.
 

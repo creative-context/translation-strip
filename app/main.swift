@@ -525,6 +525,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             if (m["action"] as? String) == "start" { dictation.start(locale: m["locale"] as? String) } else { dictation.stop() }
         case "open":
             open(m["what"] as? String ?? "")
+        case "detect":
+            // The language of what's being written, guessed on the Mac; the text isn't kept or logged.
+            let language = DetectedLanguage.of(m["text"] as? String ?? "")
+            call("detected", ["language": language as Any? ?? NSNull(), "seq": m["seq"] ?? NSNull()])
         default:
             ShellLog.write("the page sent an unknown message: \(type.prefix(20))")
         }

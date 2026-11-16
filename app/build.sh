@@ -22,8 +22,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Universal: one build for Apple silicon and one for Intel, joined with lipo.
 for arch in arm64 x86_64; do
   swiftc -O -swift-version 5 -target "$arch-apple-macos14.0" \
-    -framework AppKit -framework WebKit -framework Carbon -framework Speech -framework AVFoundation \
-    app/main.swift app/Teams.swift app/Dock.swift app/Send.swift app/Dictation.swift app/Hotkey.swift app/SettingsWindow.swift app/ShellKit.swift \
+    -framework AppKit -framework WebKit -framework Carbon -framework Speech -framework AVFoundation -framework NaturalLanguage \
+    app/main.swift app/Teams.swift app/Dock.swift app/Send.swift app/Dictation.swift app/Detect.swift app/Hotkey.swift app/SettingsWindow.swift app/ShellKit.swift \
     -o "build/TranslationStrip-$arch"
 done
 lipo -create build/TranslationStrip-arm64 build/TranslationStrip-x86_64 \

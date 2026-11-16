@@ -10,7 +10,7 @@
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build
-swiftc -swift-version 5 -framework AppKit -framework ApplicationServices -framework Speech -framework AVFoundation \
-  app/Dock.swift app/Teams.swift app/Send.swift app/Dictation.swift test/swift-check.swift \
+swiftc -swift-version 5 -framework AppKit -framework ApplicationServices -framework Speech -framework AVFoundation -framework NaturalLanguage \
+  app/Dock.swift app/Teams.swift app/Send.swift app/Dictation.swift app/Detect.swift test/swift-check.swift \
   -o build/swift-check
 ./build/swift-check
