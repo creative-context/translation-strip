@@ -74,8 +74,23 @@ async function until<T>(what: string, fn: () => Promise<T | undefined | false>, 
     }
     await Bun.sleep(50);
   }
-  throw new Error(`timed out waiting for ${what}${last ? `: ${last}` : ""}`);
+  // The end of the server's own log, so a failure on a build machine says what the server did.
+  const tail = currentLog().split("\n").slice(-30).join("\n");
+  throw new Error(`timed out waiting for ${what}${last ? `: ${last}` : ""}\n--- the server's log, last lines ---\n${tail}`);
 }
+
+// A server's output, read as it comes. Left unread, a pipe fills up (on a slow machine, which logs
+// more) and the server stops at its next log line.
+function collect(p: Subprocess<any, "pipe", "pipe">) {
+  let text = "";
+  const read = async (stream: ReadableStream) => {
+    const dec = new TextDecoder();
+    for await (const chunk of stream as any) text += dec.decode(chunk, { stream: true });
+  };
+  const done = Promise.all([read(p.stderr as ReadableStream), read(p.stdout as ReadableStream)]).then(() => {});
+  return { text: () => text, done };
+}
+let currentLog = () => "";
 const statusIs = (s: string) => until(`status ${s}`, async () => ((await state()).translator.status === s ? await state() : false));
 
 beforeAll(async () => {
@@ -90,7 +105,10 @@ beforeAll(async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
+  serverOut = collect(server as any);
+  currentLog = serverOut.text;
 });
+let serverOut: ReturnType<typeof collect>;
 
 afterAll(() => {
   try { server.kill(); } catch {}
@@ -594,7 +612,8 @@ describe("Translation Strip server", () => {
     parent.kill();
     const code = await Promise.race([server.exited, Bun.sleep(9000).then(() => "still running")]);
     expect(code).toBe(0);
-    const log = await new Response(server.stderr as ReadableStream).text();
+    await Promise.race([serverOut.done, Bun.sleep(2000)]);
+    const log = serverOut.text();
     expect(log).toContain(VERSION_WORDS);
     expect(log).toContain("session exited (code 1, login; claude 2.1.0 (Claude Code stand-in))");
     expect(log).toContain("update;");
@@ -614,6 +633,7 @@ describe("Translation Strip server: its limits", () => {
   const starts2 = () => lines(join(DIR2, "fake-starts.jsonl"));
   const normal = () => post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal" });
   let server2: Subprocess;
+  let server2Out: ReturnType<typeof collect>;
   let parent2: Subprocess;
 
   beforeAll(async () => {
@@ -642,6 +662,8 @@ describe("Translation Strip server: its limits", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+    server2Out = collect(server2 as any);
+    currentLog = server2Out.text;
     await until("the second server's translator", async () => (await state()).translator.status === "ready");
   });
 
@@ -758,7 +780,8 @@ describe("Translation Strip server: its limits", () => {
   test("its log names the words and the version, never Claude Code's text", async () => {
     parent2.kill();
     await Promise.race([server2.exited, Bun.sleep(9000)]);
-    const log = await new Response(server2.stderr as ReadableStream).text();
+    await Promise.race([server2Out.done, Bun.sleep(2000)]);
+    const log = server2Out.text();
     expect(log).toContain(VERSION_WORDS);
     expect(log).toContain("spare exited (code 1, update; claude 2.1.0 (Claude Code stand-in))");
     expect(log).toContain("5 restarts in 10 minutes");

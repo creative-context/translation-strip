@@ -77,7 +77,7 @@ Example: with Auto on and a last message from Priya Raman in Português, a reply
 
 ## How it sends
 
-The app brings Teams forward, pastes the reply into the message box, checks that the box holds exactly that text and then presses Return. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. A quote you're replying to isn't a draft: the message goes under it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
+The app brings Teams forward, pastes the reply into the message box, checks that the box holds exactly that text and then presses Return. It says Sent only once your message shows in the chat; if it doesn't, the reply stays in the strip with a notice to check the chat before sending again. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. A quote you're replying to isn't a draft: the message goes under it. If Teams changes the text as it's pasted, for example into a list, the message stays in the box unsent.
 
 To send something as it is, with no translation, type it in the reply box while the strip is empty: it goes to the chat open in Teams, as you wrote it.
 

@@ -250,6 +250,12 @@ enum SwiftCheck {
               TeamsScan.boxValue(quoteBox([paragraph("Sure, ", "sending it now.")], value: shortQuote + "Sure, sending it now."), FakeAX()).map { Teams.boxText($0) }, "Sure, sending it now.")
         check("boxValue: a quote and two paragraphs: one per line",
               TeamsScan.boxValue(quoteBox([paragraph("Sure."), paragraph("It's in the shared folder.")], value: shortQuote + "Sure.\nIt's in the shared folder."), FakeAX()).map { Teams.boxText($0) }, "Sure.\nIt's in the shared folder.")
+        // A sent message, as the chat shows it: the same first 40 letters and digits are enough.
+        check("postedAs: the same text", Teams.postedAs("Can you send me the slides?", "Can you send me the slides?"), true)
+        check("postedAs: other spacing, punctuation and case", Teams.postedAs("Sure,  I'll send it\ntoday.", "sure i'll send it today"), true)
+        check("postedAs: Teams adds a link's preview after it", Teams.postedAs("The notes are here: https://example.com/notes", "The notes are here: https://example.com/notes Example Notes - a shared page"), true)
+        check("postedAs: another message isn't it", Teams.postedAs("Can you send me the slides?", "Thanks, see you then."), false)
+        check("postedAs: an empty text never matches", Teams.postedAs("  ...  ", "Anything at all"), false)
         check("boxValue: a box that can't be read is nil", TeamsScan.boxValue(Node("AXTextArea", id: "new-message-1"), FakeAX()), String?.none)
         check("context: a quote alone isn't a draft",
               TeamsScan.context(title: "Chat | Sam Lee | Microsoft Teams", boxValue: TeamsScan.boxValue(quoteBox([paragraph("\u{2060}")], value: shortQuote + "\u{2060}"), FakeAX()), placeholder: "Type a message", hasList: true, from: nil, last: nil).draft, false)

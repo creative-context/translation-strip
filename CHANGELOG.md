@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The strip says Sent only once your message shows in the chat. Teams has emptied its box without posting a message, and the strip took that for sent and cleared the English. Now, if the message doesn't show within a few seconds, the English stays in the strip with a notice to check the chat. It also waits a moment after pasting before pressing Return.
+- The server tests read the server's output as it comes, so a slow build machine's longer log can't fill the pipe and stop the server, and a test that times out shows the end of the server's log.
+
 ## 0.8.5
 
 - The release with the app's zip: 0.8.4's build stopped on a slow test machine before making it. It has 0.8.4's change: a new install starts with Sonnet.

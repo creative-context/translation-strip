@@ -1122,7 +1122,7 @@ async function failedSend(reason: string) {
   const t = await open(`send=${reason}`);
   await translateFlow(t);
   await t.p.click("#send");
-  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
+  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "not-posted", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
   await waitState(t.p, want, 4000).catch(() => {});
   await t.p.waitForTimeout(1100);
   return t;
@@ -1196,6 +1196,13 @@ check("Send reasons", "mismatch: 'Teams changed it. Not sent', no retry button",
   eq((await actionLabels(t.p)).length, 0, "buttons");
   eq(await state(t.p), "error", "state");
   return "the build notes say 'Teams didn't take it. Not sent' + Try again; the code and contract say no retry";
+});
+check("Send", "not in the chat: Teams emptied its box but the message never showed; the English stays, the notice says to check the chat, and Send works again", async () => {
+  const t = await failedSend("not-posted");
+  eq(await state(t.p), "error", "state");
+  eq(await tagText(t.p), "Not in the chat. Check it before sending again", "notice");
+  ok((await val(t.p, "en")).length > 0, "the English should stay in the box");
+  ok(!(await t.p.locator("#send").isDisabled()), "Send should be on");
 });
 check("Send reasons", "not-sent: 'In Teams' box, not sent'", async () => {
   const t = await failedSend("not-sent");

@@ -15,7 +15,7 @@ import ApplicationServices
 struct SendOutcome {
     var ok: Bool
     var reason: String? = nil // the contract's reasons: "not-sent", "chat-changed", "no-paste" and "which-box" included
-    var sent = false // Return was pressed and the box emptied
+    var sent = false // Return was pressed, the box emptied and the message showed in the chat
 }
 
 // The user's clipboard, every item and every type, to put back exactly.
@@ -214,13 +214,48 @@ extension TeamsReader {
         }
         if leave { return SendOutcome(ok: true) }
 
+        // The newest message of the user's own before Return, to tell the new one from it.
+        let ownBefore = lastOwn()
+        // A moment for Teams to take the paste in: Return right as the text shows has emptied the
+        // box without posting it. Then the box must still hold the text.
+        Thread.sleep(forTimeInterval: TeamsShape.pasteSettle)
+        guard value().map({ Teams.sameText($0, expected, placeholder: ph) }) == true else {
+            log("send: the message box changed after the paste; nothing pressed")
+            return SendOutcome(ok: false, reason: "mismatch")
+        }
         guard key(36) else { // ⏎
             log("send: Teams lost the front before Return")
             return SendOutcome(ok: false, reason: "not-sent")
         }
-        if wait(2, { value()?.isEmpty == true }) { return SendOutcome(ok: true, sent: true) }
-        log("send: the message box didn't empty after Return")
-        return SendOutcome(ok: false, reason: "not-sent")
+        guard wait(2, { value()?.isEmpty == true }) else {
+            log("send: the message box didn't empty after Return")
+            return SendOutcome(ok: false, reason: "not-sent")
+        }
+        // An empty box isn't proof: Teams has emptied it without posting. The message must show in
+        // the chat as the user's newest. With no message list to read, the empty box is all there is.
+        guard messages != nil else { return SendOutcome(ok: true, sent: true) }
+        let shown = wait(TeamsShape.postedWait) {
+            guard let now = lastOwn() else { return false }
+            if let b = ownBefore, CFEqual(b.item, now.item), b.text == now.text { return false }
+            return Teams.postedAs(text, now.text)
+        }
+        if shown { return SendOutcome(ok: true, sent: true) }
+        log("send: the box emptied but the message didn't show in the chat")
+        return SendOutcome(ok: false, reason: "not-posted")
+    }
+
+    // The user's newest message in the open chat, among the last few items: its element and text.
+    // nil when there's none. A list Teams rebuilt (no items left) is looked for again.
+    private func lastOwn() -> (item: AXUIElement, text: String)? {
+        var items = messages.map { AX.children($0) } ?? []
+        if items.isEmpty, let window, let list = TeamsScan.find(in: window, live).list {
+            messages = list
+            items = AX.children(list)
+        }
+        for item in items.suffix(TeamsShape.messagesBack).reversed() {
+            if let m = TeamsScan.message(in: item, live), m.mine { return (item, m.text) }
+        }
+        return nil
     }
 
     private func wait(_ seconds: Double, _ done: () -> Bool) -> Bool {

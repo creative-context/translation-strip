@@ -319,6 +319,7 @@ describe("what a send leaves behind", () => {
     ["chat-changed", "ready", "error: Chat changed. Not sent", []],
     ["mismatch", "ready", "error: Teams changed it. Not sent", []],
     ["not-sent", "ready", "error: In Teams' box, not sent", []],
+    ["not-posted", "ready", "error: Not in the chat. Check it before sending again", []],
     ["no-paste", "ready", "error: Teams didn't take it. Not sent", []],
     ["not-own-server", "ready", "error: Not the app's own page. Not sent", []],
     ["something new", "ready", "error: Couldn't send", []],
@@ -379,6 +380,12 @@ describe("what a send leaves behind", () => {
 
 // ---------------------------------------------------------------------------------------- leftover
 describe("the leftover after a send that left text in Teams' box", () => {
+  test("not posted: the English stays in the box, with nothing left behind in Teams, and Send works again", () => {
+    const s = sendAnd(ready(), { ok: false, reason: "not-posted" });
+    expect(s.st.en).toBe(EN);
+    expect(s.st.leftover).toBeNull();
+    expect(canSend(s)).toBe(true);
+  });
   for (const reason of ["mismatch", "not-sent"]) {
     test(`${reason}: the same text found as a "draft" is our own, never added a second time`, () => {
       let s = sendAnd(ready(), { ok: false, reason });

@@ -60,6 +60,8 @@ enum TeamsShape {
     static let walkLimit = 8000
     static let findAgain: TimeInterval = 1 // how often to search again while the box isn't found
     static let askAgain: TimeInterval = 5 // how often to ask for the tree again while the box isn't found
+    static let postedWait: TimeInterval = 5 // how long a sent message has to show in the chat
+    static let pasteSettle: TimeInterval = 0.4 // between the paste showing in the box and Return
     static let depthLimit = 80
     static let messagesBack = 15
     static let textLimit = 4000
@@ -251,6 +253,15 @@ enum Teams {
             boxText(s, placeholder: placeholder).components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
         return lines(a) == lines(b)
+    }
+
+    // Whether a message in the chat is the one just sent: its first 40 letters and digits are in
+    // the message, whatever the spacing, punctuation or case, and whatever Teams adds (a link's
+    // preview, say).
+    static func postedAs(_ sent: String, _ message: String) -> Bool {
+        func key(_ s: String) -> String { String(String.UnicodeScalarView(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })) }
+        let head = String(key(sent).prefix(40))
+        return !head.isEmpty && key(message).contains(head)
     }
 }
 

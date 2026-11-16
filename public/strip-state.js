@@ -339,6 +339,9 @@
       case "no-access": n.access = Object.assign({}, st.access, { accessibility: false }); break;
       // Return didn't send it: the text is still in the box, so trying again would only find it there.
       case "not-sent": n.leftover = st.lastText; n.notice = { kind: "error", text: "In Teams' box, not sent" }; break;
+      // Teams emptied its box but the message never showed in the chat: the English stays here, so
+      // nothing is lost. It may still show late, so the notice says to look before sending again.
+      case "not-posted": n.notice = { kind: "error", text: "Not in the chat. Check it before sending again" }; break;
       // The box never changed after the paste: nothing is in it.
       // Teams may still take the paste late (the clipboard keeps the English a few seconds): if it
       // lands, the next send finds our own text there, never offers to add it again.
