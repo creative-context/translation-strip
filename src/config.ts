@@ -15,8 +15,17 @@ export const TRANSLATOR_DIR = join(STRIP_DIR, "translator"); // the hidden sessi
 export const PORT = Number(process.env.STRIP_PORT) || 4812;
 export const PARENT_ENV = "STRIP_PARENT_PID";
 
-// The claude command: STRIP_CLAUDE (tests use a stand-in), or `claude` from the PATH.
-export const CLAUDE = process.env.STRIP_CLAUDE || "claude";
+// Where Claude Code's installers put `claude`, besides the PATH: the native installer
+// (~/.local/bin), its older local install (~/.claude/local), Homebrew on Apple silicon and on
+// Intel, and a user npm prefix. An app opened from
+// Finder gets only /usr/bin:/bin:/usr/sbin:/sbin, which has none of them.
+const HOME = homedir();
+export const TOOL_PATH = [...new Set([...(process.env.PATH ?? "").split(":").filter(Boolean),
+  join(HOME, ".local/bin"), join(HOME, ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin", join(HOME, ".npm-global/bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(":");
+// The claude command: STRIP_CLAUDE (tests use a stand-in), else `claude` on TOOL_PATH, looked up
+// each time, so installing Claude Code while the app runs is enough. "claude" when it isn't there
+// (starting it then fails with ENOENT, which the translator reports as "missing").
+export const claudeCommand = () => process.env.STRIP_CLAUDE || Bun.which("claude", { PATH: TOOL_PATH }) || "claude";
 
 export const TIMEOUT_MS = Number(process.env.STRIP_TIMEOUT_MS) || 45_000; // one request, then failed and a restart
 // A request's first try waits this long before a fresh session tries once more (TIMEOUT_MS for that one).

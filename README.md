@@ -55,15 +55,24 @@ Made-up messages, run through the real translator with [the example voice guide]
 
 ## Requirements
 
-macOS 14 or later, the new Microsoft Teams, Claude Code signed in with a Claude plan, and [Bun](https://bun.sh), which runs the app's server. To build it yourself, the Xcode Command Line Tools too.
+macOS 14 or later, the new Microsoft Teams, [Bun](https://bun.sh), which runs the app's server, and [Claude Code](https://code.claude.com/docs/en/setup) signed in with a Claude plan that includes it (Pro, Max, Team or Enterprise). To build it yourself, the Xcode Command Line Tools too.
 
 **Status:** 0.x. It reads Teams through Accessibility, so a Teams update can change what it finds.
 
 ## Install
 
-Download the zip from the [latest release](https://github.com/creative-context/translation-strip/releases/latest), unzip it and move Translation Strip to Applications. Apple hasn't checked it, so the first time macOS won't open it: go to System Settings › Privacy & Security and choose Open Anyway.
+1. **Connect Claude.** Install Claude Code in Terminal, then run `claude` once and sign in with your Claude account in the browser. The strip uses that sign-in, so there's no API key to paste.
+   ```bash
+   curl -fsSL https://claude.ai/install.sh | bash
+   ```
+2. **Install Bun**, which runs the app's server:
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   ```
+3. **Install the app.** Download the zip from the [latest release](https://github.com/creative-context/translation-strip/releases/latest), unzip it and move Translation Strip to Applications. Apple hasn't checked it, so the first time macOS won't open it: go to System Settings › Privacy & Security and choose Open Anyway.
+4. **Set it up.** Pick your voice guide in Settings (⌘,), and allow Accessibility when the strip asks.
 
-Then pick your voice guide in Settings (⌘,), and allow Accessibility when the strip asks. To build it yourself, run `sh app/build.sh --install`. [The guide](docs/guide.md#install) has the details.
+To build it yourself, run `sh app/build.sh --install`. [The guide](docs/guide.md#install) has the details, including Homebrew.
 
 ## Use it
 

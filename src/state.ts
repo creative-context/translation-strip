@@ -4,7 +4,7 @@ import { DICTATION, LANGUAGES } from "./languages";
 
 export type Model = "haiku" | "sonnet" | "opus";
 export type Mode = "send" | "leave";
-export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "failed";
+export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "missing" | "failed";
 export type Status = "starting" | "ready" | "busy" | "error";
 
 // notes: each language's own notes, only non-empty ones, keyed by the language's name.

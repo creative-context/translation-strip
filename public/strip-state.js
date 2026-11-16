@@ -87,6 +87,7 @@
     if (kind === "guide") return { state: "noguide", tag: { kind: "idle", text: "Voice guide not set" }, actions: [{ act: "guide", label: "Open guide settings" }] };
     const retry = [{ act: what === "adjust" ? "retry-adjust" : "retry", label: "Try again" }];
     // Setup things the user fixes outside the strip: gray, like the plan limit and the guide, and trying again after.
+    if (kind === "missing") return { state: "login", tag: { kind: "idle", text: "Install Claude Code" }, actions: retry };
     if (kind === "login") return { state: "login", tag: { kind: "idle", text: "Sign in to Claude Code" }, actions: retry };
     if (kind === "update") return { state: "update", tag: { kind: "idle", text: "Claude Code needs an update" }, actions: retry };
     if (kind === "offline") return { state: "error", tag: { kind: "error", text: "Can't reach Claude" }, actions: retry };

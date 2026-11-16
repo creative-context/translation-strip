@@ -6,7 +6,7 @@
 // are checked first, without a server.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Subprocess } from "bun";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { classify, errorFor, stderrWord } from "../src/errors";
@@ -187,6 +187,22 @@ describe("pure parts", () => {
     // A ninth language, by way of a new target, breaks the 1 to 8 rule.
     expect(checkChange({ target: "中文" }, { ...now, languages: LANGUAGES.slice(0, 8) as unknown as string[] })).toBeNull();
     expect(DICTATION.map((d) => d.id)).toEqual(["es-MX", "es-US", "es-ES", "en-US", "en-GB", "pt-BR", "pt-PT", "fr-FR", "de-DE", "it-IT"]);
+  });
+
+  test("opened from Finder (a short PATH), the server still finds claude where its installer puts it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "strip-test-home-"));
+    try {
+      mkdirSync(join(home, ".local/bin"), { recursive: true });
+      writeFileSync(join(home, ".local/bin/claude"), "#!/bin/sh\n");
+      chmodSync(join(home, ".local/bin/claude"), 0o755);
+      const code = `const c = await import(${JSON.stringify(join(ROOT, "src/config.ts"))}); console.log(c.claudeCommand()); console.log(c.TOOL_PATH)`;
+      const p = Bun.spawn([process.execPath, "-e", code], { env: { HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, stdout: "pipe" });
+      const [cmd, path] = (await new Response(p.stdout).text()).trim().split("\n");
+      expect(cmd).toBe(join(home, ".local/bin/claude"));
+      expect(path.split(":")).toEqual(expect.arrayContaining(["/usr/bin", join(home, ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test("run by hand, the server's port is 4812, not the app's 4810", async () => {
@@ -721,6 +737,19 @@ describe("Translation Strip server: its limits", () => {
     expect(starts2().length).toBe(before.length + 1);
     expect((await normal()).status).toBe(200);
   }, 25000);
+
+  test("no claude to start: the error says to install Claude Code, and a request starts it once it's there", async () => {
+    const fake = join(DIR2, "claude"), away = join(DIR2, "claude-away");
+    renameSync(fake, away);
+    try {
+      await post("/api/translator/restart");
+      await until("the missing error", async () => (await state()).translator.error === "missing");
+      expect(await normal()).toEqual({ status: 503, body: { error: "missing" } });
+    } finally {
+      renameSync(away, fake);
+    }
+    expect((await normal()).status).toBe(200);
+  }, 15000);
 
   test("its log names the words and the version, never Claude Code's text", async () => {
     parent2.kill();

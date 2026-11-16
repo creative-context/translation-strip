@@ -4,11 +4,26 @@ The README has the short version. This is the whole of it.
 
 ## Install
 
+### Connect Claude
+
+The strip writes through Claude Code on your own Claude plan (Pro, Max, Team or Enterprise), with Claude Code's own sign-in. There's no API key and no account in the app.
+
+1. Install Claude Code in Terminal with its installer, or with Homebrew:
+   ```bash
+   curl -fsSL https://claude.ai/install.sh | bash
+   ```
+   ```bash
+   brew install --cask claude-code
+   ```
+2. Run `claude` once and sign in with your Claude account in the browser it opens. Then you can quit it.
+
+The app finds `claude` where these installers put it (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), even when you open the app from Finder. If it can't, the strip says "Install Claude Code"; once it's installed, Try again starts it. If it says "Sign in to Claude Code", run `claude` in Terminal and sign in again. [Claude Code's setup page](https://code.claude.com/docs/en/setup) has the other ways to install it.
+
 ### Download it
 
 1. Download `Translation-Strip-<version>.zip` from the [latest release](https://github.com/creative-context/translation-strip/releases/latest) and unzip it.
 2. Move Translation Strip to Applications and open it. Apple hasn't checked the app, so the first time macOS won't open it: go to System Settings › Privacy & Security and choose Open Anyway.
-3. Make sure [Bun](https://bun.sh) is installed: the app runs its server with it.
+3. Make sure [Bun](https://bun.sh) is installed (`curl -fsSL https://bun.sh/install | bash`, or `brew install oven-sh/bun/bun`): the app runs its server with it.
 4. Continue with step 2 below.
 
 A downloaded build is signed ad hoc, so after each update you allow Accessibility again.

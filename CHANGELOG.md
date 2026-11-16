@@ -3,6 +3,8 @@
 ## Unreleased
 
 - The message box says "Write in any language": you can write in any language, not only Spanish, and the translator is told so.
+- The app finds Claude Code where its installers put it (`~/.local/bin`, Homebrew), also when you open the app from Finder, whose short PATH hid it before. Without Claude Code, the strip says "Install Claude Code" instead of "Couldn't translate".
+- The README and the guide say how to connect Claude: install Claude Code, run `claude` once and sign in.
 - "Can't find Teams' message box" is red, like the other notices that keep Send off.
 - The README has examples in text: Spanish, a mix and Formal into English, and Auto into Portuguese and French, from the real translator with the example voice guide.
 - The three multi-language server tests get more time, so a slow build machine doesn't fail them.

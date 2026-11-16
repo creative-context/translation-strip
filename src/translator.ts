@@ -18,7 +18,7 @@
 // when the same spawn runs on its own; a fresh session answers.
 import type { Subprocess } from "bun";
 import { close, mkdirSync, readFileSync, statSync, write } from "node:fs";
-import { CLAUDE, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TRANSLATOR_DIR } from "./config";
+import { claudeCommand, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TOOL_PATH, TRANSLATOR_DIR } from "./config";
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
 import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
 import { fileThere } from "./settings";
@@ -59,6 +59,7 @@ const INHERITED = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAU
 export function translatorEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !INHERITED.test(k)) env[k] = v;
+  env.PATH = TOOL_PATH; // the places Claude Code installs to, for an app opened from Finder
   env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   return env;
@@ -71,7 +72,7 @@ const EFFORT: Partial<Record<Model, string>> = { opus: "low" };
 
 export function translatorArgs(model: Model): string[] {
   return [
-    CLAUDE, "-p",
+    claudeCommand(), "-p",
     "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--model", model,
     ...(EFFORT[model] ? ["--effort", EFFORT[model]!] : []),
@@ -155,7 +156,8 @@ export class Translator {
         stdio: ["pipe", "pipe", "pipe", "pipe"],
       }) as any;
     } catch (e: any) {
-      this.setError({ error: "failed", until: null });
+      // ENOENT: there's no claude to start, so Claude Code isn't installed (or not where it installs to).
+      this.setError({ error: e?.code === "ENOENT" ? "missing" : "failed", until: null });
       log(`couldn't start claude (${e?.code ?? "error"})`);
       return;
     }
@@ -405,7 +407,7 @@ export class Translator {
     if (this.versionAsked) return;
     this.versionAsked = true;
     try {
-      const p = Bun.spawn([CLAUDE, "--version"], { cwd: versionCwd(), env: translatorEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const p = Bun.spawn([claudeCommand(), "--version"], { cwd: versionCwd(), env: translatorEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
       const timer = setTimeout(() => p.kill(), 10_000);
       new Response(p.stdout).text().then(
         (out) => {

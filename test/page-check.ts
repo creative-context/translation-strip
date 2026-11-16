@@ -1485,6 +1485,21 @@ check("Replies", "LOGIN: 'Sign in to Claude Code' in gray, Try again asks again"
   await waitState(t.p, "login");
   eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
 });
+check("Replies", "NOCLAUDE: 'Install Claude Code' in gray, Try again asks again", async () => {
+  const t = await open();
+  await t.p.click("#es");
+  await t.p.fill("#es", "NOCLAUDE esto");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "login");
+  eq(await tagText(t.p), "Install Claude Code", "tag");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
+  eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
+  await t.p.click("#actions [data-act=retry]");
+  // The mock answers at once, so "translating" may be over before it's seen: wait for the second request.
+  for (let i = 0; i < 40 && reqsTo(t, "/api/translate").length < 2; i++) await settle(t.p, 100);
+  await waitState(t.p, "login");
+  eq(reqsTo(t, "/api/translate").length, 2, "translate requests");
+});
 check("Replies", "UPDATE: 'Claude Code needs an update' in gray, Try again asks again", async () => {
   const t = await open();
   await t.p.click("#es");
@@ -1843,6 +1858,7 @@ const layoutCases: [string, () => Promise<T>][] = [
   ["box not found, ready", async () => { const t = await open("shape=unknown"); await ready(t); return t; }],
   ["box not found, idle", async () => open("shape=unknown")],
   ["sign in", async () => { const t = await open(); await t.p.fill("#es", "LOGIN"); await t.p.press("#es", "Enter"); await waitState(t.p, "login"); return t; }],
+  ["install claude", async () => { const t = await open(); await t.p.fill("#es", "NOCLAUDE"); await t.p.press("#es", "Enter"); await waitState(t.p, "login"); return t; }],
   ["needs an update", async () => { const t = await open(); await t.p.fill("#es", "UPDATE"); await t.p.press("#es", "Enter"); await waitState(t.p, "update"); return t; }],
   ["no-paste notice + long chat", async () => { const t = await open("send=no-paste"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 }); return t; }],
   ["not-own-server notice + long chat", async () => { const t = await open("send=not-own-server"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not sent"), null, { timeout: 3000 }); return t; }],

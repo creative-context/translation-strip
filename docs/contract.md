@@ -30,7 +30,7 @@ After every reply, in any language, the server writes it to a temp file, runs `b
 - `GET /api/state` and `/api/stream` (from the kit). The state:
   ```json
   { "now": 0, "server": { "version": "x.y.z", "pid": 0 },
-    "translator": { "status": "starting" | "ready" | "busy" | "error", "error": null | "offline" | "limit" | "login" | "update" | "guide" | "failed", "until": null,
+    "translator": { "status": "starting" | "ready" | "busy" | "error", "error": null | "offline" | "limit" | "login" | "update" | "guide" | "missing" | "failed", "until": null,
                     "model": "haiku" | "sonnet" | "opus", "guide": "ok" | "missing", "linter": "ok" | "missing" },
     "settings": { "model": "haiku", "mode": "send", "target": "English", "auto": false, "languages": ["English"], "notes": {}, "dictation": "es-MX",
                   "files": { "voiceGuide": "<file name>" | null, "linter": "<file name>" | null } },
@@ -99,7 +99,7 @@ Shell:
 Page:
 - A translation remembers the chat it was written for. If the chat in Teams changes while the English is ready, a red tag "Written for <chat>" shows (with the out-of-date translation, the states that keep Send off use the error color), and Send is off until you translate again (⏎) or go back to that chat.
 - `shape: "unknown"`: a red notice "Can't find Teams' message box" and Send off.
-- New texts: `login` "Sign in to Claude Code", `update` "Claude Code needs an update", `no-paste` "Teams didn't take it. Not sent", `not-own-server` "Not the app's own page. Not sent".
+- New texts: `missing` "Install Claude Code" (no `claude` on the PATH or where its installers put it), `login` "Sign in to Claude Code", `update` "Claude Code needs an update", `no-paste` "Teams didn't take it. Not sent", `not-own-server` "Not the app's own page. Not sent".
 - The page's state, its transitions and what it shows (`st`, the phase changes, `view()`) live in `public/strip-state.js` as plain functions with no DOM, loaded with a script tag, and are tested with `bun test`; `index.html` keeps the DOM and the events.
 
 ## Vertical layout (0.5.0)

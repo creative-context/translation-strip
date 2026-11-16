@@ -1,6 +1,6 @@
 # Privacy
 
-The app and its server run on your Mac, and the server listens on `127.0.0.1` only. The only thing that leaves your Mac is what the hidden session sends to Claude.
+The app and its server run on your Mac, and the server listens on `127.0.0.1` only. The only thing that leaves your Mac is what the hidden session sends to Claude. The server starts Claude Code's own `claude` command, from your PATH or where Claude Code installs to (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), with Claude Code's own sign-in.
 
 ## What goes to Claude
 
