@@ -19,6 +19,8 @@ Claude Code adds its own context, as it does in any session, such as details abo
 
 Through Accessibility, about once a second while the strip is on screen: the window's position and size, its title for the chat's name, the message box to spot a draft and check what was pasted, and the latest messages in the open chat for context. It stores none of it.
 
+Teams shows its page to Accessibility only when an app asks, so the strip asks the way a screen reader does: when it finds Teams, and every few seconds while it can't see the message box. Teams keeps its page visible to Accessibility until it quits.
+
 ## The clipboard and the microphone
 
 To paste, the app borrows the clipboard for a moment and puts back what was there once Teams has taken the paste, unless you copied something else meanwhile. It marks what it puts there as temporary and private, so clipboard managers that respect those marks don't keep your message.

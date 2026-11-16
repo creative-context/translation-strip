@@ -46,10 +46,16 @@ enum TeamsShape {
     static let domID = "AXDOMIdentifier"
     static let domClasses = "AXDOMClassList"
 
+    // Teams builds its page's accessibility tree only when asked. AXEnhancedUserInterface is the
+    // ask screen readers make: Teams answers "not implemented" and builds the tree anyway.
+    // AXManualAccessibility is the older ask, which today's Teams doesn't support.
+    static let treeAsks = ["AXEnhancedUserInterface", "AXManualAccessibility"]
+
     // Limits: a walk looks at 8,000 elements at most, 80 levels deep; the last message is
     // looked for among the last 15; a message's text is cut at 4,000 characters.
     static let walkLimit = 8000
     static let findAgain: TimeInterval = 1 // how often to search again while the box isn't found
+    static let askAgain: TimeInterval = 5 // how often to ask for the tree again while the box isn't found
     static let depthLimit = 80
     static let messagesBack = 15
     static let textLimit = 4000
@@ -349,8 +355,9 @@ enum TeamsScan {
 // Reads Teams for the page. Used from one serial queue only (the app's Teams queue), which
 // the send shares, so a read never runs in the middle of a send.
 final class TeamsReader: @unchecked Sendable {
-    // Teams builds its web content's accessibility tree only when asked: the app asks once
-    // per Teams process. The read-only check doesn't.
+    // Teams builds its web content's accessibility tree only when asked (TeamsShape.treeAsks):
+    // the app asks when it finds Teams, and again every few seconds while the box isn't found,
+    // since a Teams that just opened may not have its page up yet. The read-only check doesn't.
     let asksForTree: Bool
     var log: (String) -> Void = { _ in } // never gets text from Teams
     init(asksForTree: Bool = true) { self.asksForTree = asksForTree }
@@ -367,6 +374,7 @@ final class TeamsReader: @unchecked Sendable {
     private var lastFound: (from: String?, last: String?) = (nil, nil)
     private var unknownLogged: Set<String> = [] // windows and titles already logged without a box
     private var nextFind = Date.distantPast // the next search while the box isn't found yet, or while there are several
+    private var nextAsk = Date.distantPast // the next ask for the tree while the box isn't found
     private(set) var boxes = 0 // message boxes the last search found
     private(set) var several = false // more than one, and none had Teams' cursor
     private(set) var readMs = 0.0 // how long the last read took
@@ -393,8 +401,16 @@ final class TeamsReader: @unchecked Sendable {
         pid = teams.processIdentifier
         let a = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(a, 1.0)
-        if asksForTree { AXUIElementSetAttributeValue(a, "AXManualAccessibility" as CFString, kCFBooleanTrue) }
         app = a
+        askForTree()
+    }
+
+    // Asks Teams to build its page's accessibility tree, with each of TeamsShape.treeAsks. Teams
+    // keeps it built until it quits, so asking again changes nothing once it's there.
+    private func askForTree() {
+        guard asksForTree, let app else { return }
+        nextAsk = Date().addingTimeInterval(TeamsShape.askAgain)
+        for name in TeamsShape.treeAsks { AXUIElementSetAttributeValue(app, name as CFString, kCFBooleanTrue) }
     }
 
     // What the box holds now, without its placeholder; nil when it can't be read.
@@ -423,6 +439,8 @@ final class TeamsReader: @unchecked Sendable {
         // search again, at most once a second.
         if value == nil || boxes > 1, Date() >= nextFind {
             nextFind = Date().addingTimeInterval(TeamsShape.findAgain)
+            // With no box, the tree itself may be missing: ask for it again, every few seconds.
+            if value == nil, Date() >= nextAsk { askForTree() }
             find(in: main.element)
             value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
         }
