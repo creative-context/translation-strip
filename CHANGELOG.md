@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.7
 
 - Once your message shows in the chat, the reply box empties again, with "✓ Sent · <time>" in the footer for a few seconds, then it fades out. The reply stays only while the send isn't confirmed, or when it fails.
 - An error tag's mark is the warning triangle.
