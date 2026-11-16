@@ -111,7 +111,8 @@
     else if (st.notice) { tag(st.notice.kind, st.notice.text, st.notice.actions || []); if (st.notice.kind === "error") v.state = "error"; }
     else if (p === "idle" && tr.guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (t && !t.open) tag("idle", "Teams isn't open", [{ act: "open-teams", label: "Open Teams" }]);
-    else if (shapeUnknown(st)) tag("idle", "Can't find Teams' message box");
+    // Send can't work: red, like the other states that keep Send off.
+    else if (shapeUnknown(st)) tag("error", "Can't find Teams' message box");
     else if (shapeSeveral(st)) tag("needs", "Click the box in Teams first");
     else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
     else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }

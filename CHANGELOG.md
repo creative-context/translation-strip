@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The message box says "Write in any language": you can write in any language, not only Spanish, and the translator is told so.
+- "Can't find Teams' message box" is red, like the other notices that keep Send off.
+- The README has examples in text: Spanish, a mix and Formal into English, and Auto into Portuguese and French, from the real translator with the example voice guide.
+- The three multi-language server tests get more time, so a slow build machine doesn't fail them.
+
 ## 0.8.0
 
 - Languages besides English. In Settings (⌘, or Settings… in the app menu) you pick a target language: English, Español, Português, Français, Deutsch, Italiano, Nederlands, Polski, Svenska, Türkçe, 日本語, 한국어 or 中文.

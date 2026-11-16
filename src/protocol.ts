@@ -2,7 +2,7 @@
 // user's voice guide, which follows this text in the system prompt.
 import { LANGUAGES, languageNamed } from "./languages";
 
-const PROTOCOL = `You work inside a small Mac app. The user writes a chat message for Microsoft Teams, in Spanish, in a mix of languages, or as a rough draft, and you give back the message they will send, in the language the request asks for.
+const PROTOCOL = `You work inside a small Mac app. The user writes a chat message for Microsoft Teams, in any language, in a mix of languages, or as a rough draft, and you give back the message they will send, in the language the request asks for.
 
 Each user turn is one JSON object:
 - "id": a short code for this request. Copy it, unchanged, into your reply.

@@ -9,7 +9,7 @@
 
 <p align="center">
   A companion for your Teams:<br>
-  write in Spanish, get English or the chat's language in your own voice, and send it with ⌘⏎.
+  write in any language, get English or the chat's language in your own voice, and send it with ⌘⏎.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@
   <a href="CHANGELOG.md"><b>Changelog</b></a>
 </p>
 
-Write the message the way it comes out: in Spanish, mixing Spanish and English, or in rough English. Press Return and the strip gives you the message in English or the language you chose, in the voice your guide describes. Press ⌘Return and it goes to the chat you have open in Teams, with no copying or pasting.
+Write the message the way it comes out: in Spanish or any other language, mixing languages, or as a rough draft. Press Return and the strip gives you the message in English or the language you chose, in the voice your guide describes. Press ⌘Return and it goes to the chat you have open in Teams, with no copying or pasting.
 
 ## Features
 
@@ -40,6 +40,18 @@ Write the message the way it comes out: in Spanish, mixing Spanish and English, 
 - **Your Claude plan, no API key.** A hidden Claude Code session writes the translation, a fresh one for every message.
 - **Your linter has the last word.** An error it finds gets fixed once before you see the translation.
 - **Out of the way.** It docks on any side of Teams, follows it, and hides when Teams does.
+
+## Examples
+
+Made-up messages, run through the real translator with [the example voice guide](docs/voice-guide-example.md). With your own guide, the wording follows your voice.
+
+| You write | The chat is in | You get |
+|---|---|---|
+| ¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada. | English | Could you please review the budget before Thursday? If needed, we can go over it on the call. |
+| ya subí los cambios, ¿les das un review antes del merge? | English | I've already pushed the changes. Could you please review them before the merge? |
+| Le comparto la propuesta actualizada. Quedo atento a sus comentarios. (Formal) | English | I'm sharing the updated proposal with you. I look forward to your comments. |
+| Claro, te la mando hoy antes de las 6. | Português, with Auto on | Claro, te mando hoje antes das 6. |
+| Sí, nos vemos el martes a las 10. | Français, with Auto on | Oui, on se voit mardi à 10h. |
 
 ## Requirements
 

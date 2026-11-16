@@ -439,7 +439,7 @@ describe("Translation Strip server", () => {
     await post("/api/translate", { text: "¿me mandas las slides?" });
     expect(turns().at(-1).keys).not.toContain("notes");
     await post("/api/settings", { target: "English", languages: ["English"] });
-  });
+  }, 30000); // eleven requests, each on a fresh session: slow on a shared build machine
 
   test("an adjust keeps the current text's language, with Auto off", async () => {
     expect((await post("/api/settings", { auto: true })).status).toBe(200);
@@ -451,7 +451,7 @@ describe("Translation Strip server", () => {
     expect((await post("/api/adjust", { text: "x", current: "Hej.", note: "add thanks", language: "Dansk" })).body).toMatchObject({ language: "Dansk", from: "target" });
     // No language given: the target.
     expect((await post("/api/adjust", { text: "x", current: "Hi.", note: "add thanks" })).body).toMatchObject({ language: "English", from: "target" });
-  });
+  }, 15000);
 
   test("the linter's fix keeps the reply's language", async () => {
     const before = turns().length;
@@ -462,7 +462,7 @@ describe("Translation Strip server", () => {
     expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]);
     expect(t[1]).toMatchObject({ target: "Português", auto: false });
     expect((await post("/api/settings", { auto: false })).status).toBe(200);
-  });
+  }, 15000);
 
   test("a POST needs JSON and the server's own Origin", async () => {
     const leave = JSON.stringify({ mode: "leave" });

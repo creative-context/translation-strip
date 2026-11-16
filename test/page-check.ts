@@ -1278,10 +1278,10 @@ check("Send reasons", "which-box: orange 'Click the box in Teams first', no butt
   ok((await val(t.p, "en")).length > 0, "the English stays");
   ok(await t.p.locator("#send").isEnabled(), "Send should be on");
 });
-check("Teams", "box not found (?shape=unknown): gray notice, no chat name, no button; Send stays off after a translation", async () => {
+check("Teams", "box not found (?shape=unknown): red notice, no chat name, no button; Send stays off after a translation", async () => {
   const t = await open("shape=unknown");
   eq(await tagText(t.p), "Can't find Teams' message box", "tag");
-  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-idle", "tag class (gray)");
+  eq(await t.p.locator("#status").getAttribute("class"), "status tag s-error", "tag class (red)");
   eq((await actionLabels(t.p)).length, 0, "buttons");
   ok(!(await vis(t.p, "#to")), "the 'To' chat name should be hidden");
   eq(await t.p.locator("#strip").getAttribute("data-teams"), "unknown", "data-teams");

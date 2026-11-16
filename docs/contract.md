@@ -98,7 +98,7 @@ Shell:
 
 Page:
 - A translation remembers the chat it was written for. If the chat in Teams changes while the English is ready, a red tag "Written for <chat>" shows (with the out-of-date translation, the states that keep Send off use the error color), and Send is off until you translate again (⏎) or go back to that chat.
-- `shape: "unknown"`: a gray notice "Can't find Teams' message box" and Send off.
+- `shape: "unknown"`: a red notice "Can't find Teams' message box" and Send off.
 - New texts: `login` "Sign in to Claude Code", `update` "Claude Code needs an update", `no-paste` "Teams didn't take it. Not sent", `not-own-server` "Not the app's own page. Not sent".
 - The page's state, its transitions and what it shows (`st`, the phase changes, `view()`) live in `public/strip-state.js` as plain functions with no DOM, loaded with a script tag, and are tested with `bun test`; `index.html` keeps the DOM and the events.
 
