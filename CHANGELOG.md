@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.6
 
 - ⌥⏎ starts a new line, like ⇧⏎. It used to translate.
 - The language you're writing in shows before the mic as "Detected · Español", named in itself (Español, English, Italiano…). macOS reads it on your Mac as you type, with Apple's NaturalLanguage, and nothing is kept.
