@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.5
 
+- The release with the app's zip: 0.8.4's build stopped on a slow test machine before making it. It has 0.8.4's change: a new install starts with Sonnet.
 - The server tests give a slow build machine time to start each new translator session (30 s per test, 20 s per wait), so slowness alone doesn't fail a release, as it did for 0.8.4.
 
 ## 0.8.4
