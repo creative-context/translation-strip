@@ -4,7 +4,7 @@
 // (the last describe) with a short timeout, its own day and its own clock, so the limits show
 // without slowing or disturbing the first. Pure parts (the stderr words, the reply's id, the port)
 // are checked first, without a server.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import type { Subprocess } from "bun";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +16,9 @@ import { checkChange, loadSettings } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/state";
 
 const ROOT = resolve(import.meta.dir, "..");
+// A shared build machine, like GitHub's Mac, can take many seconds to start each new translator
+// session: every test gets 30 s, and every wait 20 s, so slowness alone never fails a test.
+setDefaultTimeout(30000);
 const PORT = 4811;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DIR = mkdtempSync(join(tmpdir(), "strip-test-"));
@@ -59,7 +62,7 @@ const alive = (pid: number) => {
   }
 };
 
-async function until<T>(what: string, fn: () => Promise<T | undefined | false>, ms = 8000): Promise<T> {
+async function until<T>(what: string, fn: () => Promise<T | undefined | false>, ms = 20000): Promise<T> {
   const end = Date.now() + ms;
   let last: unknown;
   while (Date.now() < end) {
@@ -468,7 +471,7 @@ describe("Translation Strip server", () => {
     expect((await post("/api/adjust", { text: "x", current: "Hej.", note: "add thanks", language: "Dansk" })).body).toMatchObject({ language: "Dansk", from: "target" });
     // No language given: the target.
     expect((await post("/api/adjust", { text: "x", current: "Hi.", note: "add thanks" })).body).toMatchObject({ language: "English", from: "target" });
-  }, 15000);
+  }, 30000);
 
   test("the linter's fix keeps the reply's language", async () => {
     const before = turns().length;
@@ -479,7 +482,7 @@ describe("Translation Strip server", () => {
     expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]);
     expect(t[1]).toMatchObject({ target: "Português", auto: false });
     expect((await post("/api/settings", { auto: false })).status).toBe(200);
-  }, 15000);
+  }, 30000);
 
   test("a POST needs JSON and the server's own Origin", async () => {
     const leave = JSON.stringify({ mode: "leave" });
@@ -514,14 +517,14 @@ describe("Translation Strip server", () => {
     expect(r.body.settings).toMatchObject({ model: "haiku", mode: "send", files: { voiceGuide: "other-guide.md", linter: "fake-lint.ts" } });
     expect(JSON.stringify(r.body)).not.toContain(DIR); // no paths in the reply
     expect(JSON.parse(readFileSync(SETTINGS, "utf8"))).toMatchObject({ voiceGuide: other, model: "haiku", mode: "send" });
-    await until("a spare with the other guide", async () => starts().length > before && starts().at(-1).systemGuide === "Plain words.\nNo filler.\nOne idea per line.", 15000);
+    await until("a spare with the other guide", async () => starts().length > before && starts().at(-1).systemGuide === "Plain words.\nNo filler.\nOne idea per line.");
 
     expect((await post("/api/settings", { linter: "" })).status).toBe(200); // "" clears it
     expect(JSON.parse(readFileSync(SETTINGS, "utf8")).linter).toBeUndefined();
     await until("linter missing", async () => (await state()).translator.linter === "missing");
     expect((await post("/api/settings", { voiceGuide: GUIDE, linter: join(ROOT, "test/fake-lint.ts") })).status).toBe(200);
     await until("linter ok", async () => (await state()).translator.linter === "ok");
-    await until("a spare with the guide", async () => starts().at(-1).systemGuide === GUIDE_TEXT, 15000);
+    await until("a spare with the guide", async () => starts().at(-1).systemGuide === GUIDE_TEXT);
     await statusIs("ready");
     expect(JSON.stringify(await state())).not.toContain(DIR);
   }, 40000); // a slower Mac, like GitHub's, takes longer: each new spare may take more than 8 s there
@@ -596,7 +599,7 @@ describe("Translation Strip server", () => {
     expect(log).toContain("session exited (code 1, login; claude 2.1.0 (Claude Code stand-in))");
     expect(log).toContain("update;");
     for (const never of [SECRET, "Invalid API key", "unknown option", "slides", "MEMORY", "Ops sync", "Kim Park"]) expect(log).not.toContain(never);
-  }, 12000);
+  }, 30000);
 });
 
 // The limits: the 45 s timeout (shortened), the restart cap, a spare Claude Code refuses at start, the
@@ -695,7 +698,7 @@ describe("Translation Strip server: its limits", () => {
     expect(starts2().length).toBe(n + 1); // the sixth gets its second try, and isn't restarted after it
     expect((await normal()).status).toBe(200); // a request gets its try
     await statusIs("ready");
-  }, 20000);
+  }, 30000);
 
   test("Claude Code that refuses the app's options: update, and no restart loop", async () => {
     writeFileSync(join(DIR2, "fake-exit-at-start"), `error: unknown option '--disable-slash-commands' ${SECRET}`);
@@ -723,7 +726,7 @@ describe("Translation Strip server: its limits", () => {
     await until("the old process stopped", async () => !alive(old));
     await statusIs("ready");
     expect((await normal()).status).toBe(200);
-  }, 25000);
+  }, 30000);
 
   test("after the Mac sleeps (a gap between ticks) the spare is replaced, once", async () => {
     await statusIs("ready");
@@ -737,7 +740,7 @@ describe("Translation Strip server: its limits", () => {
     await Bun.sleep(6500); // the next tick sees a normal gap
     expect(starts2().length).toBe(before.length + 1);
     expect((await normal()).status).toBe(200);
-  }, 25000);
+  }, 30000);
 
   test("no claude to start: the error says to install Claude Code, and a request starts it once it's there", async () => {
     const fake = join(DIR2, "claude"), away = join(DIR2, "claude-away");
@@ -750,7 +753,7 @@ describe("Translation Strip server: its limits", () => {
       renameSync(away, fake);
     }
     expect((await normal()).status).toBe(200);
-  }, 15000);
+  }, 30000);
 
   test("its log names the words and the version, never Claude Code's text", async () => {
     parent2.kill();
@@ -762,5 +765,5 @@ describe("Translation Strip server: its limits", () => {
     expect(log).toContain("woke");
     expect(log).not.toContain(SECRET);
     expect(log).not.toContain("unknown option");
-  }, 12000);
+  }, 30000);
 });

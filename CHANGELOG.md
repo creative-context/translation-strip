@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The settings test waits longer for each new translator session, so a slow build machine doesn't fail it.
+- The server tests give a slow build machine time to start each new translator session (30 s per test, 20 s per wait), so slowness alone doesn't fail a release, as it did for 0.8.4.
 
 ## 0.8.4
 
