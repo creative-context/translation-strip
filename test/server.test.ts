@@ -514,17 +514,17 @@ describe("Translation Strip server", () => {
     expect(r.body.settings).toMatchObject({ model: "haiku", mode: "send", files: { voiceGuide: "other-guide.md", linter: "fake-lint.ts" } });
     expect(JSON.stringify(r.body)).not.toContain(DIR); // no paths in the reply
     expect(JSON.parse(readFileSync(SETTINGS, "utf8"))).toMatchObject({ voiceGuide: other, model: "haiku", mode: "send" });
-    await until("a spare with the other guide", async () => starts().length > before && starts().at(-1).systemGuide === "Plain words.\nNo filler.\nOne idea per line.");
+    await until("a spare with the other guide", async () => starts().length > before && starts().at(-1).systemGuide === "Plain words.\nNo filler.\nOne idea per line.", 15000);
 
     expect((await post("/api/settings", { linter: "" })).status).toBe(200); // "" clears it
     expect(JSON.parse(readFileSync(SETTINGS, "utf8")).linter).toBeUndefined();
     await until("linter missing", async () => (await state()).translator.linter === "missing");
     expect((await post("/api/settings", { voiceGuide: GUIDE, linter: join(ROOT, "test/fake-lint.ts") })).status).toBe(200);
     await until("linter ok", async () => (await state()).translator.linter === "ok");
-    await until("a spare with the guide", async () => starts().at(-1).systemGuide === GUIDE_TEXT);
+    await until("a spare with the guide", async () => starts().at(-1).systemGuide === GUIDE_TEXT, 15000);
     await statusIs("ready");
     expect(JSON.stringify(await state())).not.toContain(DIR);
-  }, 20000); // a slower Mac, like GitHub's, takes longer than the default 5 s
+  }, 40000); // a slower Mac, like GitHub's, takes longer: each new spare may take more than 8 s there
 
   test("settings: writes the file, and a new model restarts the translator", async () => {
     const before = starts().length;

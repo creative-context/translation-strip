@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The settings test waits longer for each new translator session, so a slow build machine doesn't fail it.
+
 ## 0.8.4
 
 - A new install starts with Sonnet instead of Haiku. Haiku is faster, but its replies sound less natural. If you already picked a model in the menu, it stays.
