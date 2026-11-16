@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.4
 
 - A new install starts with Sonnet instead of Haiku. Haiku is faster, but its replies sound less natural. If you already picked a model in the menu, it stays.
 
