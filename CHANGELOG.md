@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1
 
 - The message box says "Write in any language": you can write in any language, not only Spanish, and the translator is told so.
 - The app finds Claude Code where its installers put it (`~/.local/bin`, Homebrew), also when you open the app from Finder, whose short PATH hid it before. Without Claude Code, the strip says "Install Claude Code" instead of "Couldn't translate".
