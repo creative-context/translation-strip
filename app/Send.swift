@@ -115,7 +115,9 @@ extension TeamsReader {
             return SendOutcome(ok: false, reason: "chat-changed")
         }
         let ph = placeholder
-        let value = { (AX.attr(box, kAXValueAttribute) as? String).map { Teams.boxText($0, placeholder: ph) } }
+        // What the box holds, without the placeholder or a reply's quote (TeamsScan.boxValue).
+        let live = self.live
+        let value = { TeamsScan.boxValue(box, live).map { Teams.boxText($0, placeholder: ph) } }
         guard let before = value() else { return SendOutcome(ok: false, reason: "no-chat") }
         if !before.isEmpty && !afterDraft { return SendOutcome(ok: false, reason: "draft") }
 

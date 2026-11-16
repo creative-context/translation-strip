@@ -227,6 +227,32 @@ enum SwiftCheck {
         check("boxText: non-breaking spaces become plain spaces", Teams.boxText("Can\u{00A0}you\u{00A0}send it?"), "Can you send it?")
         check("boxText: line breaks become \\n", Teams.boxText("One\r\nTwo\rThree"), "One\nTwo\nThree")
         check("boxText: zero-width characters are dropped", Teams.boxText("Hel\u{200B}lo\u{FEFF}"), "Hello")
+        check("boxText: a word joiner alone (an empty paragraph) is empty", Teams.boxText("\n\u{2060}"), "")
+
+        // A reply's quote sits inside the box, as a card before the paragraphs, and the box's value
+        // includes it in short: the box's text is the paragraphs' own.
+        func quoteCard() -> Node {
+            Node("AXGroup", classes: [TeamsShape.quoteClass], kids: [
+                Node("AXGroup", desc: "Quoted message", kids: [
+                    Node("AXStaticText", value: "Sam Lee"), Node("AXStaticText", value: "11/05/2026 10:12"),
+                    Node("AXButton", desc: "Remove Reference"),
+                    Node("AXGroup", kids: [Node("AXStaticText", value: "Can you send the deck before noon? I want to check the numbers first.")]),
+                ]),
+            ])
+        }
+        func paragraph(_ texts: String...) -> Node { Node("AXGroup", kids: texts.map { Node("AXStaticText", value: $0) }) }
+        func quoteBox(_ paras: [Node], value: String) -> Node { Node("AXTextArea", id: "new-message-1", value: value, kids: [quoteCard()] + paras) }
+        let shortQuote = "Sam Lee 11/05/2026 10:12 Can you send the deck before noon? I want to che\u{2026}\n"
+        let plain = Node("AXTextArea", id: "new-message-1", value: "Can you send me the slides?", kids: [paragraph("Can you send me the slides?")])
+        check("boxValue: no quote: the box's value", TeamsScan.boxValue(plain, FakeAX()), "Can you send me the slides?")
+        check("boxValue: a quote alone is no draft", TeamsScan.boxValue(quoteBox([paragraph("\u{2060}")], value: shortQuote + "\u{2060}"), FakeAX()).map { Teams.boxText($0) }, "")
+        check("boxValue: a quote and the user's text: the text only",
+              TeamsScan.boxValue(quoteBox([paragraph("Sure, ", "sending it now.")], value: shortQuote + "Sure, sending it now."), FakeAX()).map { Teams.boxText($0) }, "Sure, sending it now.")
+        check("boxValue: a quote and two paragraphs: one per line",
+              TeamsScan.boxValue(quoteBox([paragraph("Sure."), paragraph("It's in the shared folder.")], value: shortQuote + "Sure.\nIt's in the shared folder."), FakeAX()).map { Teams.boxText($0) }, "Sure.\nIt's in the shared folder.")
+        check("boxValue: a box that can't be read is nil", TeamsScan.boxValue(Node("AXTextArea", id: "new-message-1"), FakeAX()), String?.none)
+        check("context: a quote alone isn't a draft",
+              TeamsScan.context(title: "Chat | Sam Lee | Microsoft Teams", boxValue: TeamsScan.boxValue(quoteBox([paragraph("\u{2060}")], value: shortQuote + "\u{2060}"), FakeAX()), placeholder: "Type a message", hasList: true, from: nil, last: nil).draft, false)
         check("boxText: outer whitespace is trimmed, inner kept", Teams.boxText("  \n One  two \n"), "One  two")
         check("boxText: the box's own placeholder in another language is empty", Teams.boxText("Escribe un mensaje\n", placeholder: "Escribe un mensaje"), "")
         check("boxText: with another placeholder, the English one is a draft", Teams.boxText("Type a message", placeholder: "Escribe un mensaje"), "Type a message")

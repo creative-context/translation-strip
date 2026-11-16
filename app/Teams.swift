@@ -32,6 +32,10 @@ enum TeamsShape {
     static let boxRole = "AXTextArea"
     static let boxIDPrefix = "new-message-"
     static let placeholder = "Type a message"
+    // A reply's quote: Teams puts it inside the box, as a card before the paragraphs, and the
+    // box's value includes it in short.
+    static let quoteClass = "card__react-wrapper"
+    static let textRole = "AXStaticText"
 
     // The messages.
     static let listID = "chat-pane-list"
@@ -234,7 +238,7 @@ enum Teams {
         func plain(_ v: String) -> String {
             var s = v.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
                 .replacingOccurrences(of: "\u{00A0}", with: " ")
-            for invisible in ["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}"] { s = s.replacingOccurrences(of: invisible, with: "") }
+            for invisible in ["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}"] { s = s.replacingOccurrences(of: invisible, with: "") }
             return s.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let s = plain(value)
@@ -294,6 +298,26 @@ enum TeamsScan {
         found.box = chosen?.box
         found.placeholder = chosen?.placeholder
         return found
+    }
+
+    // The box's text, before the placeholder comes off (Teams.boxText): its value, or, when the box
+    // holds a reply's quote, the text of its paragraphs after the quote, one per line, since the
+    // value includes the quote too. nil when the box can't be read.
+    static func boxValue<R: AXReading>(_ box: R.Element, _ r: R) -> String? {
+        let v = r.attrs(box, [kAXValueAttribute, kAXChildrenAttribute])
+        guard let value = v[0] as? String else { return nil }
+        let kids = (v[1] as? [R.Element]) ?? []
+        let isQuote = { (e: R.Element) in ((r.attrs(e, [TeamsShape.domClasses])[0] as? [String]) ?? []).contains(TeamsShape.quoteClass) }
+        guard kids.contains(where: isQuote) else { return value }
+        return kids.filter { !isQuote($0) }.map { text(in: $0, r) }.joined(separator: "\n")
+    }
+
+    // The static texts inside an element, in order, run together.
+    static func text<R: AXReading>(in e: R.Element, _ r: R, depth: Int = 0) -> String {
+        let v = r.attrs(e, [kAXRoleAttribute, kAXValueAttribute, kAXChildrenAttribute])
+        if (v[0] as? String) == TeamsShape.textRole { return v[1] as? String ?? "" }
+        guard depth < 20 else { return "" }
+        return ((v[2] as? [R.Element]) ?? []).map { text(in: $0, r, depth: depth + 1) }.joined()
     }
 
     // The last message from someone other than the user, else the last message: its author
@@ -413,9 +437,9 @@ final class TeamsReader: @unchecked Sendable {
         for name in TeamsShape.treeAsks { AXUIElementSetAttributeValue(app, name as CFString, kCFBooleanTrue) }
     }
 
-    // What the box holds now, without its placeholder; nil when it can't be read.
+    // What the box holds now, without its placeholder or a reply's quote; nil when it can't be read.
     func boxValue() -> String? {
-        composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }.map { Teams.boxText($0, placeholder: placeholder) }
+        composer.flatMap { TeamsScan.boxValue($0, live) }.map { Teams.boxText($0, placeholder: placeholder) }
     }
 
     func read() -> TeamsContext {
@@ -433,7 +457,7 @@ final class TeamsReader: @unchecked Sendable {
             find(in: main.element)
             nextFind = Date().addingTimeInterval(TeamsShape.findAgain)
         }
-        var value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
+        var value = composer.flatMap { TeamsScan.boxValue($0, live) }
         // No box yet (Teams may still be building the view it just switched to, as when a channel
         // opens), the box went away, or there are several (the cursor may have moved to another):
         // search again, at most once a second.
@@ -442,7 +466,7 @@ final class TeamsReader: @unchecked Sendable {
             // With no box, the tree itself may be missing: ask for it again, every few seconds.
             if value == nil, Date() >= nextAsk { askForTree() }
             find(in: main.element)
-            value = composer.flatMap { AX.attr($0, kAXValueAttribute) as? String }
+            value = composer.flatMap { TeamsScan.boxValue($0, live) }
         }
         let (from, last) = value == nil ? (nil, nil) : lastMessage()
         let context = TeamsScan.context(title: title, boxValue: value, placeholder: placeholder, hasList: messages != nil, from: from, last: last, several: several)

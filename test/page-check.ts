@@ -1879,6 +1879,43 @@ for (const [name, mk] of layoutCases) {
     } finally { await resetSettings(); }
   });
 }
+// The translation can be copied in every state that shows it, as in the app: body.embed turns
+// selection off for the page, and the box is read-only in every state but Ready.
+for (const [name, mk] of layoutCases) {
+  check("Copy", `${name}: the translation can be selected and copied in the app`, async () => {
+    try {
+      const t = await mk();
+      await settle(t.p);
+      const shown = await t.p.evaluate(() => {
+        document.body.classList.add("embed");
+        const en = document.getElementById("en") as HTMLTextAreaElement;
+        const r = en.getBoundingClientRect();
+        return getComputedStyle(en).visibility === "visible" && r.width > 0 && en.value.trim().length > 0;
+      });
+      if (!shown) return "no translation shown in this state";
+      const box = (await t.p.locator("#en").boundingBox())!;
+      const picked = () => t.p.evaluate(() => { const en = document.getElementById("en") as HTMLTextAreaElement; return en.value.slice(en.selectionStart, en.selectionEnd); });
+      // A few points along the first line, so one lands on a word rather than a space.
+      let word = "";
+      for (const x of [24, 12, 40, 60, 90]) {
+        await t.p.mouse.dblclick(box.x + x, box.y + 12);
+        word = await picked();
+        if (/\w/.test(word)) break;
+      }
+      ok(/\w/.test(word), `a double-click should select a word, selected ${JSON.stringify(word)}`);
+      await t.p.mouse.move(box.x + 4, box.y + 12);
+      await t.p.mouse.down();
+      await t.p.mouse.move(box.x + 160, box.y + 12, { steps: 8 });
+      await t.p.mouse.up();
+      const dragged = await picked();
+      ok(dragged.length > word.length, `a drag should select more than a word, selected ${JSON.stringify(dragged)}`);
+      await t.p.evaluate(() => { (window as any).__copied = null; document.addEventListener("copy", () => { const en = document.getElementById("en") as HTMLTextAreaElement; (window as any).__copied = en.value.slice(en.selectionStart, en.selectionEnd); }, { once: true }); });
+      await t.p.keyboard.press("Meta+c");
+      eq(await t.p.evaluate(() => (window as any).__copied), dragged, "⌘C copies the selection");
+    } finally { await resetSettings(); }
+  });
+}
+
 // A failed translation leaves the English box empty: its notice and button take the box's middle,
 // where "Sent to …" shows (in the row, the text area above the footer; in the column, the whole module).
 check("Replies", "a failed translation: the notice and Try again sit in the middle of the English box, where 'Sent to' shows; a good translation puts them back in the footer", async () => {

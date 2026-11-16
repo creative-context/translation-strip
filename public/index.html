@@ -12,6 +12,10 @@
   /* The strip fills its window: as wide as the window, 145 pt tall in the app. */
   body { --msg: 14px; --msg-lh: 20px; }
   body.embed textarea, body.embed input { cursor: text !important; }
+  /* The family's base turns selection off in the app. The text boxes keep it, read-only too: under
+     user-select: none WebKit won't select in a read-only box, and the translation is read-only in
+     every state but Ready, so it couldn't be copied while Teams had a draft or the text was out of date. */
+  body.embed textarea, body.embed input { -webkit-user-select: text; user-select: text; }
 
   /* Two panels, each with its own controls: the Spanish side writes and translates, the English
      side adjusts and sends. No separate bar, so the text gets the height. */
