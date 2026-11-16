@@ -1,12 +1,12 @@
 // Records docs/demo-dark.gif and docs/demo-light.gif: how the strip is used, with made-up text. A simplified chat window sits
 // on top (a generic chat, not any real app's look) and the strip is docked under it, as wide, as
 // in the app. The story, with Auto on: in a chat in English you write in Spanish, ⏎ translates, ⌘⏎
-// sends, and the message shows in the chat; then a chat in Portuguese, where the same steps give
-// Portuguese. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
+// sends, and the message shows in the chat; then a chat in Portuguese, where you write in English and
+// the same steps give Portuguese. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
 // window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
 // theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
-// Starts its own page mock (port 4816) and answers the translations itself, so each one fits its
-// Spanish. Needs Playwright (PLAYWRIGHT_DIR, by default the one in ../mac-app-design) and ffmpeg.
+// Starts its own page mock (port 4816) and answers the translations itself, so each one fits what
+// you wrote. Needs Playwright (PLAYWRIGHT_DIR, by default the one in ../mac-app-design) and ffmpeg.
 // Run from the repo: `bun docs/demo-gif.ts`.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,12 +23,12 @@ const W = 880, CHAT_H = 300, STRIP_H = 145;
 const CHATS = [
   { id: "en", name: "Priya Raman", initials: "PR", color: "#3d5a80", language: "English",
     msgs: ["Morning! I'm back from the offsite.", "Anything you need from me this week?"],
-    es: "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.",
+    write: "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.",
     out: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call." },
   { id: "pt", name: "Rafael Costa", initials: "RC", color: "#5a7d4f", language: "Português",
     msgs: ["Oi! Tudo bem por aí?", "Você consegue me mandar a apresentação até amanhã?"],
-    es: "Claro, te la mando hoy antes de las 6.",
-    out: "Claro, te envio hoje antes das 6." },
+    write: "Sure, I will send it over today before 6 pm.",
+    out: "Claro, vou mandar hoje antes das 6 da tarde." },
 ];
 
 // The scene: the chat window, the strip in a frame under it, and the key hint.
@@ -91,7 +91,7 @@ if (!set.ok) throw new Error(`the mock refused the settings: ${set.status}`);
 const browser = await webkit.launch();
 const context = await browser.newContext({ viewport: { width: W, height: CHAT_H + STRIP_H }, deviceScaleFactor: 2, colorScheme: "dark", timezoneId: "UTC" });
 await context.clock.setFixedTime(new Date("2026-03-03T10:42:00Z"));
-// Each translation fits its Spanish: the chat's language, chosen by Auto.
+// Each translation fits what you wrote: the chat's language, chosen by Auto.
 let current = CHATS[0];
 await context.route(`${BASE}/api/translate`, async (route: any) => {
   await new Promise((r) => setTimeout(r, 700));
@@ -140,12 +140,12 @@ const openChat = async (c: (typeof CHATS)[number]) => {
   await page.evaluate((id: string) => { for (const e of document.querySelectorAll(".chat")) e.classList.toggle("on", e.id === `chat-${id}`); }, c.id);
   await frame.evaluate((c: any) => (window as any).strip.teams({ open: true, chat: c.name, from: c.name, last: c.msgs[1], draft: false, shape: "ok" }), c);
 };
-// One message, start to end: type the Spanish, ⏎, read it, ⌘⏎, and it shows in the chat.
+// One message, start to end: type it, ⏎, read the reply, ⌘⏎, and it shows in the chat.
 const tell = async (c: (typeof CHATS)[number]) => {
   await frame.click("#es");
   await snap(250);
-  for (let i = 2; i <= c.es.length; i += 2) { await frame.fill("#es", c.es.slice(0, i)); await snap(55); }
-  await frame.fill("#es", c.es);
+  for (let i = 2; i <= c.write.length; i += 2) { await frame.fill("#es", c.write.slice(0, i)); await snap(55); }
+  await frame.fill("#es", c.write);
   await snap(600);
 
   await hint("<kbd>⏎</kbd>Translate");

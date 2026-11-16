@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.8.2
 
 - Replying to a quoted message works: Teams puts the quote inside its message box, and the strip took it for a draft and asked to add after it. It now reads only what you wrote after the quote, and sends the reply under it.
 - The translation can be selected and copied in every state that shows it, also while Teams has a draft or the text is out of date. In the app it couldn't be selected while it was read-only.
+- The README's examples include messages written in other languages: Italian, a rough draft in English, and English into a chat in Portuguese. The animation shows that last one: in the Portuguese chat you write in English.
 
 ## 0.8.1
 

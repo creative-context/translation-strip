@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.1-6FA6E8?labelColor=1A1D21" alt="Version 0.8.1">
+  <img src="https://img.shields.io/badge/version-0.8.2-6FA6E8?labelColor=1A1D21" alt="Version 0.8.2">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
@@ -50,8 +50,11 @@ Made-up messages, run through the real translator with [the example voice guide]
 | ¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada. | English | Could you please review the budget before Thursday? If needed, we can go over it on the call. |
 | ya subí los cambios, ¿les das un review antes del merge? | English | I've already pushed the changes. Could you please review them before the merge? |
 | Le comparto la propuesta actualizada. Quedo atento a sus comentarios. (Formal) | English | I'm sharing the updated proposal with you. I look forward to your comments. |
+| Ciao! Ho finito le slide per domani, ci dai un'occhiata stasera se hai tempo? | English | Hi! I finished the slides for tomorrow. Could you take a look tonight if you have time? |
+| hey pls check the pr when u can, i fixed the tests yday, want to merge today | English | Hey, could you please check the PR when you can? I fixed the tests yesterday and want to merge today. |
 | Claro, te la mando hoy antes de las 6. | Português, with Auto on | Claro, te mando hoje antes das 6. |
 | Sí, nos vemos el martes a las 10. | Français, with Auto on | Oui, on se voit mardi à 10h. |
+| Sure, I will send it over today before 6 pm. | Português, with Auto on | Claro, vou mandar hoje antes das 6 da tarde. |
 
 ## Requirements
 
