@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.3
 
 - You can type the message yourself in the reply box while the strip is empty: it goes as you wrote it, with no translation, to the chat open in Teams.
 - The README's animation has two more chats: a message in a mix of Spanish and English, and one in Swahili, both into English.
