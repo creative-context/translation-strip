@@ -105,8 +105,6 @@ describe("translating", () => {
       s = applied(s, SS.translateDone(s.st, s.f, d));
       expect(s.st.phase).toBe(phase);
       expect(s.f.en).toBe(en);
-      // A failed translation's notice takes the English box's middle; anything else stays in the footer.
-      expect(SS.centerNotice(s.st, s.f)).toBe(phase === "error");
     });
   }
   test("a failed adjust keeps the English, so its notice stays in the footer", () => {
@@ -114,7 +112,7 @@ describe("translating", () => {
     s = applied(s, SS.adjustStart(s.st, s.f, "corto").st);
     s = applied(s, SS.adjustDone(s.st, s.f, { error: "failed" }).st);
     expect(s.f.en).toBe(EN);
-    expect(SS.centerNotice(s.st, s.f)).toBe(false);
+    expect(SS.view(s.st, null).tag?.kind).toBe("error");
   });
 
   test("an answer for text that was changed since is dropped", () => {
@@ -276,14 +274,22 @@ describe("what a send leaves behind", () => {
     expect(canSend({ ...s, st: SS.shellAccess(s.st, {}).st })).toBe(true);
   });
 
-  test("success: the boxes are cleared, who and when show, the next typing starts over", () => {
+  test("success: the English stays, dimmed, with 'Sent to <chat> · time' in the footer; the other box empties; the next typing starts over", () => {
     const s = sendAnd(ready(), { ok: true });
     expect(s.st.phase).toBe("sent");
-    expect([s.f.es, s.f.en]).toEqual(["", ""]);
-    expect(SS.doneView(s.st)).toEqual({ text: "Sent to Priya Raman", when: "· 9:41 AM" });
+    expect([s.f.es, s.f.en]).toEqual(["", EN]);
+    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent to Priya Raman · 9:41 AM" });
+    expect(SS.view(s.st, null).sent).toBe(true);
+    expect(canSend(s)).toBe(false);
     expect(s.st.chatFor).toBe("");
-    expect(SS.fadeDone(s.st).phase).toBe("idle");
-    expect(SS.typed(s.st, { es: "h", en: "" }).phase).toBe("idle");
+    const next = SS.typed(s.st, { es: "h", en: EN });
+    expect(next.phase).toBe("idle");
+    expect(SS.view(next, null).sent).toBe(true); // still the sent English until a new one replaces it
+  });
+  test("the sent message stays until the next one: no fade", () => {
+    const s = sendAnd(ready(), { ok: true });
+    expect(SS.fadeDone).toBeUndefined();
+    expect(SS.view(s.st, null).tag?.kind).toBe("done");
   });
 
   test("success in leave mode says it was left, not sent", () => {
@@ -291,12 +297,8 @@ describe("what a send leaves behind", () => {
     const go = SS.sendStart(s.st, s.f, false, "leave");
     const done = SS.sendDone(go.st, { ok: true }, "9:41 AM");
     expect(done.phase).toBe("leave");
-    expect(SS.doneView(done)).toEqual({ text: "Left in Teams, not sent", when: "" });
-  });
-
-  test("the fade does nothing once something else has happened", () => {
-    const s = ready();
-    expect(SS.fadeDone(s.st)).toBe(s.st);
+    expect(SS.view(done, null).tag).toEqual({ kind: "idle", text: "Left in Teams, not sent" });
+    expect(SS.view(done, null).sent).toBe(true);
   });
 
   test("an answer nobody asked for is ignored", () => {

@@ -1047,24 +1047,30 @@ async function sendFlow(how: "click" | "key", query = "") {
   eq(s[0].mode, "send", "mode");
   return t;
 }
-check("Send", "Send button, mode send: Sending…, then 'Sent to <chat> · time' in the middle of the English box, boxes cleared, then fades", async () => {
+check("Send", "Send button, mode send: Sending…, then 'Sent to <chat> · time' in the footer, in green with a check; the English stays, dimmed; the Spanish box empties; it stays until the next message", async () => {
   const t = await sendFlow("click");
+  const english = await val(t.p, "en");
   await waitState(t.p, "sent");
-  const done = (await t.p.locator("#doneMsg").innerText()).replace(/\s+/g, " ").trim();
-  ok(/^Sent to .+ · \d{1,2}:\d{2} (AM|PM)$/.test(done), `message ${JSON.stringify(done)}`);
-  eq(await tagText(t.p), "", "no tag in the footer while the message shows");
-  const box = await t.p.locator(W < H ? ".f.en" : ".f.en .en-wrap").boundingBox(), msg = await t.p.locator("#doneMsg .who").boundingBox();
-  ok(!!box && !!msg && Math.abs((msg.y + msg.height / 2) - (box.y + box.height / 2)) < 3, "message centered in the English box");
+  const done = (await tagText(t.p)).replace(/\s+/g, " ").trim();
+  ok(/^Sent to .+ · \d{1,2}:\d{2} (AM|PM)$/.test(done), `footer tag ${JSON.stringify(done)}`);
+  eq(await t.p.evaluate(() => document.getElementById("status")!.className), "status tag s-done", "the tag's kind");
+  ok(await t.p.evaluate(() => !!document.querySelector("#status .ok svg")), "the tag has its check");
+  eq(await val(t.p, "en"), english, "the English stays in its box");
+  ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).visibility === "visible"), "the English shows");
+  ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).color !== getComputedStyle(document.getElementById("es")!).color), "the sent English is dimmed");
   eq(await val(t.p, "es"), "", "Spanish box");
-  eq(await val(t.p, "en"), "", "English box");
   eq(await focused(t.p), "es", "focus");
-  await waitState(t.p, "idle", 6000);
-  eq(await tagText(t.p), "", "tag after the fade");
+  ok(await t.p.locator("#send").isDisabled(), "Send is off: it was sent");
+  await settle(t.p, 5000);
+  eq(await state(t.p), "sent", "still sent after 5 s: no fade");
+  await t.p.keyboard.type("Hola");
+  await waitState(t.p, "idle");
+  eq(await val(t.p, "en"), english, "the sent English stays until a new one replaces it");
 });
 check("Send", "⌘⏎ sends the same way", async () => {
   const t = await sendFlow("key");
   await waitState(t.p, "sent");
-  eq(await val(t.p, "en"), "", "English box");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
 });
 check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams, not sent'", async () => {
   await setMode("leave");
@@ -1079,8 +1085,8 @@ check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams
     eq(await tagText(t.p), "Putting in Teams…", "tag while sending");
     eq((await sends(t))[0].mode, "leave", "mode");
     await waitState(t.p, "leave");
-    eq((await t.p.locator("#doneMsg").innerText()).replace(/\s+/g, " ").trim(), "Left in Teams, not sent", "message");
-    eq(await tagText(t.p), "", "no tag in the footer");
+    eq(await tagText(t.p), "Left in Teams, not sent", "footer tag");
+    ok((await val(t.p, "en")).length > 0, "the English stays");
     eq(await val(t.p, "es"), "", "Spanish box");
   } finally { await resetSettings(); }
 });
@@ -1954,36 +1960,21 @@ for (const [name, mk] of layoutCases) {
 
 // A failed translation leaves the English box empty: its notice and button take the box's middle,
 // where "Sent to …" shows (in the row, the text area above the footer; in the column, the whole module).
-check("Replies", "a failed translation: the notice and Try again sit in the middle of the English box, where 'Sent to' shows; a good translation puts them back in the footer", async () => {
+check("Replies", "a failed translation: the notice and Try again sit in the footer, like every notice; the Spanish stays", async () => {
   const t = await open();
   await t.p.fill("#es", "FAILED esto");
   await t.p.press("#es", "Enter");
   await waitState(t.p, "error");
   await settle(t.p, 150);
-  const g = await t.p.evaluate(() => {
-    const row = document.getElementById("tagrow")!;
-    const items = [...row.querySelectorAll("#status, #actions .btn")].map((e) => e.getBoundingClientRect());
-    const L = Math.min(...items.map((r) => r.left)), R = Math.max(...items.map((r) => r.right)), T = Math.min(...items.map((r) => r.top)), B = Math.max(...items.map((r) => r.bottom));
-    const frame = (window.innerWidth < window.innerHeight ? document.querySelector(".f.en") : document.querySelector(".en-wrap"))!.getBoundingClientRect();
-    return { inWrap: row.parentElement!.classList.contains("en-wrap"), cx: (L + R) / 2, cy: (T + B) / 2, fx: frame.left + frame.width / 2, fy: frame.top + frame.height / 2,
-      enHidden: getComputedStyle(document.getElementById("en")!).visibility === "hidden", center: document.getElementById("strip")!.dataset.center };
-  });
-  ok(g.inWrap && g.center === "notice", "the notice should move into the English box");
-  ok(Math.abs(g.cx - g.fx) <= 1 && Math.abs(g.cy - g.fy) <= 1, `the notice isn't in the middle (${Math.round(g.cx)},${Math.round(g.cy)} vs ${Math.round(g.fx)},${Math.round(g.fy)})`);
-  ok(g.enHidden, "the empty English box's placeholder should hide behind the notice");
+  ok(await t.p.evaluate(() => document.getElementById("tagrow")!.parentElement!.classList.contains("foot")), "the notice row should be in the footer");
   eq(await tagText(t.p), "Couldn't translate", "tag");
   eq((await actionLabels(t.p)).join(", "), "Try again", "buttons");
+  eq(await val(t.p, "es"), "FAILED esto", "the Spanish stays");
   ok(await vis(t.p, "#to") && await vis(t.p, "#send") && await vis(t.p, "#more"), "the footer keeps To, Send and the gear");
   await expectLayout(t.p);
-  // The gear under the notice's frame still opens the menu (in the column the frame spans the module).
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "the gear should open the menu");
   await t.p.keyboard.press("Escape");
-  await t.p.fill("#es", ES);
-  await t.p.press("#es", "Enter");
-  await waitState(t.p, "ready");
-  await settle(t.p, 150);
-  ok(await t.p.evaluate(() => document.getElementById("tagrow")!.parentElement!.classList.contains("foot") && !document.getElementById("strip")!.dataset.center), "the notice row should be back in the footer");
 });
 check("Design", "a wide strip takes no steps: at 1200, idle, ready and a long chat keep every shortcut hint, Adjust's word and the name", async () => {
   const t = await open();
@@ -2028,14 +2019,14 @@ narrowCheck("Narrow", "microphone denied: Open Settings stays whole; Normal and 
   eq(await t.p.locator("#dictLabel").getAttribute("title"), "Microphone not allowed", "the label's words in its title");
   await expectLayout(t.p);
 });
-narrowCheck("Narrow", "a failed translation: the notice and Try again in the middle of the English box, whole", async () => {
+narrowCheck("Narrow", "a failed translation: the notice and Try again in the footer, whole", async () => {
   const t = await open();
   await t.p.fill("#es", "OFFLINE esto");
   await t.p.press("#es", "Enter");
   await waitState(t.p, "error");
   await settle(t.p, 150);
-  ok(await t.p.evaluate(() => document.getElementById("tagrow")!.parentElement!.classList.contains("en-wrap")), "the notice should be in the English box");
-  eq(await tagText(t.p), "Can't reach Claude", "tag");
+  ok(await t.p.evaluate(() => document.getElementById("tagrow")!.parentElement!.classList.contains("foot")), "the notice should be in the footer");
+  eq((await actionLabels(t.p)).join(", "), "Try again", "buttons");
   await expectLayout(t.p);
 });
 
@@ -2198,30 +2189,27 @@ colCheck("Column", "the Spanish footer is today's row: Normal / Formal, the mic,
   eq(mic.w, 28, "mic width"); eq(tr.h, 28, "Translate height");
   ok(foot.h > f2.h, "the note adds a row");
 });
-colCheck("Column", "'Sent to <chat> · time' sits in the middle of the English module, and the gear under it still works", async () => {
+colCheck("Column", "'Sent to <chat> · time' sits in the English footer, with the English above it, and the gear still works", async () => {
   const t = await open();
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
   await ready(t);
   await t.p.click("#send");
   await waitState(t.p, "sent");
   await settle(t.p, 400);
-  const mod = await rect(t.p, ".f.en"), msg = await rect(t.p, "#doneMsg");
-  ok(Math.abs(msg.cx - mod.cx) <= 1 && Math.abs(msg.cy - mod.cy) <= 1, `the message isn't in the module's middle (${msg.cx},${msg.cy} against ${mod.cx},${mod.cy})`);
-  const inner = await t.p.evaluate(() => { const k = document.querySelector("#doneMsg .who") as HTMLElement; return { w: k.clientWidth, full: k.scrollWidth, t: k.textContent }; });
-  ok(inner.t!.startsWith("Sent to"), "the message says who");
+  ok((await tagText(t.p)).startsWith("Sent to"), "the footer says who");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
   await expectLayout(t.p);
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "the gear opens the menu while the message shows");
 });
-colCheck("Column", "'Left in Teams, not sent' sits in the middle too", async () => {
+colCheck("Column", "'Left in Teams, not sent' sits in the footer too", async () => {
   await setMode("leave");
   const t = await open();
   await ready(t);
   await t.p.click("#send");
   await waitState(t.p, "leave");
   await settle(t.p, 400);
-  const mod = await rect(t.p, ".f.en"), msg = await rect(t.p, "#doneMsg");
-  ok(Math.abs(msg.cx - mod.cx) <= 1 && Math.abs(msg.cy - mod.cy) <= 1, "the message isn't in the module's middle");
+  eq(await tagText(t.p), "Left in Teams, not sent", "footer tag");
   await resetSettings();
 });
 colCheck("Column", "the settings menu stacks its two groups in one column over the English module, above its footer, inside the window", async () => {

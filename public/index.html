@@ -80,19 +80,10 @@
   /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
   [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
   [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
-  /* Sent: the message takes the English text's place, in the middle of the box. */
-  .done-msg { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; gap: 8px; padding: 0 12px;
-    font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-primary); white-space: nowrap; }
-  .done-msg .ok { color: var(--color-text-green); display: inline-flex; flex: none; }
-  .done-msg .ok svg.i { width: 16px; height: 16px; }
-  .done-msg .who { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .done-msg .when { color: var(--color-text-secondary); flex: none; }
-  [data-state="sent"] .done-msg, [data-state="leave"] .done-msg { display: flex; }
-  /* A failed translation: its notice and button take the same place, in the middle of the box. */
-  .en-wrap > #tagrow { position: absolute; inset: 0; justify-content: center; padding: 0 12px; margin: 0; min-width: 0; pointer-events: none; }
-  .en-wrap > #tagrow > * { pointer-events: auto; }   /* in the column it spans the module: the footer under it stays clickable */
-  [data-center="notice"] .en-out { visibility: hidden; }
-  [data-state="sent"] .en-out, [data-state="leave"] .en-out { visibility: hidden; }
+  /* Sent: the English stays in its box, dimmed, under the green "Sent to …" in the footer. */
+  [data-sent="yes"] .en-out { color: var(--color-text-secondary); }
+  .status .ok { display: inline-flex; flex: none; }
+  .status .ok svg.i { width: 12px; height: 12px; }
   [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
   [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
   [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
@@ -196,8 +187,6 @@
     /* Sent: the message sits in the middle of the whole English box, so the box is its frame. */
     .en-wrap { position: static; }
     .busy { left: 12px; top: 7px; }
-    .done-msg { pointer-events: none; white-space: normal; text-align: center; }
-    .done-msg .who { overflow: visible; text-overflow: clip; }
 
     /* English footer. Row 1 (a strut keeps its 28 px, so the text doesn't move when a notice comes or goes):
        the notice and its buttons, then Adjust. Row 2: who it goes to, Send, the gear. */
@@ -249,7 +238,6 @@
       <div class="en-wrap">
         <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="Translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
         <div class="busy"><span class="calm"><i></i><i></i><i></i></span><span id="busyText">Translating…</span></div>
-        <div class="done-msg" id="doneMsg" role="status" aria-live="polite"></div>
       </div>
       <div class="adjust-row">
         <input class="field adj-in" id="adjIn" placeholder="What to change" aria-label="What to change" spellcheck="false" autocomplete="off" autocapitalize="off">
@@ -398,14 +386,13 @@ function standIn(msg) {
 // st is strip-state.js's state, replaced whole by each transition. commit() takes the new one and
 // writes the boxes the state wrote (the English that came back, the Spanish dictation heard).
 let st = SS.create();
-let fadeTimer = 0, sendWatch = 0, dictTimer = 0, dictThen = null;
+let sendWatch = 0, dictTimer = 0, dictThen = null;
 const fields = () => ({ es: esIn.value, en: enOut.value });
 function commit(n) {
   const old = st;
   st = n;
   if (n.enSeq !== old.enSeq) enOut.value = n.en;
   if (n.esSeq !== old.esSeq) esIn.value = n.esText;
-  if ((old.phase === "sent" || old.phase === "leave") && n.phase !== old.phase) clearTimeout(fadeTimer);
   if (!n.dictStopping && dictThen) { dictThen = null; clearTimeout(dictTimer); }   // what waited on the last words is dropped
 }
 const stopMsg = { type: "dictation", action: "stop" };
@@ -589,12 +576,7 @@ function paint() {
 
   $("adjustBtn").style.display = SS.canAdjust(st, f) && !open ? "" : "none";
   $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
-  // A failed translation leaves the English box empty: its notice and button move to the box's
-  // middle, where "Sent to …" shows, and back to the footer after.
-  const center = SS.centerNotice(st, f), row = $("tagrow"), wrap = enOut.parentElement, enFoot = box.querySelector(".f.en .foot");
-  box.dataset.center = center ? "notice" : "";
-  if (center && row.parentElement !== wrap) wrap.append(row);
-  else if (!center && row.parentElement !== enFoot) enFoot.prepend(row);
+  box.dataset.sent = v.sent ? "yes" : "";
   // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
   const sig = JSON.stringify([v.tag, v.actions]);
   if (sig !== drawn) {
@@ -606,6 +588,7 @@ function paint() {
       status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
       const mark = document.createElement("span");
       if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
+      else if (v.tag.kind === "done") { mark.className = "ok"; mark.innerHTML = ic("check"); }
       else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
       const words = document.createElement("span");
       words.textContent = v.tag.text;
@@ -637,16 +620,6 @@ function paint() {
   // (the preview note: fitFooter, below, which knows the room it has)
 
   fitFooter();
-
-  // Sent: in the middle of the English box, who it went to and when.
-  const done = $("doneMsg"), dv = SS.doneView(st);
-  if (dv) {
-    done.innerHTML = `<span class="ok">${ic("check")}</span><span class="who"></span><span class="when"></span>`;
-    const who = done.querySelector(".who");
-    who.textContent = dv.text;
-    who.title = dv.text;
-    done.querySelector(".when").textContent = dv.when;
-  } else if (done.firstChild) done.replaceChildren();
 }
 
 // ------------------------------------------------------------------------------ translating and adjusting
@@ -654,7 +627,6 @@ function paint() {
 async function translate(target) {
   const go = SS.translateStart(st, fields(), { auto: settings().auto, target: typeof target === "string" ? target : undefined });
   if (!go) return;
-  clearTimeout(fadeTimer);
   commit(go.st);
   paint();
   const r = await ask("/api/translate", go.body, st.req);
@@ -695,7 +667,7 @@ function setRegister(reg) {
 function send(afterDraft) {
   const go = SS.sendStart(st, fields(), afterDraft, settings().mode);
   if (!go) return;
-  clearTimeout(fadeTimer); clearTimeout(sendWatch);
+  clearTimeout(sendWatch);
   commit(go.st);
   paint();
   post(go.msg);
@@ -711,11 +683,7 @@ function onSent(m) {
   clearTimeout(sendWatch);
   commit(SS.sendDone(st, m, SS.clock(new Date())));
   paint();
-  if (st.phase === "sent" || st.phase === "leave") {
-    esIn.focus();
-    clearTimeout(fadeTimer);
-    fadeTimer = setTimeout(() => { const n = SS.fadeDone(st); if (n !== st) { commit(n); paint(); } }, 4000);
-  }
+  if (st.phase === "sent" || st.phase === "leave") esIn.focus();
 }
 
 // ------------------------------------------------------------------------------ dictation
@@ -756,7 +724,6 @@ enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value,
 function clearAll() {
   const r = SS.clearAll(st);
   if (r.stopDictation) post(stopMsg);
-  clearTimeout(fadeTimer);
   commit(r.st);
   paint(); esIn.focus();
 }

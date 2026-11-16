@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- After a send, the reply stays in its box, dimmed, with a green "✓ Sent to …" in the footer until you write the next message, instead of a message in the middle of an empty box that faded. A failed translation's notice sits in the footer too.
 - The strip says Sent only once your message shows in the chat. Teams has emptied its box without posting a message, and the strip took that for sent and cleared the English. Now, if the message doesn't show within a few seconds, the English stays in the strip with a notice to check the chat. It also waits a moment after pasting before pressing Return.
 - The server tests read the server's output as it comes, so a slow build machine's longer log can't fill the pipe and stop the server, and a test that times out shows the end of the server's log.
 

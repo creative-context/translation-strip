@@ -103,6 +103,9 @@
     if (p === "translating") v.state = tr.status === "starting" ? "starting" : "translating";
     else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
     else if (p === "adjusting") tag("working", "Adjusting…");
+    // Sent: in the footer, with the English still in the box (dimmed), until the next message.
+    else if (p === "sent") tag("done", st.sentTo ? `Sent to ${st.sentTo} · ${st.sentAt}` : `Sent · ${st.sentAt}`);
+    else if (p === "leave") tag("idle", "Left in Teams, not sent");
     else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "question") tag("asks", "Asks you");
     // Both keep Send off, so both read as errors: red, not the orange of "needs you" (decision 10).
@@ -119,6 +122,8 @@
     else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
     else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
     if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo" }]);
+    // The English on show is the one just sent: dimmed, until a new message replaces it.
+    v.sent = p === "sent" || p === "leave" || (p === "idle" && !!trim(st.en) && st.en === st.lastText);
     return v;
   }
 
@@ -139,17 +144,6 @@
     if (st.dict === "denied") return { kind: "denied" };
     return null;
   }
-
-  // The message that takes the English box's place after a send.
-  function doneView(st) {
-    if (st.phase !== "sent" && st.phase !== "leave") return null;
-    const sent = st.phase === "sent";
-    return { text: sent ? (st.sentTo ? `Sent to ${st.sentTo}` : "Sent") : "Left in Teams, not sent", when: sent ? `· ${st.sentAt}` : "" };
-  }
-
-  // A failed translation leaves the English box empty: its notice and button take the box's middle,
-  // where "Sent to …" shows. A failed adjust keeps the English, so its notice stays in the footer.
-  const centerNotice = (st, f) => st.phase === "error" && !trim(f.en);
 
   // The language button beside "To <chat>": what the translation on show is written in, and how it
   // was chosen. null when there's no translation with a language. target is the settings' target.
@@ -283,8 +277,6 @@
   const clearNotice = st => next(st, { notice: null });
   // "Cancel" on the draft notice: back to the translation as it was.
   const cancelDraft = st => next(st, { phase: "ready" });
-  // The 4 s after a send are over.
-  const fadeDone = st => (st.phase === "sent" || st.phase === "leave" ? next(st, { phase: "idle" }) : st);
 
   // Esc: everything back to the start. { st, stopDictation }.
   function clearAll(st) {
@@ -318,8 +310,10 @@
     if (st.phase !== "sending") return st;
     m = m || {};
     if (m.ok) {
+      // The English stays in its box, dimmed, under "Sent to …" in the footer; the other box empties
+      // for the next message.
       const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
-      writeEnglish(n, "", []); writeSpanish(n, "");
+      writeSpanish(n, "");
       return n;
     }
     // The text stays, so nothing is lost; each reason says what to do.
@@ -413,10 +407,10 @@
   }
 
   const api = {
-    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, doneView, centerNotice, langView, canRetarget, untilText, clock,
+    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, canRetarget, untilText, clock,
     canTranslate, canAdjust, canSend,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
-    typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
+    typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, clearAll,
     sendStart, sendTimeout, sendDone,
     dictStart, dictStop, dictFinish, onDictation,
     shellTeams, shellAccess,

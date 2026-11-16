@@ -113,7 +113,7 @@ Shell:
 - The column follows Teams as the strip does today: moves, resizes, hides and comes back with it. A change of shape needs no message to the page: the page reads the window's shape.
 
 Page:
-- The page's layout follows its window: when the window is taller than it is wide, the column: the English module on top and the Spanish one below, each as tall as half the column. The English module's footer has two rows: the status tag and its buttons with Adjust, then "To <chat>", Send and the gear; the Spanish module's footer stays as today (Normal/Formal, the mic, Translate). The "Sent to …" message sits in the middle of the English module.
+- The page's layout follows its window: when the window is taller than it is wide, the column: the English module on top and the Spanish one below, each as tall as half the column. The English module's footer has two rows: the status tag and its buttons with Adjust, then "To <chat>", Send and the gear; the Spanish module's footer stays as today (Normal/Formal, the mic, Translate). The "Sent to …" tag sits in the English footer, like the other tags.
 - In the column, the settings menu stacks its groups in one column and opens over the English module, inside the window.
 - The horizontal strip doesn't change: its seven frames stay byte-identical.
 - A square window counts as the column. In the column, the dictation label and the Preview note sit in a row of their own above the Spanish footer. A notice beside Adjust may shorten with an ellipsis in the column's narrow footer; its title holds the whole words.
@@ -138,7 +138,7 @@ Page:
 
 ## A failed translation, a narrow strip, Opus and the linter fix (0.7.0)
 
-- When a translation fails (the page's phase `error`) and the English box is empty, the notice and its buttons move into the English box, centered where "Sent to …" shows: the text area above the footer in the strip, the whole module in the column. A failed adjust keeps the English, so its notice stays in the footer. The rule is `centerNotice` in `strip-state.js`.
+- A failed translation's notice and its buttons stay in the footer, like every notice (0.8.6; before, they moved into the middle of an empty English box).
 - When a footer doesn't fit, it gives way in steps, each footer on its own, every step undone on the next paint or resize: the chat's name shortens to 96 px; then the shortcut hints leave both footers' buttons; then Adjust keeps only its pencil; then the notice's words shorten to its dot (its buttons stay whole); then the name goes below 96 px; then it leaves; then the notice's words leave. On the Spanish side, Normal and Formal step aside only while a dictation label needs the room, and the preview note (only in a browser) leaves rather than end in an ellipsis. The strip's `data-fit` names the steps taken.
 - The page check runs every Layout state again at 640 × 145.
 - Opus runs with `--effort low`; Haiku and Sonnet get no effort flag (Claude Code's default). Tested on made-up messages: Opus gave the same English at low, default and high effort, and high was slower in its slowest replies.
@@ -214,4 +214,7 @@ Page:
 Shell:
 - After the paste shows in the box and the box holds exactly the text, the shell waits a moment (`TeamsShape.pasteSettle`, 0.4 s) and checks the box again before pressing Return: Return pressed right as the paste showed has emptied the box without posting. If the box changed meanwhile, nothing is pressed (`mismatch`).
 - An empty box after Return isn't proof that Teams posted the message. Before Return the shell notes the user's newest message in the open chat; after it, it waits up to 5 s (`TeamsShape.postedWait`) for a newer message of the user's own whose first 40 letters and digits match the text (`Teams.postedAs`, so spacing, punctuation, case and a link's preview don't matter). Only then is the send `ok`. Otherwise `sent({ ok: false, reason: "not-posted" })`, and the page keeps the English. With no message list to read (an empty chat), the empty box is all there is, as before.
+
+Page:
+- A send that went through keeps the English in its box, dimmed (`view().sent`, the strip's `data-sent`), with a green "✓ Sent to <chat> · <time>" tag (kind `done`) in the footer, or "Left in Teams, not sent" in Put in Teams mode; the Spanish box empties for the next message. They stay until the next message (no fade): typing in the Spanish box goes back to idle with the sent English still dimmed until a new translation replaces it, and Esc clears both. A failed send keeps the English too, with its notice in the footer. Nothing the user wrote is cleared before Teams shows the message.
 
