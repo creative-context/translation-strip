@@ -3,7 +3,8 @@
 // in the app. The story, with Auto on: in a chat in English you write in Spanish, ⏎ translates, ⌘⏎
 // sends, and the message shows in the chat; then a chat in Portuguese, where you write in English and
 // the same steps give Portuguese; then two more chats in English, one written in a mix of Spanish and
-// English and one in Swahili. Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
+// English and one in Icelandic. "Detected · …" shows what macOS's own detector says of each (it
+// doesn't run in a browser, so each chat carries its answer). Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
 // window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
 // theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
 // Starts its own page mock (port 4816) and answers the translations itself, so each one fits what
@@ -26,19 +27,19 @@ const CHATS = [
   { id: "en", name: "Priya Raman", initials: "PR", color: "#3d5a80", language: "English",
     msgs: ["Morning! I'm back from the offsite.", "Anything you need from me this week?"],
     write: "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.",
-    out: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call." },
+    out: "Could you take a look at the budget before Thursday? If needed, we can go over it on the call.", detected: "Español" },
   { id: "pt", name: "Rafael Costa", initials: "RC", color: "#5a7d4f", language: "Português",
     msgs: ["Oi! Tudo bem por aí?", "Você consegue me mandar a apresentação até amanhã?"],
     write: "Sure, I will send it over today before 6 pm.",
-    out: "Claro, vou mandar hoje antes das 6 da tarde." },
+    out: "Claro, vou mandar hoje antes das 6 da tarde.", detected: "English" },
   { id: "mix", name: "Hannah Brooks", initials: "HB", color: "#6b4f8a", language: "English",
     msgs: ["How's the release looking?", "Can we still ship it today?"],
     write: "sí, ya hice el fix del login, nada más falta que pase el CI y hacemos el deploy en la tarde",
-    out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon." },
-  { id: "sw", name: "Omar Haddad", initials: "OH", color: "#8a6a3d", language: "English",
+    out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon.", detected: "Español" },
+  { id: "is", name: "Omar Haddad", initials: "OH", color: "#8a6a3d", language: "English",
     msgs: ["Thanks for the numbers yesterday.", "When do you think the report will be ready?"],
-    write: "Habari! Nimemaliza ripoti, nitaituma kesho asubuhi.",
-    out: "Hi! I've finished the report, I'll send it tomorrow morning." },
+    write: "Hæ! Ég kláraði skýrsluna og sendi hana á morgun.",
+    out: "Hey! I finished the report and I'll send it tomorrow.", detected: "Íslenska" },
 ];
 
 // The scene: the chat window, the strip in a frame under it, and the key hint.
@@ -115,6 +116,14 @@ const frame = await (async () => {
 })();
 await frame.waitForFunction("(() => { try { return !!srv && st.teams !== null; } catch (e) { return false; } })()");
 await frame.addStyleTag({ content: "#preview { display: none !important; }" }); // the browser-only note isn't in the app
+// The language detected: what macOS says of each chat's text (window.__detect), not the browser stand-in's guess.
+await frame.evaluate(() => {
+  const w = window as any, orig = w.standIn;
+  w.standIn = (m: any) => {
+    if (m.type !== "detect") return orig(m);
+    setTimeout(() => w.strip.detected({ language: w.__detect || null, seq: m.seq }), 0);
+  };
+});
 await frame.waitForTimeout(300);
 
 const dir = mkdtempSync(join(tmpdir(), "strip-demo-"));
@@ -147,6 +156,7 @@ const until = async (state: string, ms: number) => {
 // Teams opens a chat: the window shows it, and the strip hears about it as the app would tell it.
 const openChat = async (c: (typeof CHATS)[number]) => {
   current = c;
+  await frame.evaluate((d: string) => { (window as any).__detect = d; }, c.detected);
   await page.evaluate((id: string) => { for (const e of document.querySelectorAll(".chat")) e.classList.toggle("on", e.id === `chat-${id}`); }, c.id);
   await frame.evaluate((c: any) => (window as any).strip.teams({ open: true, chat: c.name, from: c.name, last: c.msgs[1], draft: false, shape: "ok" }), c);
 };

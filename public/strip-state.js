@@ -103,8 +103,9 @@
     if (p === "translating") v.state = tr.status === "starting" ? "starting" : "translating";
     else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
     else if (p === "adjusting") tag("working", "Adjusting…");
-    // Sent: in the footer, with the English still in the box (dimmed), until the next message.
-    else if (p === "sent") { tag("done", st.sentTo ? `Sent to ${st.sentTo} · ${st.sentAt}` : `Sent · ${st.sentAt}`); v.tag.short = `Sent · ${st.sentAt}`; }
+    // Sent: in the footer, for a few seconds (fadeDone).
+    // "To <chat>" is right beside it, so the tag says only when; its title says to whom.
+    else if (p === "sent") { tag("done", `Sent · ${st.sentAt}`); if (st.sentTo) v.tag.title = `Sent to ${st.sentTo} at ${st.sentAt}`; }
     else if (p === "leave") tag("idle", "Left in Teams, not sent");
     else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "question") tag("asks", "Asks you");
@@ -122,8 +123,6 @@
     else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
     else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
     if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo" }]);
-    // The English on show is the one just sent: dimmed, until a new message replaces it.
-    v.sent = p === "sent" || p === "leave" || (p === "idle" && !!trim(st.en) && st.en === st.lastText);
     return v;
   }
 
@@ -277,6 +276,8 @@
   const clearNotice = st => next(st, { notice: null });
   // "Cancel" on the draft notice: back to the translation as it was.
   const cancelDraft = st => next(st, { phase: "ready" });
+  // "Sent" (or "Left in Teams") has been up for a few seconds: back to an empty strip.
+  const fadeDone = st => (st.phase === "sent" || st.phase === "leave" ? next(st, { phase: "idle" }) : st);
 
   // Esc: everything back to the start. { st, stopDictation }.
   function clearAll(st) {
@@ -310,10 +311,11 @@
     if (st.phase !== "sending") return st;
     m = m || {};
     if (m.ok) {
-      // The English stays in its box, dimmed, under "Sent to …" in the footer; the other box empties
-      // for the next message.
+      // The shell answers ok only once the message shows in the chat (or sits in Teams' box, in
+      // Put in Teams mode): then both boxes empty for the next message, and "Sent · time" stays in the
+      // footer. Until then, and on any failure, the English stays here.
       const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
-      writeSpanish(n, "");
+      writeEnglish(n, "", []); writeSpanish(n, "");
       return n;
     }
     // The text stays, so nothing is lost; each reason says what to do.
@@ -412,7 +414,7 @@
     create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, canRetarget, untilText, clock,
     canTranslate, canAdjust, canSend,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
-    typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, clearAll,
+    typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
     sendStart, sendTimeout, sendDone,
     dictStart, dictStop, dictFinish, onDictation,
     shellTeams, shellAccess,

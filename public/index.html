@@ -80,14 +80,14 @@
   /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
   [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
   [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
-  /* Sent: the English stays in its box, dimmed, under the green "Sent to …" in the footer. */
-  [data-sent="yes"] .en-out { color: var(--color-text-secondary); }
-  /* A done tag has a check in a circle, an error tag an exclamation in one; the rest keep the family's dots. */
+  /* A done tag has a check in a circle, an error tag the warning triangle; the rest keep the family's dots. */
   .status .ico { display: inline-flex; flex: none; }
-  #status .short, [data-fit~="shorttag"] #status .long { display: none; }
-  [data-fit~="shorttag"] #status .short { display: inline; }
   .status .ico svg.i { width: 14px; height: 14px; stroke-width: 1.6px; }   /* the banners' size, a firmer line: legible in a 20 px tag */
   [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
+  /* Its last moment: the tag and the green fade out together (a fade only, so Reduce Motion keeps it). */
+  [data-fading="yes"] #tagrow { opacity: 0; transition: opacity var(--fade-out) ease-out; }
+  [data-fading="yes"] .f.en { background: transparent; transition: background-color var(--fade-out) ease-out; }
+  body { --fade-out: 400ms; }
   [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
   [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
   [data-state="ready"] .f.en:focus-within { background: var(--color-overlay-pressed); }
@@ -313,6 +313,7 @@ const $ = id => document.getElementById(id);
 const box = $("strip"), esIn = $("es"), enOut = $("en"), adjIn = $("adjIn"), menu = $("menu"), moreBtn = $("more");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ic = n => DesignIcons.svg(n);
+const FADE_MS = 3000, FADE_OUT_MS = 400;   // how long "Sent" stays in the footer, the last part fading out (--fade-out)
 
 // The design system has no mic yet: drawn on its 24 px grid and stroke, to add to mac-app-design before it is vendored.
 const MIC = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg>`;
@@ -403,12 +404,13 @@ function standIn(msg) {
 // writes the boxes the state wrote (the English that came back, the Spanish dictation heard).
 let st = SS.create();
 let detectSeq = 0, detectTimer = 0, detected = null;   // the language of what's being written (askDetect)
-let sendWatch = 0, dictTimer = 0, dictThen = null;
+let fadeTimer = 0, sendWatch = 0, dictTimer = 0, dictThen = null;
 const fields = () => ({ es: esIn.value, en: enOut.value });
 function commit(n) {
   const old = st;
   st = n;
   if (n.enSeq !== old.enSeq) enOut.value = n.en;
+  if ((old.phase === "sent" || old.phase === "leave") && n.phase !== old.phase) clearTimeout(fadeTimer);
   if (n.esSeq !== old.esSeq) { esIn.value = n.esText; setTimeout(askDetect, 0); }   // dictation, a send, Esc: its language too
   if (!n.dictStopping && dictThen) { dictThen = null; clearTimeout(dictTimer); }   // what waited on the last words is dropped
 }
@@ -519,11 +521,10 @@ function fitSteps() {
   // Both footers lose their shortcut hints together, so the buttons look alike.
   if (over(en) || over(es)) step("keys");
   // The English footer, in its order. Every step is undone on the next paint or resize.
-  if (over(en) && $("status").querySelector(".short")) step("shorttag");   // "Sent to <chat> · time" becomes "Sent · time"; To still names the chat
   if (over(en)) step("pencil");
   if (over(en) && !$("lang").hidden && !$("lang").querySelector(".auto").hidden) step("lang");   // "Auto · " leaves; the title still says it
   // "Sent · time" stays whole: the chat's name gives way first (its title keeps it). Other notices shorten first.
-  const keepTag = !!$("status").querySelector(".short");
+  const keepTag = $("status").classList.contains("s-done");
   if (over(en) && !keepTag) notice(true);          // the notice shortens down to its dot; its buttons stay whole
   if (over(en)) step("name");
   if (over(en)) step("noname");
@@ -565,6 +566,7 @@ function paint() {
   box.dataset.teams = SS.dataTeams(st);
   box.dataset.access = st.access.accessibility === false ? "no" : "ok";
   box.dataset.adjust = open ? "open" : "";
+  if (st.phase !== "sent" && st.phase !== "leave" && box.dataset.fading) delete box.dataset.fading;
   box.dataset.dict = st.dict;
   $("fields").inert = st.access.accessibility === false;
   $("busyText").textContent = v.state === "starting" ? "Starting translator…" : "Translating…";
@@ -599,7 +601,6 @@ function paint() {
 
   $("adjustBtn").style.display = SS.canAdjust(st, f) && !open ? "" : "none";
   $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
-  box.dataset.sent = v.sent ? "yes" : "";
   // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
   const sig = JSON.stringify([v.tag, v.actions]);
   if (sig !== drawn) {
@@ -611,12 +612,10 @@ function paint() {
       status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
       const mark = document.createElement("span");
       if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
-      else if (v.tag.kind === "done" || v.tag.kind === "error") { mark.className = "ico"; mark.innerHTML = ic(v.tag.kind === "done" ? "check" : "alert"); }
+      else if (v.tag.kind === "done" || v.tag.kind === "error") { mark.className = "ico"; mark.innerHTML = ic(v.tag.kind === "done" ? "check" : "error"); }
       else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
       const words = document.createElement("span");
-      // A tag with a short form ("Sent · 10:42 AM") switches to it when the footer is short of room.
-      if (v.tag.short) { words.innerHTML = `<span class="long"></span><span class="short"></span>`; words.firstChild.textContent = v.tag.text; words.lastChild.textContent = v.tag.short; }
-      else words.textContent = v.tag.text;
+      words.textContent = v.tag.text;
       status.append(mark, words);
     } else { status.className = "status"; status.removeAttribute("title"); }
     for (const a of v.actions) {
@@ -709,7 +708,15 @@ function onSent(m) {
   clearTimeout(sendWatch);
   commit(SS.sendDone(st, m, SS.clock(new Date())));
   paint();
-  if (st.phase === "sent" || st.phase === "leave") esIn.focus();
+  // "Sent" stays a few seconds, fades out over the last 0.4 s, then the strip is empty again.
+  if (st.phase === "sent" || st.phase === "leave") {
+    esIn.focus();
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => {
+      box.dataset.fading = "yes";
+      fadeTimer = setTimeout(() => { const n = SS.fadeDone(st); if (n !== st) { commit(n); paint(); } }, FADE_OUT_MS);
+    }, FADE_MS - FADE_OUT_MS);
+  }
 }
 
 // ------------------------------------------------------------------------------ dictation
@@ -746,12 +753,18 @@ function toggleDictation() { if (st.dict === "on") stopDictation(); else startDi
 function onSpanishInput() { commit(SS.typed(st, fields())); paint(); askDetect(); }
 
 // The language of what's being written, guessed on the Mac by the shell (detect, then detected),
-// a moment after the typing stops. The page keeps only the language's name.
+// at most every quarter second while typing, with the text as it is then. The page keeps only the
+// language's name.
 function askDetect() {
-  clearTimeout(detectTimer);
-  const text = esIn.value.trim();
-  if (!text) { detectSeq++; detected = null; paintDetected(); return; }
-  detectTimer = setTimeout(() => { detectSeq++; post({ type: "detect", text: text.slice(0, 2000), seq: detectSeq }); }, 250);
+  if (!esIn.value.trim()) { clearTimeout(detectTimer); detectTimer = 0; detectSeq++; detected = null; paintDetected(); return; }
+  if (detectTimer) return;
+  detectTimer = setTimeout(() => {
+    detectTimer = 0;
+    const text = esIn.value.trim();
+    if (!text) return;
+    detectSeq++;
+    post({ type: "detect", text: text.slice(0, 2000), seq: detectSeq });
+  }, 250);
 }
 function paintDetected() {
   const d = $("detected"), show = !!detected && !!esIn.value.trim() && st.dict !== "on";

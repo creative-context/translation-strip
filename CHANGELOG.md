@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Once your message shows in the chat, the reply box empties again, with "✓ Sent · <time>" in the footer for a few seconds, then it fades out. The reply stays only while the send isn't confirmed, or when it fails.
+- An error tag's mark is the warning triangle.
+- After a send the green tag says "✓ Sent · <time>": "To <chat>" is right beside it, so the name no longer shows twice. Its title still says to whom.
+- "Detected · …" follows your typing instead of waiting for you to stop.
+- The README's animation shows "Detected · …" as macOS reads each message, and its fourth chat is in Icelandic: macOS doesn't know Swahili and took it for Indonesian.
+
 ## 0.8.6
 
 - ⌥⏎ starts a new line, like ⇧⏎. It used to translate.

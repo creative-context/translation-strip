@@ -274,22 +274,20 @@ describe("what a send leaves behind", () => {
     expect(canSend({ ...s, st: SS.shellAccess(s.st, {}).st })).toBe(true);
   });
 
-  test("success: the English stays, dimmed, with 'Sent to <chat> · time' in the footer; the other box empties; the next typing starts over", () => {
+  test("success (the message showed in the chat): both boxes empty, 'Sent · time' in the footer, the next typing starts over", () => {
     const s = sendAnd(ready(), { ok: true });
     expect(s.st.phase).toBe("sent");
-    expect([s.f.es, s.f.en]).toEqual(["", EN]);
-    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent to Priya Raman · 9:41 AM", short: "Sent · 9:41 AM" });
-    expect(SS.view(s.st, null).sent).toBe(true);
+    expect([s.f.es, s.f.en]).toEqual(["", ""]);
+    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent · 9:41 AM", title: "Sent to Priya Raman at 9:41 AM" });
     expect(canSend(s)).toBe(false);
     expect(s.st.chatFor).toBe("");
-    const next = SS.typed(s.st, { es: "h", en: EN });
-    expect(next.phase).toBe("idle");
-    expect(SS.view(next, null).sent).toBe(true); // still the sent English until a new one replaces it
+    expect(SS.typed(s.st, { es: "h", en: "" }).phase).toBe("idle");
   });
-  test("the sent message stays until the next one: no fade", () => {
+  test("'Sent' fades after a few seconds, back to an empty strip; the fade does nothing once something else happened", () => {
     const s = sendAnd(ready(), { ok: true });
-    expect(SS.fadeDone).toBeUndefined();
-    expect(SS.view(s.st, null).tag?.kind).toBe("done");
+    expect(SS.fadeDone(s.st).phase).toBe("idle");
+    const r = ready();
+    expect(SS.fadeDone(r.st)).toBe(r.st);
   });
 
   test("success in leave mode says it was left, not sent", () => {
@@ -298,7 +296,6 @@ describe("what a send leaves behind", () => {
     const done = SS.sendDone(go.st, { ok: true }, "9:41 AM");
     expect(done.phase).toBe("leave");
     expect(SS.view(done, null).tag).toEqual({ kind: "idle", text: "Left in Teams, not sent" });
-    expect(SS.view(done, null).sent).toBe(true);
   });
 
   test("an answer nobody asked for is ignored", () => {

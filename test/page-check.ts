@@ -1093,31 +1093,30 @@ async function sendFlow(how: "click" | "key", query = "") {
   eq(s[0].mode, "send", "mode");
   return t;
 }
-check("Send", "Send button, mode send: Sending…, then 'Sent to <chat> · time' in the footer, in green with a check; the English stays, dimmed; the Spanish box empties; it stays until the next message", async () => {
+check("Send", "Send button, mode send: Sending…, then, once the message shows in the chat, both boxes empty and 'Sent · time' shows in the footer (To names the chat; the title says it too), in green with a check, for 3 s", async () => {
   const t = await sendFlow("click");
   const english = await val(t.p, "en");
   await waitState(t.p, "sent");
   const done = (await tagText(t.p)).replace(/\s+/g, " ").trim();
-  ok(/^Sent to .+ · \d{1,2}:\d{2} (AM|PM)$/.test(done), `footer tag ${JSON.stringify(done)}`);
+  ok(/^Sent · \d{1,2}:\d{2} (AM|PM)$/.test(done), `footer tag ${JSON.stringify(done)}`);
+  ok(/^Sent to .+ at \d{1,2}:\d{2} (AM|PM)$/.test((await t.p.locator("#status").getAttribute("title")) ?? ""), "the title says to whom");
   eq(await t.p.evaluate(() => document.getElementById("status")!.className), "status tag s-done", "the tag's kind");
   ok(await t.p.evaluate(() => !!document.querySelector("#status .ico svg")), "the tag has its check");
   ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
-  eq(await val(t.p, "en"), english, "the English stays in its box");
-  ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).visibility === "visible"), "the English shows");
-  ok(await t.p.evaluate(() => getComputedStyle(document.getElementById("en")!).color !== getComputedStyle(document.getElementById("es")!).color), "the sent English is dimmed");
+  eq(await val(t.p, "en"), "", "the English box empties once it's in the chat");
   eq(await val(t.p, "es"), "", "Spanish box");
   eq(await focused(t.p), "es", "focus");
   ok(await t.p.locator("#send").isDisabled(), "Send is off: it was sent");
-  await settle(t.p, 5000);
-  eq(await state(t.p), "sent", "still sent after 5 s: no fade");
-  await t.p.keyboard.type("Hola");
-  await waitState(t.p, "idle");
-  eq(await val(t.p, "en"), english, "the sent English stays until a new one replaces it");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.fading === "yes", null, { timeout: 5000 });
+  eq(await t.p.evaluate(() => getComputedStyle(document.getElementById("tagrow")!).transitionProperty), "opacity", "the tag fades out, not just vanishes");
+  await waitState(t.p, "idle", 3000);
+  eq(await tagText(t.p), "", "the tag is gone after 3 s");
+  ok(await t.p.evaluate(() => !document.getElementById("strip")!.dataset.fading), "the fade is over");
 });
 check("Send", "⌘⏎ sends the same way", async () => {
   const t = await sendFlow("key");
   await waitState(t.p, "sent");
-  ok((await val(t.p, "en")).length > 0, "the English stays");
+  eq(await val(t.p, "en"), "", "the English box empties");
 });
 check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams, not sent'", async () => {
   await setMode("leave");
@@ -1133,7 +1132,7 @@ check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams
     eq((await sends(t))[0].mode, "leave", "mode");
     await waitState(t.p, "leave");
     eq(await tagText(t.p), "Left in Teams, not sent", "footer tag");
-    ok((await val(t.p, "en")).length > 0, "the English stays");
+    eq(await val(t.p, "en"), "", "the English box empties");
     eq(await val(t.p, "es"), "", "Spanish box");
   } finally { await resetSettings(); }
 });
@@ -2068,7 +2067,7 @@ narrowCheck("Narrow", "microphone denied: Open Settings stays whole; Normal and 
   eq(await t.p.locator("#dictLabel").getAttribute("title"), "Microphone not allowed", "the label's words in its title");
   await expectLayout(t.p);
 });
-narrowCheck("Narrow", "after a send, a short footer turns 'Sent to <chat> · time' into 'Sent · time', whole, with To still naming the chat", async () => {
+narrowCheck("Narrow", "after a send, 'Sent · time' stays whole in a short footer; the chat's name gives way first", async () => {
   const t = await open();
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
   await ready(t);
@@ -2076,7 +2075,7 @@ narrowCheck("Narrow", "after a send, a short footer turns 'Sent to <chat> · tim
   await waitState(t.p, "sent");
   await settle(t.p, 300);
   const txt = (await tagText(t.p)).replace(/\s+/g, " ").trim();
-  ok(/^Sent( to .+)? · \d{1,2}:\d{2} (AM|PM)$/.test(txt), `tag ${JSON.stringify(txt)}`);
+  ok(/^Sent · \d{1,2}:\d{2} (AM|PM)$/.test(txt), `tag ${JSON.stringify(txt)}`);
   ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
   await expectLayout(t.p);
 });
@@ -2250,15 +2249,14 @@ colCheck("Column", "the Spanish footer is today's row: Normal / Formal, the mic,
   eq(mic.w, 28, "mic width"); eq(tr.h, 28, "Translate height");
   ok(foot.h > f2.h, "the note adds a row");
 });
-colCheck("Column", "'Sent to <chat> · time' sits in the English footer, with the English above it, and the gear still works", async () => {
+colCheck("Column", "'Sent · time' sits in the English footer, and the gear still works", async () => {
   const t = await open();
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
   await ready(t);
   await t.p.click("#send");
   await waitState(t.p, "sent");
   await settle(t.p, 400);
-  ok((await tagText(t.p)).startsWith("Sent to"), "the footer says who");
-  ok((await val(t.p, "en")).length > 0, "the English stays");
+  ok((await tagText(t.p)).startsWith("Sent ·"), "the footer says it was sent");
   await expectLayout(t.p);
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "the gear opens the menu while the message shows");
