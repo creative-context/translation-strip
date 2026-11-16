@@ -41,5 +41,5 @@ sh app/build.sh --install  # build, copy to ~/Applications, reopen
 1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `app/Info.plist`, `package.json`, the README's version badge, and add a `## x.y.z` section to `CHANGELOG.md`.
 2. Commit and push (the privacy scan runs on both).
 3. Publish the release on that commit, with its CHANGELOG section as the notes: `gh release create vx.y.z --target <commit> --title vx.y.z --notes-file <notes>`.
-4. The Release workflow (`.github/workflows/release.yml`) tests it on macOS, checks that `Info.plist` matches the tag, builds the universal app signed ad hoc and attaches `Translation-Strip-x.y.z.zip`. Check that the zip is on the release.
+4. The CI workflow (`.github/workflows/ci.yml`) has already run the server tests and the Swift check on macOS for that push; wait for it to pass before publishing. The Release workflow (`.github/workflows/release.yml`) tests it on macOS again, checks that `Info.plist` matches the tag, builds the universal app signed ad hoc and attaches `Translation-Strip-x.y.z.zip`. Check that the zip is on the release.
 5. Never move or delete a published tag. A fix is a new patch version.

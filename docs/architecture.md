@@ -22,6 +22,8 @@ sh app/build.sh            # build into build/
 sh app/build.sh --install  # build, copy to ~/Applications and open it
 ```
 
+On GitHub, `.github/workflows/ci.yml` runs `bun test` and the Swift check on macOS on every push to `main` and on pull requests, and `.github/workflows/release.yml` tests again, builds the universal app and attaches its zip when a release is published.
+
 `bun docs/demo-gif.ts` records `docs/demo-dark.gif` and `docs/demo-light.gif`, one for each GitHub theme, from its own page mock, with made-up text in four chats, with Auto on: Spanish into English, English into Portuguese, a mix of Spanish and English into English, and Icelandic into English (it needs Playwright and ffmpeg).
 
 The tests use a stand-in `claude` and a stand-in linter in temporary folders, so they never touch your data.
