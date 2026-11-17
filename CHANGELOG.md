@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The README and the guide say how the strip detects the language you write in: Apple's NaturalLanguage, on your Mac, so only the translation uses your plan.
+
 ## 0.8.7
 
 - The server tests and the Swift check run on GitHub on every push, so a failure shows before a release instead of after it.

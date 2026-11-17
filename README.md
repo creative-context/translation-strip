@@ -37,7 +37,7 @@ Write the message the way it comes out: in Spanish or any other language, mixing
 - **Your voice, not a word-for-word translation.** It adds nothing you didn't write: no greeting, thanks or closing line on its own.
 - **Several languages.** Pick your language in Settings, or turn on Auto to write in the chat's language when it's clear. One voice guide serves them all.
 - **Sends where you're looking.** ⌘⏎ puts the translation in the open chat and sends it only if that chat is still the one the strip shows.
-- **Your Claude plan, no API key.** A hidden Claude Code session writes the translation, a fresh one for every message.
+- **Your Claude plan, no API key.** A hidden Claude Code session writes the translation, a fresh one for every message. Only the translation uses your plan: your Mac detects the language you write in with Apple's NaturalLanguage, without going online.
 - **Your linter has the last word.** An error it finds gets fixed once before you see the translation.
 - **Out of the way.** It docks on any side of Teams, follows it, and hides when Teams does.
 
