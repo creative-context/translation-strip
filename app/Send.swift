@@ -57,7 +57,11 @@ enum Clipboard {
 // The paste's decisions, as pure functions the Swift check runs.
 enum PasteWatch {
     static let every: TimeInterval = 0.05 // how often the box is looked at after ⌘V
-    static let limit: TimeInterval = 1.5 // how long Teams has to take the paste
+    static let limit: TimeInterval = 5 // how long Teams has to take the paste
+    // While the box hasn't changed: when the shell first looks for Teams' box again (Teams may
+    // have built it anew, so the one it holds answers no more or never changes), then how often.
+    static let lookAfter: TimeInterval = 0.5
+    static let lookEvery: TimeInterval = 1
     static let lateRestore: TimeInterval = 6 // after a paste Teams didn't take: when the user's clipboard comes back
 
     struct Decision: Equatable {
@@ -106,7 +110,7 @@ extension TeamsReader {
             log("send: more than one message box in Teams and none has the cursor; nothing pasted")
             return SendOutcome(ok: false, reason: "which-box")
         }
-        guard context.open, let app, let window, let box = composer else {
+        guard context.open, let app, let window, var box = composer else {
             return SendOutcome(ok: false, reason: context.open ? "no-chat" : "no-teams")
         }
         // Still the chat the strip showed? Asked again right before the paste.
@@ -170,11 +174,28 @@ extension TeamsReader {
         let own = DispatchQueue.main.sync { Clipboard.put(text) }
         let posted = key(9, .maskCommand) // ⌘V
         var decision = PasteWatch.Decision(pasted: false, restore: true)
-        let until = Date().addingTimeInterval(posted ? PasteWatch.limit : 0)
+        let start = Date()
+        let until = start.addingTimeInterval(posted ? PasteWatch.limit : 0)
+        var nextLook = start.addingTimeInterval(PasteWatch.lookAfter)
+        var unreadable = false // the box didn't answer at the last look
         repeat {
             if posted { Thread.sleep(forTimeInterval: PasteWatch.every) }
             let now = DispatchQueue.main.sync { Clipboard.changeCount }
-            decision = PasteWatch.decide(before: beforePaste, after: value(), own: own, now: now)
+            let after = value()
+            unreadable = after == nil
+            decision = PasteWatch.decide(before: beforePaste, after: after, own: own, now: now)
+            // Still unchanged: Teams may have built its box anew. Look for it again, in the same
+            // chat, and follow the new one when there's no doubt which it is.
+            if posted, !decision.pasted, Date() >= nextLook {
+                nextLook = Date().addingTimeInterval(PasteWatch.lookEvery)
+                if sameChat() {
+                    find(in: window)
+                    if !several, let found = composer, !CFEqual(found, box) {
+                        box = found
+                        log("send: Teams built its message box anew during the paste; following the new one")
+                    }
+                }
+            }
         } while posted && !decision.pasted && Date() < until
         if decision.pasted || !posted {
             let restored: Bool = DispatchQueue.main.sync {
@@ -198,7 +219,8 @@ extension TeamsReader {
             return SendOutcome(ok: false, reason: "not-front")
         }
         guard decision.pasted else {
-            log("send: the message box didn't change after the paste; nothing pressed")
+            log(unreadable ? "send: the message box couldn't be read after the paste; nothing pressed"
+                           : "send: the message box didn't change after the paste; nothing pressed")
             return SendOutcome(ok: false, reason: "no-paste")
         }
 

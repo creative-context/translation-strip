@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.8.8
 
+- A message with a long link goes out. Teams shortens a long link in its box a moment after the paste, to its start and "…", and the strip took that for a different text and stopped. It now compares links by their whole address, in the box and in the chat.
+- When Teams is slow to take the paste, the strip waits up to 5 seconds instead of 1.5, and looks for Teams' message box again in case Teams built it anew. The log says whether a box that never changed couldn't be read or just didn't change.
 - The README and the guide say how the strip detects the language you write in: Apple's NaturalLanguage, on your Mac, so only the translation uses your plan.
 
 ## 0.8.7

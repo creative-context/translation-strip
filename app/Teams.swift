@@ -46,6 +46,14 @@ enum TeamsShape {
     static let contentIDPrefix = "content-"
     static let authorSeparator = " by " // "<preview> by <author>"
 
+    // Links. Teams shows a long one, in the box and in the chat, as its start and an ellipsis
+    // ("https://www.example.com/maps/place/…"); the link keeps the whole address. A shortened link
+    // counts as a sent one only from this many characters, so a bare "https://…" matches nothing.
+    static let ellipsis = "…"
+    static let link = try! NSRegularExpression(pattern: #"(?:https?://|www\.)[^\s]+"#)
+    static let shortLink = try! NSRegularExpression(pattern: #"(?:https?://|www\.)[^\s…]*…"#)
+    static let shortLinkMin = 16
+
     // Accessibility attribute names Teams' web content answers to.
     static let domID = "AXDOMIdentifier"
     static let domClasses = "AXDOMClassList"
@@ -259,6 +267,7 @@ enum Teams {
     // touch-ups (its autocorrect, a link made a link), the same letters and digits within about one
     // in ten, and about as many of them (a paste that landed twice, or half of one, isn't it).
     static func holds(_ box: String, _ text: String, placeholder: String = TeamsShape.placeholder) -> Bool {
+        let box = unshortened(box, from: text)
         if sameText(box, text, placeholder: placeholder) { return true }
         func count(_ s: String) -> Int { s.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.count }
         let n = count(text), m = count(boxText(box, placeholder: placeholder))
@@ -274,7 +283,7 @@ enum Teams {
         func key(_ s: String) -> [Unicode.Scalar] { s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) } }
         let a = Array(key(sent).prefix(160))
         guard !a.isEmpty else { return false }
-        let b = Array(key(message).prefix(TeamsShape.textLimit))
+        let b = Array(key(unshortened(message, from: sent)).prefix(TeamsShape.textLimit))
         // Edits to turn `a` into some stretch of `b` (what comes before and after it is free).
         var row = Array(repeating: 0, count: b.count + 1)
         for i in 1...a.count {
@@ -286,6 +295,35 @@ enum Teams {
         }
         let best = row.min() ?? a.count
         return best <= Swift.max(1, a.count / 10)
+    }
+
+    // Teams shortens a long link in its box and in the chat, a moment after the paste: the link's
+    // start, then "…", while the link itself keeps the whole address. Each shortened link that is
+    // the start of one of the sent text's links (with or without percent-encoding) gets that whole
+    // link back, in order, so the box and the message compare with what was pasted.
+    static func unshortened(_ shown: String, from sent: String) -> String {
+        guard shown.contains(TeamsShape.ellipsis) else { return shown }
+        let links = matches(TeamsShape.link, in: sent).map { (sent as NSString).substring(with: $0) }
+        guard !links.isEmpty else { return shown }
+        func plain(_ s: String) -> String { s.removingPercentEncoding ?? s }
+        let ns = shown as NSString
+        var swaps: [(NSRange, String)] = []
+        var next = 0 // links before this one are taken
+        for r in matches(TeamsShape.shortLink, in: shown) {
+            let start = plain(String(ns.substring(with: r).dropLast()))
+            guard start.count >= TeamsShape.shortLinkMin,
+                  let i = links.indices.dropFirst(next).first(where: { plain(links[$0]).hasPrefix(start) || links[$0].hasPrefix(start) })
+            else { continue }
+            swaps.append((r, links[i]))
+            next = i + 1
+        }
+        var out = shown
+        for (r, link) in swaps.reversed() { out = (out as NSString).replacingCharacters(in: r, with: link) }
+        return out
+    }
+
+    private static func matches(_ pattern: NSRegularExpression, in s: String) -> [NSRange] {
+        pattern.matches(in: s, range: NSRange(location: 0, length: (s as NSString).length)).map(\.range)
     }
 }
 

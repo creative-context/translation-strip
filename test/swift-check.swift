@@ -278,6 +278,20 @@ enum SwiftCheck {
         check("holds: half of it isn't it", Teams.holds("Could you take a look", "Could you take a look at the budget before Thursday?"), false)
         check("holds: another text isn't it", Teams.holds("See you on Monday.", "Can you send it?"), false)
         check("postedAs: a reply after its quote", Teams.postedAs("Sure, sending it now.", "Sam Lee 11/05/2026 10:12 Can you send the deck before noon? Sure, sending it now."), true)
+        // Teams shortens a long link in its box and in the chat: its start, then "…".
+        let mapLink = "https://maps.example.com/place/Example+Bakery/@12.3456000,-45.6789000,3a,75y,90t/data=!3m8!1e2!3m6!1sAbCdEfGhIjKlMnOp0001!2e10!3e12!6shttps:%2F%2Fphotos.example.com%2Fp%2FAbCdEfGhIjKlMnOpQrStUvWxYz0123456789%3Dw203-h114-k-no!7i4032!8i2268?entry=ttu"
+        let linkText = "Here's the place I mentioned.\n" + mapLink
+        let shortBox = "Here's the place I mentioned.\nhttps://maps.example.com/place/Example+Bakery/@12.3456000,-45.6789000,3a,75y,90t/data=!3m8!1e2!3m6!…"
+        check("unshortened: a shortened link gets its whole address back", Teams.unshortened(shortBox, from: linkText), linkText)
+        check("unshortened: nothing shortened, nothing changes", Teams.unshortened("See https://example.com/a", from: "See https://example.com/a"), "See https://example.com/a")
+        check("unshortened: a shortened link that starts no sent link stays", Teams.unshortened("See https://other.example.org/some/long/path…", from: linkText), "See https://other.example.org/some/long/path…")
+        check("unshortened: a bare start matches nothing", Teams.unshortened("See https://…", from: linkText), "See https://…")
+        check("unshortened: two links, each to its own", Teams.unshortened("First https://example.com/aaaaaaaaaa/b… then https://example.com/aaaaaaaaaa/c…", from: "First https://example.com/aaaaaaaaaa/bbbb then https://example.com/aaaaaaaaaa/cccc"), "First https://example.com/aaaaaaaaaa/bbbb then https://example.com/aaaaaaaaaa/cccc")
+        check("unshortened: Teams shows the link decoded", Teams.unshortened("Market https://maps.example.com/place/Café+Corner/@12.34…", from: "Market https://maps.example.com/place/Caf%C3%A9+Corner/@12.3456,-45.6789,17z"), "Market https://maps.example.com/place/Caf%C3%A9+Corner/@12.3456,-45.6789,17z")
+        check("holds: a box with the link shortened", Teams.holds(shortBox, linkText), true)
+        check("holds: a shortened link with other words around it isn't it", Teams.holds("Another place entirely, much farther away and only open on weekends, so not the one I meant at all.\nhttps://maps.example.com/place/Example+Bakery/@12.3456000,-45.6789000,3a,75y,90t/data=!3m8!1e2!3m6!…", linkText), false)
+        check("postedAs: the message in the chat with the link shortened", Teams.postedAs(linkText, shortBox), true)
+        check("postedAs: a message that starts with a shortened link", Teams.postedAs(mapLink, "https://maps.example.com/place/Example+Bakery/@12.3456000,-45.6789000,3a,75y,90t/data=!3m8!1e2!3m6!…"), true)
         check("boxValue: a box that can't be read is nil", TeamsScan.boxValue(Node("AXTextArea", id: "new-message-1"), FakeAX()), String?.none)
         check("context: a quote alone isn't a draft",
               TeamsScan.context(title: "Chat | Sam Lee | Microsoft Teams", boxValue: TeamsScan.boxValue(quoteBox([paragraph("\u{2060}")], value: shortQuote + "\u{2060}"), FakeAX()), placeholder: "Type a message", hasList: true, from: nil, last: nil).draft, false)
@@ -416,7 +430,8 @@ enum SwiftCheck {
         check("paste: after a draft, more text is the paste",
               PasteWatch.decide(before: "Half a thought", after: "Half a thought\nCan you send it?", own: 7, now: 7).pasted, true)
         check("paste: restores only on the shell's own changeCount", [PasteWatch.restores(own: 5, now: 5), PasteWatch.restores(own: 5, now: 6)], [true, false])
-        check("paste: watched every 50 ms for up to 1.5 s", [PasteWatch.every, PasteWatch.limit], [0.05, 1.5])
+        check("paste: watched every 50 ms for up to 5 s", [PasteWatch.every, PasteWatch.limit], [0.05, 5])
+        check("paste: the box looked for again after 0.5 s, then every second", [PasteWatch.lookAfter, PasteWatch.lookEvery], [0.5, 1])
     }
 
     // The server answering on the port must be the app's own, and the message from its page's main frame.
