@@ -15,6 +15,10 @@ Every message goes to a fresh session, so none of them sees what you wrote befor
 
 Claude Code adds its own context, as it does in any session, such as details about your Mac and your account's email. The session runs with no tools, no MCP servers, no hooks and none of your settings or memory files, and it keeps no transcript.
 
+## Translating on this Mac
+
+With the Mac model, or when Claude can't answer, what you write goes to a small program inside the app, `translate-on-mac`, instead of Claude, and with Auto on the other person's last message too, to see which language it's in. It translates with Apple's Translation on your Mac and sends nothing online. It keeps nothing, and the log says only that it translated, never what. macOS downloads the languages it uses from Apple when you add them in System Settings.
+
 ## What it reads from Teams
 
 Through Accessibility, about once a second while the strip is on screen: the window's position and size, its title for the chat's name, the message box to spot a draft and check what was pasted, the latest messages in the open chat for context, and, right after a send, whether your message showed up there. It stores none of it.

@@ -30,7 +30,9 @@
       once: "", onceFor: "", // the language button's one-time target, and the Spanish it holds for
       prevLang: null,    // the language the English had before an adjust: { language, from, langAuto }, for undo
       prev: "", prevLint: [], adjusted: false, adjustOpen: false, lastNote: "", adjText: "",
-      err: null,         // { kind, until, what } when phase is "error"
+      err: null,         // { kind, until, what, source?, language? } when phase is "error"
+      engine: "",        // what wrote the translation on show: "claude", "mac" (this Mac's Translation), or "" (typed, or none yet)
+      fallback: null,    // { kind, until } when this Mac translated it because Claude couldn't (the Claude error)
       notice: null,      // a tag over a ready translation: { kind, text, actions, env? }
       sendMode: "send", sentAt: "", sentTo: "", lastText: "", leftover: null,
       chatFor: "",       // the chat the English was written for: what Teams showed when it was asked for
@@ -82,7 +84,12 @@
   }
 
   // Each error the server can tell apart, as a tag, its buttons and the state the strip takes.
-  function errorView(kind, until, what) {
+  // extra: what the error said besides its kind ({ source, language } for "language").
+  function errorView(kind, until, what, extra) {
+    extra = extra || {};
+    // This Mac can't translate (macOS before 26): nothing to try again; another model is the way out.
+    if (kind === "mac" && what === "adjust") return { state: "mac", tag: { kind: "idle", text: ADJUST_NEEDS }, actions: [] };
+    if (kind === "mac") return { state: "mac", tag: { kind: "idle", text: "Can't translate on this Mac", title: "Needs macOS 26 or later." }, actions: [] };
     if (kind === "limit") { const u = untilText(until); return { state: "limit", tag: { kind: "idle", text: u ? `Plan limit reached until ${u}` : "Plan limit reached" }, actions: [] }; }
     if (kind === "guide") return { state: "noguide", tag: { kind: "idle", text: "Voice guide not set" }, actions: [{ act: "guide", label: "Open guide settings" }] };
     const retry = [{ act: what === "adjust" ? "retry-adjust" : "retry", label: "Try again" }];
@@ -91,13 +98,37 @@
     if (kind === "login") return { state: "login", tag: { kind: "idle", text: "Sign in to Claude Code" }, actions: retry };
     if (kind === "update") return { state: "update", tag: { kind: "idle", text: "Claude Code needs an update" }, actions: retry };
     if (kind === "offline") return { state: "error", tag: { kind: "error", text: "Can't reach Claude" }, actions: retry };
+    // The language pair isn't downloaded on this Mac: gray, fixed in System Settings, then tried again.
+    if (kind === "language") {
+      const src = hasText(extra.source) ? extra.source : "", to = hasText(extra.language) ? extra.language : "";
+      const text = src && to ? `${src} to ${to} isn't on this Mac` : to ? `${to} isn't on this Mac` : "This language isn't on this Mac";
+      return { state: "language", tag: { kind: "idle", text, title: "Download it in System Settings, General, Language & Region, Translation Languages." }, actions: retry };
+    }
     return { state: "error", tag: { kind: "error", text: what === "adjust" ? "Couldn't adjust" : "Couldn't translate" }, actions: retry };
   }
+
+  // ---------------------------------------------------------------------------- this Mac's Translation
+  // The model "mac" translates on the Mac with no voice guide, no register and no adjust.
+  const ADJUST_NEEDS = "Adjust needs Haiku, Sonnet or Opus";
+  const TONE_NEEDS = "Formal needs Haiku, Sonnet or Opus";
+  const modelOf = srv => (srv && srv.settings && srv.settings.model) || "";
+  // Why this Mac translated it instead of Claude: the Claude error, in words.
+  function fallbackWhy(kind, until) {
+    if (kind === "offline") return "Claude couldn't be reached";
+    if (kind === "limit") { const u = untilText(until); return u ? `Claude's plan limit was reached until ${u}` : "Claude's plan limit was reached"; }
+    if (kind === "login") return "Claude Code isn't signed in";
+    if (kind === "update") return "Claude Code needs an update";
+    if (kind === "missing") return "Claude Code isn't installed";
+    return "Claude didn't answer";
+  }
+  const fallbackTitle = (fb) => `${fallbackWhy(fb.kind, fb.until)}, so this Mac translated it, without your voice guide.`;
+  // Normal and Formal: off while the model is this Mac's (it has no register). null when they work.
+  const toneOff = model => (model === "mac" ? TONE_NEEDS : null);
 
   // What the strip says about itself right now: its state name (for color), the tag and its buttons.
   // srv is /api/state's last answer (or null).
   function view(st, srv) {
-    const p = st.phase, t = st.teams, tr = (srv && srv.translator) || {};
+    const p = st.phase, t = st.teams, tr = (srv && srv.translator) || {}, model = modelOf(srv);
     const v = { state: p, tag: null, actions: [] };
     const tag = (kind, text, actions) => { v.tag = { kind, text }; if (actions) v.actions = actions; };
     if (p === "translating") v.state = tr.status === "starting" ? "starting" : "translating";
@@ -107,19 +138,23 @@
     // "To <chat>" is right beside it, so the tag says only when; its title says to whom.
     else if (p === "sent") { tag("done", `Sent · ${st.sentAt}`); if (st.sentTo) v.tag.title = `Sent to ${st.sentTo} at ${st.sentAt}`; }
     else if (p === "leave") tag("idle", "Left in Teams, not sent");
-    else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
+    else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what, st.err); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "question") tag("asks", "Asks you");
     // Both keep Send off, so both read as errors: red, not the orange of "needs you" (decision 10).
     else if (p === "stale") tag("error", "Translation out of date");
     else if (mismatch(st)) { tag("error", `Written for ${st.chatFor}`); v.state = "written"; }
     else if (p === "draft") tag("needs", "Teams has a draft", [{ act: "add", label: "Add after draft" }, { act: "cancel", label: "Cancel" }]);
     else if (st.notice) { tag(st.notice.kind, st.notice.text, st.notice.actions || []); if (st.notice.kind === "error") v.state = "error"; }
-    else if (p === "idle" && tr.guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
+    // This Mac's model needs no guide; when its helper can't run, an empty strip says so.
+    else if (p === "idle" && model === "mac" && tr.status === "error" && tr.error === "mac") { const e = errorView("mac"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
+    else if (p === "idle" && model !== "mac" && tr.guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (t && !t.open) tag("idle", "Teams isn't open", [{ act: "open-teams", label: "Open Teams" }]);
     // Send can't work: red, like the other states that keep Send off.
     else if (shapeUnknown(st)) tag("error", "Can't find Teams' message box");
     else if (shapeSeveral(st)) tag("needs", "Click the box in Teams first");
     else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
+    // This Mac stood in for Claude: the tag takes the notice's place, and voice findings join its title.
+    else if (p === "ready" && st.fallback) { tag("info", "Translated on this Mac"); v.tag.title = [fallbackTitle(st.fallback)].concat(st.lint.map(f => f.message)).join("\n"); }
     else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
     else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
     if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo" }]);
@@ -164,7 +199,10 @@
   // ---------------------------------------------------------------------------- what can be done
   // The Translate button and ⏎ ask the same thing.
   const canTranslate = (st, f) => !!trim(f.es) && !BUSY.includes(st.phase) && !st.dictStopping;
-  const canAdjust = (st, f) => st.phase === "ready" && !!trim(f.en) && !mismatch(st);
+  // Adjust shows but is off on a translation this Mac made, or while the model is this Mac's: the title
+  // says why. null when it isn't off for that reason (it may still be hidden: canAdjust).
+  const adjustOff = (st, f, model) => (st.phase === "ready" && !!trim(f.en) && !mismatch(st) && (st.engine === "mac" || model === "mac") ? ADJUST_NEEDS : null);
+  const canAdjust = (st, f, model) => st.phase === "ready" && !!trim(f.en) && !mismatch(st) && !adjustOff(st, f, model);
   function canSend(st, f, afterDraft) {
     const t = st.teams;
     if (!(st.phase === "ready" || (afterDraft && st.phase === "draft"))) return false;
@@ -184,7 +222,7 @@
     // A one-time target holds for the same Spanish (a register switch or a retry), not for new text.
     const target = hasText(opts.target) ? opts.target : st.once && st.onceFor === text ? st.once : "";
     const n = next(st, { req: st.req + 1, es: text, prev: "", prevLint: [], prevLang: null, notice: null, err: null, adjusted: false, adjustOpen: false, phase: "translating", chatFor: (ctx && ctx.chat) || "",
-      language: "", from: "", langAuto: !!opts.auto && !target, langWho: (ctx && ctx.from) || "", once: target, onceFor: target ? text : "" });
+      language: "", from: "", langAuto: !!opts.auto && !target, langWho: (ctx && ctx.from) || "", once: target, onceFor: target ? text : "", engine: "", fallback: null });
     writeEnglish(n, "", []);
     const body = { text, register: st.register, context: ctx };
     if (target) body.target = target;
@@ -196,16 +234,22 @@
     if (trim(f.es) !== st.es) return next(st, { phase: "idle" });
     const n = next(st);
     if (hasText(d.question)) { writeEnglish(n, d.question, []); n.phase = "question"; }
-    else if (hasText(d.text)) { writeEnglish(n, d.text, cleanLint(d.lint)); n.phase = "ready"; n.language = hasText(d.language) ? d.language : ""; n.from = d.from === "chat" ? "chat" : "target"; }
-    else { n.err = { kind: d.error || "failed", until: d.until, what: "translate" }; n.phase = "error"; }
+    else if (hasText(d.text)) {
+      writeEnglish(n, d.text, cleanLint(d.lint)); n.phase = "ready"; n.language = hasText(d.language) ? d.language : ""; n.from = d.from === "chat" ? "chat" : "target";
+      n.engine = d.engine === "mac" ? "mac" : "claude";
+      // A stand-in: Claude couldn't answer (the error), so this Mac did.
+      n.fallback = hasText(d.fallback) ? { kind: d.fallback, until: d.until } : null;
+    }
+    else { n.err = { kind: d.error || "failed", until: d.until, what: "translate", source: d.source, language: d.language }; n.phase = "error"; }
     return n;
   }
 
   // An adjust keeps the text's language: `language` is the current text's (the target, if the state
   // never heard one).
-  function adjustStart(st, f, note, target) {
+  // model: the settings' model (an adjust needs a Claude one).
+  function adjustStart(st, f, note, target, model) {
     note = trim(note);
-    if (!note || !canAdjust(st, f)) return null;
+    if (!note || !canAdjust(st, f, model)) return null;
     const text = trim(f.es), current = trim(f.en);
     const n = next(st, { req: st.req + 1, prev: f.en, prevLint: st.lint, prevLang: { language: st.language, from: st.from, langAuto: st.langAuto }, lastNote: note, en: f.en, notice: null, adjustOpen: false, phase: "adjusting", adjText: text });
     return { st: n, body: { text, current, note, register: st.register, context: context(st.teams), language: st.language || target || "English" } };
@@ -225,7 +269,7 @@
       // The English stays as it was; the question is shown over it.
       n.notice = { kind: "asks", text: d.question };
     } else {
-      const e = errorView(d.error || "failed", d.until, "adjust");
+      const e = errorView(d.error || "failed", d.until, "adjust", d);
       n.notice = { kind: e.tag.kind, text: e.tag.text, actions: e.actions };
     }
     return { st: n, focus: false };
@@ -267,9 +311,9 @@
     if (st.phase === "idle" && trim(value)) {
       const t = st.teams;
       return next(st, { en: value, lint: [], phase: "ready", es: trim(f && f.es), chatFor: (t && t.chat) || "", language: target || "", from: "target",
-        langAuto: false, langWho: "", notice: null, err: null, adjusted: false, adjustOpen: false, prev: "", prevLint: [], prevLang: null, once: "", onceFor: "" });
+        langAuto: false, langWho: "", notice: null, err: null, adjusted: false, adjustOpen: false, prev: "", prevLint: [], prevLang: null, once: "", onceFor: "", engine: "", fallback: null });
     }
-    if (st.phase === "ready" && !trim(value) && f && !trim(f.es)) return next(st, { en: value, lint: [], phase: "idle", chatFor: "", language: "", from: "" });
+    if (st.phase === "ready" && !trim(value) && f && !trim(f.es)) return next(st, { en: value, lint: [], phase: "idle", chatFor: "", language: "", from: "", engine: "", fallback: null });
     return next(st, { en: value, lint: [] });
   }
   const setAdjustOpen = (st, open) => next(st, { adjustOpen: !!open });
@@ -281,7 +325,7 @@
 
   // Esc: everything back to the start. { st, stopDictation }.
   function clearAll(st) {
-    const n = next(st, { req: st.req + 1, es: "", prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "idle", chatFor: "", dictStopping: false, language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null });
+    const n = next(st, { req: st.req + 1, es: "", prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "idle", chatFor: "", dictStopping: false, language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null });
     writeSpanish(n, ""); writeEnglish(n, "", []);
     const stop = st.dict === "on";
     if (stop) n.dict = "off";
@@ -314,7 +358,7 @@
       // The shell answers ok only once the message shows in the chat (or sits in Teams' box, in
       // Put in Teams mode): then both boxes empty for the next message, and "Sent · time" stays in the
       // footer. Until then, and on any failure, the English stays here.
-      const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
+      const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
       writeEnglish(n, "", []); writeSpanish(n, "");
       return n;
     }
@@ -412,7 +456,7 @@
 
   const api = {
     create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, canRetarget, untilText, clock,
-    canTranslate, canAdjust, canSend,
+    canTranslate, canAdjust, adjustOff, canSend, toneOff, fallbackWhy, ADJUST_NEEDS, TONE_NEEDS,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
     sendStart, sendTimeout, sendDone,

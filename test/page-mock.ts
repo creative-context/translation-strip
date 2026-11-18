@@ -16,6 +16,11 @@
 //   LOGIN     error "login" (Claude Code isn't signed in)      UPDATE    error "update" (Claude Code needs an update)
 //   NOCLAUDE  error "missing" (Claude Code isn't installed, or not where it installs to)
 // Adjust notes: "corto" or "short" gives a shorter English; "UNCLEAR" a question; "OFFLINE" and the others as above.
+// This Mac's Translation (the model "mac"): the page's URL picks it, read from each request's Referer, so one page can
+// try it while the others don't: ?model=mac answers as the Mac (engine "mac", no register, adjust refused with 409 mac),
+// ?fallback=<error> as the Mac standing in for Claude after that error (offline, limit, login, update, missing, failed).
+// Choosing Mac in the menu does the same for every page. On the Mac, the text can say:
+//   NOMAC     error "mac" (this Mac can't translate)    NOTONMAC   error "language" (Español to 日本語 isn't on this Mac)
 // The page's own preview flags (in the URL, for the stand-in Teams): ?shape=unknown (Teams' message box can't be found), ?shape=several (two boxes, none with the cursor),
 // ?send=no-paste or ?send=not-own-server (and the other send reasons), ?teams=closed|nochat, ?draft=1, ?access=0, ?mic=denied.
 import { join } from "node:path";
@@ -30,7 +35,7 @@ const DICTATION = [
   { id: "en-US", name: "English (US)" }, { id: "en-GB", name: "English (UK)" }, { id: "pt-BR", name: "Português (Brasil)" },
   { id: "pt-PT", name: "Português (Portugal)" }, { id: "fr-FR", name: "Français" }, { id: "de-DE", name: "Deutsch" }, { id: "it-IT", name: "Italiano" },
 ];
-type Settings = { model: "haiku" | "sonnet" | "opus"; mode: "send" | "leave"; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string };
+type Settings = { model: "haiku" | "sonnet" | "opus" | "mac"; mode: "send" | "leave"; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string };
 // The mock starts with two languages, so the menu's Reply in row has a choice (the app's default is English alone).
 const MOCK_DEFAULTS: Settings = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX" };
 const settings: Settings = structuredClone(MOCK_DEFAULTS);
@@ -41,28 +46,38 @@ const busyCount = new Map<string, number>();
 // The settings as the state carries them: with the guide's and the linter's file names (made up), never a path.
 const fullSettings = () => ({ ...settings, files: { voiceGuide: "voice-guide.md", linter: "voice-lint.mjs" } });
 
-function state() {
+// The page's ?model=mac and ?fallback=<error>, from the Referer of its requests (the page's own address).
+type Flags = { model: string | null; fallback: string | null };
+function flagsOf(req: Request): Flags {
+  try {
+    const u = new URL(req.headers.get("referer") ?? "");
+    return { model: u.searchParams.get("model"), fallback: u.searchParams.get("fallback") };
+  } catch { return { model: null, fallback: null }; }
+}
+const NO_FLAGS: Flags = { model: null, fallback: null };
+const modelFor = (f: Flags) => (f.model === "mac" ? "mac" : settings.model);
+
+function state(f: Flags = NO_FLAGS) {
   return JSON.stringify({
     now: Date.now(),
     server: { version: "mock", pid: process.pid },
-    translator: { ...translator, model: settings.model },
-    settings: fullSettings(),
+    translator: { ...translator, model: modelFor(f) },
+    settings: { ...fullSettings(), model: modelFor(f) },
     options: { languages: LANGUAGES, dictation: DICTATION },
   });
 }
 
 // ---- the state stream: same shape as the kit's (a state, then a ping every 9 s)
-const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+const clients = new Map<ReadableStreamDefaultController<Uint8Array>, Flags>();
 const enc = new TextEncoder();
 function broadcast() {
   version++;
-  const msg = enc.encode(`data: ${state()}\n\n`);
-  for (const c of clients) {
-    try { c.enqueue(msg); } catch { clients.delete(c); }
+  for (const [c, f] of clients) {
+    try { c.enqueue(enc.encode(`data: ${state(f)}\n\n`)); } catch { clients.delete(c); }
   }
 }
 setInterval(() => {
-  for (const c of clients) {
+  for (const c of clients.keys()) {
     try { c.enqueue(enc.encode("event: ping\ndata: {}\n\n")); } catch { clients.delete(c); }
   }
 }, 9000);
@@ -136,8 +151,30 @@ function chatLanguage(last: unknown): string | null {
 const lintFor = (english: string, text: string) =>
   /kindly/i.test(text) || /kindly/i.test(english) ? [{ level: "warning", message: "\"Kindly\" sounds stiff" }] : [];
 
-async function translate(body: any) {
+// This Mac's Translation: the text in the language, as Translation gives it (no register, no question, no guide).
+// fallback: the Claude error it stands in for, when it does.
+async function onMac(body: any, fallback: string | null) {
   const text = String(body?.text ?? "");
+  if (/notonmac/i.test(text)) return json({ error: "language", source: "Español", language: "日本語" }, 503);
+  if (/nomac/i.test(text)) return json({ error: "mac" }, 503);
+  await sleep(DELAY / 2);
+  const override = typeof body?.target === "string" ? body.target : null;
+  if (override !== null && !LANGUAGES.includes(override)) return json({ error: "target" }, 400);
+  const fromChat = override === null && settings.auto ? chatLanguage(body?.context?.last) : null;
+  const language = override ?? fromChat ?? settings.target;
+  const out = /kindly/i.test(text) ? "Kindly review the budget before Thursday." : polishIn(language).normal;
+  const reply: any = { text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text), engine: "mac" };
+  if (fallback) {
+    reply.fallback = fallback;
+    if (fallback === "limit") reply.until = new Date(Date.now() + 2 * 3600_000).toISOString();
+  }
+  return json(reply);
+}
+
+async function translate(body: any, flags: Flags = NO_FLAGS) {
+  const text = String(body?.text ?? "");
+  if (modelFor(flags) === "mac") return onMac(body, null);
+  if (flags.fallback) return onMac(body, flags.fallback);
   if (/starting/i.test(text) && translator.status !== "starting") restart(3000);
   await waitReady();
   const hit = await trigger(text);
@@ -150,10 +187,11 @@ async function translate(body: any) {
   const fromChat = override === null && settings.auto ? chatLanguage(body?.context?.last) : null;
   const language = override ?? fromChat ?? settings.target;
   const out = /kindly/i.test(text) ? "Kindly review the budget before Thursday." : polishIn(language)[register];
-  return json({ text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text) });
+  return json({ text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text), engine: "claude" });
 }
 
-async function adjust(body: any) {
+async function adjust(body: any, flags: Flags = NO_FLAGS) {
+  if (modelFor(flags) === "mac") return json({ error: "mac" }, 409);
   const note = String(body?.note ?? "");
   const current = String(body?.current ?? "");
   const text = String(body?.text ?? "");
@@ -163,14 +201,14 @@ async function adjust(body: any) {
   if (hit) return hit;
   await sleep(DELAY);
   const out = /cort|short|breve/i.test(note) ? polishIn(language).shorter : `${current.replace(/ \(adjusted\)$/, "")} (adjusted)`;
-  return json({ text: out, language, from: "target", lint: lintFor(out, text) });
+  return json({ text: out, language, from: "target", lint: lintFor(out, text), engine: "claude" });
 }
 
 // POST /api/settings, with the contract's rules: anything outside them is 400 { error: "settings" } and changes nothing.
 function applySettings(body: any): boolean {
   const next = structuredClone(settings);
   const has = (k: string) => body && Object.prototype.hasOwnProperty.call(body, k);
-  if (has("model")) { if (!["haiku", "sonnet", "opus"].includes(body.model)) return false; next.model = body.model; }
+  if (has("model")) { if (!["haiku", "sonnet", "opus", "mac"].includes(body.model)) return false; next.model = body.model; }
   if (has("mode")) { if (!["send", "leave"].includes(body.mode)) return false; next.mode = body.mode; }
   if (has("target")) { if (!LANGUAGES.includes(body.target)) return false; next.target = body.target; }
   if (has("auto")) { if (typeof body.auto !== "boolean") return false; next.auto = body.auto; }
@@ -208,12 +246,13 @@ Bun.serve({
     const url = new URL(req.url);
     const p = url.pathname;
 
-    if (p === "/api/state") return new Response(state(), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    const flags = flagsOf(req);
+    if (p === "/api/state") return new Response(state(flags), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
     if (p === "/api/stream") {
       let ctrl: ReadableStreamDefaultController<Uint8Array>;
       return new Response(
         new ReadableStream<Uint8Array>({
-          start(c) { ctrl = c; clients.add(c); c.enqueue(enc.encode(`data: ${state()}\n\n`)); },
+          start(c) { ctrl = c; clients.set(c, flags); c.enqueue(enc.encode(`data: ${state(flags)}\n\n`)); },
           cancel() { clients.delete(ctrl); },
         }),
         { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } },
@@ -222,12 +261,12 @@ Bun.serve({
     if (req.method === "POST") {
       let body: any = {};
       try { body = await req.json(); } catch {}
-      if (p === "/api/translate") return translate(body);
-      if (p === "/api/adjust") return adjust(body);
+      if (p === "/api/translate") return translate(body, flags);
+      if (p === "/api/adjust") return adjust(body, flags);
       if (p === "/api/settings") {
         if (!applySettings(body)) return json({ error: "settings" }, 400);
         broadcast();
-        return json({ settings: fullSettings() });
+        return json({ settings: { ...fullSettings(), model: modelFor(flags) } });
       }
       if (p === "/api/translator/restart") { restart(1500); return json({}); }
       return json({ error: "not found" }, 404);

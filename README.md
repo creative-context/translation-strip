@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <b>Version 0.8</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
+  <b>Version 0.9</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.8-6FA6E8?labelColor=1A1D21" alt="Version 0.8.8">
+  <img src="https://img.shields.io/badge/version-0.9.0-6FA6E8?labelColor=1A1D21" alt="Version 0.9.0">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
@@ -38,6 +38,7 @@ Write the message the way it comes out: in Spanish or any other language, mixing
 - **Several languages.** Pick your language in Settings, or turn on Auto to write in the chat's language when it's clear. One voice guide serves them all.
 - **Sends where you're looking.** ⌘⏎ puts the translation in the open chat and sends it only if that chat is still the one the strip shows.
 - **Your Claude plan, no API key.** A hidden Claude Code session writes the translation, a fresh one for every message. Only the translation uses your plan: your Mac detects the language you write in with Apple's NaturalLanguage, without going online.
+- **Works without Claude too.** Choose Mac in the gear to translate on your Mac with Apple's Translation. It also steps in on its own when Claude is offline or at your plan's limit, without your voice guide.
 - **Your linter has the last word.** An error it finds gets fixed once before you see the translation.
 - **Out of the way.** It docks on any side of Teams, follows it, and hides when Teams does.
 
@@ -58,7 +59,7 @@ Made-up messages, run through the real translator with [the example voice guide]
 
 ## Requirements
 
-macOS 14 or later, the new Microsoft Teams, [Bun](https://bun.sh), which runs the app's server, and [Claude Code](https://code.claude.com/docs/en/setup) signed in with a Claude plan that includes it (Pro, Max, Team or Enterprise). To build it yourself, the Xcode Command Line Tools too.
+macOS 14 or later (translating on the Mac needs macOS 26), the new Microsoft Teams, [Bun](https://bun.sh), which runs the app's server, and [Claude Code](https://code.claude.com/docs/en/setup) signed in with a Claude plan that includes it (Pro, Max, Team or Enterprise). To build it yourself, the Xcode Command Line Tools too.
 
 **Status:** 0.x. It reads Teams through Accessibility, so a Teams update can change what it finds.
 
@@ -94,7 +95,7 @@ A Markdown file that says how you sound: your registers, what you never write, a
 ## Privacy
 
 - The app and its server run on your Mac and listen on `127.0.0.1` only.
-- What you write, your language settings, the open chat's name and its last message go to Claude through a fresh Claude Code session on your plan, and nowhere else.
+- What you write, your language settings, the open chat's name and its last message go to Claude through a fresh Claude Code session on your plan, and nowhere else. A translation on the Mac stays on your Mac.
 - It keeps no message text: only your settings, with your notes per language, and a log of what happened.
 
 The whole list is in [docs/privacy.md](docs/privacy.md).

@@ -23,7 +23,7 @@ import { claudeCommand, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS,
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
 import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
 import { fileThere } from "./settings";
-import { bump, state, type Model, type TranslatorError } from "./state";
+import { bump, state, type ClaudeModel, type Model, type Status, type TranslatorError } from "./state";
 
 // aborted: the session ended before it answered; stopped: on purpose (a restart, the server stopping);
 // unusable: it answered, but with no JSON reply or another request's id (a slip a fresh session doesn't repeat).
@@ -69,9 +69,9 @@ export function translatorEnv(): Record<string, string> {
 // Opus runs at low effort. Tested on made-up messages (2026-11-15): the same English as at its
 // default effort and at high, and as fast or faster (high thinks more often and is slower in its
 // slowest replies). Haiku and Sonnet keep Claude Code's default.
-const EFFORT: Partial<Record<Model, string>> = { opus: "low" };
+const EFFORT: Partial<Record<ClaudeModel, string>> = { opus: "low" };
 
-export function translatorArgs(model: Model): string[] {
+export function translatorArgs(model: ClaudeModel): string[] {
   return [
     claudeCommand(), "-p",
     "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -124,7 +124,9 @@ function feed(fd: number, text: string) {
 // `claude --version`'s first line, cut to something safe for the log.
 const versionWords = (out: string) => (out.split("\n")[0] ?? "").replace(/[^\w .()+-]/g, "").trim().slice(0, 40) || "unknown";
 
-export type TranslatorOptions = { now?: () => number };
+// mac: the helper's status, which the state shows while the model is mac. working: a request is in
+// progress outside a Claude session (on the helper), so the state says busy.
+export type TranslatorOptions = { now?: () => number; mac?: () => { status: Status; error: TranslatorError | null }; working?: () => boolean };
 
 export class Translator {
   private spare: Session | null = null;
@@ -138,11 +140,13 @@ export class Translator {
   private version: string | null = null;
   private versionAsked = false;
   private now: () => number;
+  private opts: TranslatorOptions;
   model: Model = "sonnet";
   guidePath: string | null = null;
 
   constructor(private settings: () => { voiceGuide: string | null; model: Model }, opts: TranslatorOptions = {}) {
     this.now = opts.now ?? Date.now;
+    this.opts = opts;
   }
 
   busy() {
@@ -151,11 +155,22 @@ export class Translator {
 
   // Starts a fresh spare, replacing the one there is: reads the guide now and holds it in memory only.
   // The session answering a request, if any, is left alone.
+  // With the mac model chosen, no Claude session runs: the spare stops, and starts again when a Claude
+  // model is chosen.
   start(reason: string) {
+    const s = this.settings();
+    if (s.model === "mac") {
+      if (this.spare) log(`spare stopped (translating on this Mac, ${reason})`);
+      this.retire(this.spare);
+      this.spare = null;
+      this.model = "mac";
+      this.guidePath = s.voiceGuide;
+      this.refresh();
+      return;
+    }
     this.askVersion();
     this.retire(this.spare);
     this.spare = null;
-    const s = this.settings();
     this.model = s.model;
     this.guidePath = s.voiceGuide;
     this.day = today();
@@ -176,7 +191,7 @@ export class Translator {
     try {
       mkdirSync(TRANSLATOR_DIR, { recursive: true });
       pipe = promptPipe();
-      proc = Bun.spawn(translatorArgs(this.model), {
+      proc = Bun.spawn(translatorArgs(this.model as ClaudeModel), {
         cwd: TRANSLATOR_DIR,
         env: translatorEnv(),
         stdio: ["pipe", "pipe", "pipe", pipe ? pipe.read : "pipe"],
@@ -228,6 +243,11 @@ export class Translator {
     this.crashes = 0;
     if (this.error?.error !== "limit") this.error = null;
     this.start(reason);
+  }
+
+  // The plan's limit's reset time while the last Claude answer said the limit was reached, else null.
+  limitUntil(): string | null {
+    return this.error?.error === "limit" ? this.error.until : null;
   }
 
   // One request, on its own session. The caller checks busy() first. A first try that ends without
@@ -459,11 +479,14 @@ export class Translator {
   // Puts the translator's part of the state in order, and bumps it when something changed.
   refresh() {
     const t = state.translator;
-    const status = this.busy() ? "busy" : this.error ? "error" : this.spare ? "ready" : "starting";
+    const busy = this.busy() || !!this.opts.working?.();
+    // The mac model: the helper's status. Claude's: its sessions'.
+    const mac = this.model === "mac" ? (this.opts.mac?.() ?? { status: "error" as Status, error: "mac" as TranslatorError }) : null;
+    const status = busy ? "busy" : mac ? mac.status : this.error ? "error" : this.spare ? "ready" : "starting";
     const next = {
       status,
-      error: this.busy() ? null : (this.error?.error ?? null),
-      until: this.busy() ? null : (this.error?.until ?? null),
+      error: busy ? null : mac ? mac.error : (this.error?.error ?? null),
+      until: busy || mac ? null : (this.error?.until ?? null),
       model: this.model,
       guide: fileThere(this.settings().voiceGuide) ? "ok" : "missing",
     } as const;

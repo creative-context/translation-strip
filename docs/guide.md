@@ -58,7 +58,17 @@ The strip docks under the Teams window, as wide as it, and moves with it. When t
 
 ## The settings menu
 
-Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Haiku, the fastest; Sonnet, which a new install starts with; or Opus, which writes the most natural replies and runs at low effort), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide and restarts the translator. The language, the guide, the linter and dictation are set once in Settings.
+Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Mac, which [translates on your Mac](#translating-on-this-mac) without Claude; Haiku, the fastest; Sonnet, which a new install starts with; or Opus, which writes the most natural replies and runs at low effort), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide and restarts the translator. The language, the guide, the linter and dictation are set once in Settings.
+
+## Translating on this Mac
+
+Mac, the first model in the gear, translates with Apple's Translation, built into macOS 26 and later. It runs on your Mac, so it needs no internet and uses nothing from your plan. It's a plain translation: it doesn't follow your voice guide, Normal and Formal don't change it, and Adjust is off for its replies. The linter still checks them. It reads which language you wrote in the way "Detected" does, and for a very short text it takes your dictation language. With Auto on, it replies in the language of the other person's last message, like the other models.
+
+The strip also uses it on its own when Claude can't answer: no internet, your plan's limit, Claude Code signed out, out of date or not installed, or a session that didn't answer. The reply then shows "Translated on this Mac"; point at it to see why. Adjust is off for that reply too. Each new message tries Claude first, except while your plan's limit lasts.
+
+The strip touches up what Translation writes in two ways: blank lines it adds between your lines come out, and :) :D ;) :( become the emoji Teams shows when you type them, since a paste skips that.
+
+Translation needs both languages on your Mac. When one is missing, the strip says "<language> to <language> isn't on this Mac": add it in System Settings › General › Language & Region › Translation Languages, and macOS downloads it from Apple. On macOS 14 and 15, Mac says "Can't translate on this Mac".
 
 ## Languages
 

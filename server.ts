@@ -1,22 +1,26 @@
-// Translation Strip's local server: keeps the hidden translator session alive, answers the page
-// and runs the voice linter. Its life (the host check, exit 3, stopping with the app, the state
+// Translation Strip's local server: keeps the hidden translator session alive (or, with the mac
+// model, the helper that translates on this Mac), answers the page and runs the voice linter. Its life (the host check, exit 3, stopping with the app, the state
 // stream) comes from the family's kit. It starts only when run.
 import { isAbsolute } from "node:path";
 import pkg from "./package.json";
 import { clock, PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
 import { lint } from "./src/lint";
+import { fixMacText, hintFor, MacHelper, type MacOutcome } from "./src/mac";
 import { isLanguage } from "./src/languages";
 import { answerFor, type Context, type Register, type Request as Ask } from "./src/protocol";
 import { createServer } from "./src/server-kit";
 import { checkChange, fileThere, loadSettings, saveSettings, settingsStamp } from "./src/settings";
-import { bump, onBump, publicSettings, snapshot, state } from "./src/state";
+import { bump, onBump, publicSettings, snapshot, state, type TranslatorError } from "./src/state";
 import { Translator } from "./src/translator";
 
 const VERSION = process.env.STRIP_VERSION || pkg.version; // the app says its own version; run by hand, package.json's
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
-export const translator = new Translator(() => state.settings, { now: clock });
+// A request in progress, on Claude or on the Mac: one at a time.
+let working = false;
+export const mac = new MacHelper(() => translator.refresh());
+export const translator = new Translator(() => state.settings, { now: clock, mac: () => mac.status(), working: () => working });
 
 let stamp = 0;
 // Reads settings.json into the state. Returns what changed that the translator cares about.
@@ -31,6 +35,14 @@ function readSettings() {
     bump();
   }
   return { model: before.model !== s.model, guide: before.voiceGuide !== s.voiceGuide };
+}
+
+// After settings.json was read: a new spare for a new model or guide (none with mac, whose helper is
+// started ahead so the state can say ready).
+function settingsChanged(changed: { model: boolean; guide: boolean }) {
+  if (changed.model || changed.guide) translator.restartWhenIdle(changed.model ? "model changed" : "guide setting changed");
+  else translator.refresh();
+  if (state.settings.model === "mac") mac.ensure();
 }
 
 // A POST comes from the app's own page or not at all: JSON (so a browser asks first, and the server
@@ -76,24 +88,89 @@ async function body(req: Request): Promise<any> {
   }
 }
 
-// A polish or an adjust, start to finish: the translator, then the linter, in any language. A reply
-// the linter finds an error in gets one fix before the page sees it: an adjust whose note names the
-// errors, in the reply's own language (Auto off), so the fix keeps the language. The fix is kept
-// only when it has fewer errors; else the first reply goes back with its findings, as before.
-// Warnings are left alone (the guide says they depend on the message).
-async function run(r: Ask) {
-  if (translator.busy()) return json({ error: "busy" }, 409);
-  const out = await translator.request(r);
-  if (!out.ok) return json(out.until ? { error: out.error, until: out.until } : { error: out.error }, 503);
-  if ("question" in out.reply) return json({ question: out.reply.question });
-  const { language, from } = answerFor(out.reply, r);
-  let text = out.reply.text;
-  let l = await lint(text, state.settings.linter);
-  const linter = l.ok ? "ok" : "missing";
+// The linter's state, from its last run.
+function linterSeen(ok: boolean) {
+  const linter = ok ? "ok" : "missing";
   if (state.translator.linter !== linter) {
     state.translator.linter = linter;
     bump();
   }
+}
+
+// One request on the helper, with the request's target and Auto, the chat's last message and the
+// dictation locale's language as the hint.
+function onMac(r: Ask): Promise<MacOutcome> {
+  return mac.translate({ text: r.text, target: r.target, auto: r.auto, ...(r.context?.last ? { last: r.context.last } : {}), hint: hintFor(state.settings.dictation) });
+}
+
+// A reply from the helper: the two fixes on its text, then the linter, with no fix turn.
+async function macReply(r: Ask, m: Extract<MacOutcome, { ok: true }>, extra: Record<string, unknown> = {}) {
+  const text = fixMacText(r.text, m.text);
+  const l = await lint(text, state.settings.linter);
+  linterSeen(l.ok);
+  return json({ text, language: m.language, from: m.from, lint: l.lint, engine: "mac", ...extra });
+}
+
+// The Claude errors the helper stands in for, on a polish. guide, busy and adjusts never fall back.
+const STAND_IN = new Set<TranslatorError>(["offline", "limit", "login", "update", "missing", "failed"]);
+const standInLog = (error: string) => console.error(`${new Date().toISOString()} translated on the Mac instead (${error})`);
+const claudeError = (error: string, until?: string | null) => json(until ? { error, until } : { error }, 503);
+
+// A request, one at a time, start to finish. The state says busy all along, on the helper too.
+async function run(r: Ask) {
+  if (r.task === "adjust" && state.settings.model === "mac") return json({ error: "mac" }, 409);
+  if (working || translator.busy()) return json({ error: "busy" }, 409);
+  working = true;
+  translator.refresh();
+  try {
+    return state.settings.model === "mac" ? await runMac(r) : await runClaude(r);
+  } finally {
+    working = false;
+    translator.refresh();
+  }
+}
+
+// The mac model: the helper, the fixes and the linter. It translates; it doesn't polish or adjust.
+async function runMac(r: Ask) {
+  const m = await onMac(r);
+  if (m.ok) return macReply(r, m);
+  if (m.error === "language") return json({ error: "language", source: m.source, language: m.language }, 503);
+  return json({ error: m.error }, 503);
+}
+
+// A Claude model: the translator, then the linter, in any language. A polish Claude can't answer
+// (offline, the limit, signed out, an update, not installed, or failed twice) is translated on the
+// Mac instead, when the helper can; a limit whose reset time is still ahead goes straight there.
+// A reply the linter finds an error in gets one fix before the page sees it: an adjust whose note
+// names the errors, in the reply's own language (Auto off), so the fix keeps the language. The fix
+// is kept only when it has fewer errors; else the first reply goes back with its findings, as before.
+// Warnings are left alone (the guide says they depend on the message).
+async function runClaude(r: Ask) {
+  const until = translator.limitUntil();
+  if (r.task === "polish" && until && Date.parse(until) > clock() && mac.available()) {
+    const m = await onMac(r);
+    if (m.ok) {
+      standInLog("limit");
+      return macReply(r, m, { fallback: "limit", until });
+    }
+    return claudeError("limit", until);
+  }
+  const out = await translator.request(r);
+  if (!out.ok) {
+    if (r.task === "polish" && !out.stopped && STAND_IN.has(out.error) && mac.available()) {
+      const m = await onMac(r);
+      if (m.ok) {
+        standInLog(out.error);
+        return macReply(r, m, { fallback: out.error, ...(out.error === "limit" && out.until ? { until: out.until } : {}) });
+      }
+    }
+    return claudeError(out.error, out.until);
+  }
+  if ("question" in out.reply) return json({ question: out.reply.question });
+  const { language, from } = answerFor(out.reply, r);
+  let text = out.reply.text;
+  let l = await lint(text, state.settings.linter);
+  linterSeen(l.ok);
   const errors = l.lint.filter((f) => f.level === "error");
   if (errors.length && !translator.busy()) {
     const note = `The user's voice guide rules this out, so change only it and keep everything else as it is: ${errors.map((f) => f.message).join(" / ")}`;
@@ -106,7 +183,7 @@ async function run(r: Ask) {
       fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; a fix ${kept ? `kept (${left} left)` : "didn't help, the first reply goes back"}`);
     } else fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; the fix got no message, the first reply goes back`);
   }
-  return json({ text, language, from, lint: l.lint });
+  return json({ text, language, from, lint: l.lint, engine: "claude" });
 }
 // Counts only, never the text.
 const fixLog = (words: string) => console.error(`${new Date().toISOString()} lint: ${words}`);
@@ -148,15 +225,15 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     // The only writer of settings.json: the page's and Settings' choices and the paths the app sends.
     // The language keys go with each request, so they never restart the translator.
     saveSettings({ ...change, voiceGuide, linter });
-    const changed = readSettings();
-    if (changed.model || changed.guide) translator.restartWhenIdle(changed.model ? "model changed" : "guide setting changed");
-    else translator.refresh();
+    settingsChanged(readSettings());
     return json({ settings: publicSettings() });
   }
 
   if (url.pathname === "/api/translator/restart" && post) {
     readSettings();
+    mac.restart();
     translator.restart("asked");
+    if (state.settings.model === "mac") mac.ensure();
     return json({});
   }
 
@@ -177,15 +254,21 @@ export const server = createServer({
   start: () => {
     readSettings();
     translator.start("server start");
+    if (state.settings.model === "mac") mac.ensure();
   },
-  stop: () => translator.kill(),
+  stop: () => {
+    translator.kill();
+    mac.stop();
+  },
   ticks: [
     // settings.json edited by hand, the guide file, a new day, a Mac that slept.
+    // With mac, the helper's file may come or go: the state follows.
     [2, "settings", () => {
-      if (settingsStamp() === stamp) return translator.tick();
-      const changed = readSettings();
-      if (changed.model || changed.guide) translator.restartWhenIdle(changed.model ? "model changed" : "guide setting changed");
-      else translator.refresh();
+      if (settingsStamp() === stamp) {
+        if (state.settings.model === "mac") translator.refresh();
+        return translator.tick();
+      }
+      settingsChanged(readSettings());
     }],
   ],
   startedWords: () => `model ${state.settings.model}`,

@@ -2,7 +2,8 @@
 // docks (Dock.swift), how Teams' titles, headings and message box are read and how its window is
 // walked for the box and the last message, on a made-up tree (Teams.swift), and the send's
 // decisions: the paste watch and the own server (Send.swift), and which locales a dictation tries
-// (DictationLocales, in Dictation.swift). Built and run by test/swift-check.sh. Prints one line per case; exits 1 when one fails. A case marked known is a
+// (DictationLocales, in Dictation.swift), and the Mac translator's plan: language codes, names, source and target
+// (MacPlan.swift). Built and run by test/swift-check.sh. Prints one line per case; exits 1 when one fails. A case marked known is a
 // behavior the check expects to change: it prints KNOWN while it's wrong and PASS once it's fixed.
 
 import AppKit
@@ -33,8 +34,60 @@ enum SwiftCheck {
         paste()
         ownServer()
         dictationLocales()
+        macPlan()
         print("\(failures == 0 ? "ok" : "FAILED"): \(failures) failed, \(known) known")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    // The Mac's own translator (translate-on-mac): the strip's names and codes, then which language a
+    // request goes from and to. `fake` stands in for NaturalLanguage's clear-language rule, so the cases
+    // don't hang on its model; a few at the end use the real one.
+    static func macPlan() {
+        check("mac: Español is es", MacLanguages.code(name: "Español"), "es")
+        check("mac: 中文 is Simplified Chinese", MacLanguages.code(name: "中文"), "zh-Hans")
+        check("mac: a name off the list has no code", MacLanguages.code(name: "Klingon"), String?.none)
+        check("mac: every strip language has a code", MacLanguages.codes.count, 13)
+        check("mac: pt-BR is Português", MacLanguages.stripName(code: "pt-BR"), "Português")
+        check("mac: zh-Hant is 中文", MacLanguages.stripName(code: "zh-Hant"), "中文")
+        check("mac: Icelandic isn't a strip language", MacLanguages.stripName(code: "is"), String?.none)
+        check("mac: Icelandic is named in itself", MacLanguages.name(code: "is"), "Íslenska")
+        check("mac: es-MX's language is es", MacLanguages.base("es-MX"), "es")
+
+        let langs = ["Hola, ¿cómo vas con el reporte?": "es", "Tudo certo por aqui, obrigado!": "pt", "See you then.": "en", "Ég kem á morgun.": "is"]
+        let fake: (String) -> String? = { langs[$0] }
+        func plan(_ text: String, _ target: String = "English", auto: Bool = false, last: String? = nil, hint: String? = "es") -> MacPlan? {
+            MacPlan.make(text: text, target: target, auto: auto, last: last, hint: hint, detect: fake)
+        }
+        check("mac plan: Spanish to the target", plan("Hola, ¿cómo vas con el reporte?"),
+              MacPlan(source: "es", target: "en", language: "English", from: "target", same: false))
+        check("mac plan: an unclear text takes the hint", plan("ok", hint: "pt")?.source, "pt")
+        check("mac plan: the hint is a locale's language", plan("ok", hint: "es-MX")?.source, "es")
+        check("mac plan: unclear with no hint can't be planned", plan("ok", hint: nil), MacPlan?.none)
+        check("mac plan: unclear with und as the hint can't be planned", plan("ok", hint: "und"), MacPlan?.none)
+        check("mac plan: a target off the list can't be planned", plan("Hola, ¿cómo vas con el reporte?", "Klingon"), MacPlan?.none)
+        check("mac plan: Auto with a clear last message goes to its language",
+              plan("Hola, ¿cómo vas con el reporte?", auto: true, last: "Tudo certo por aqui, obrigado!"),
+              MacPlan(source: "es", target: "pt", language: "Português", from: "chat", same: false))
+        check("mac plan: Auto with an unclear last message keeps the target",
+              plan("Hola, ¿cómo vas con el reporte?", auto: true, last: "ok"),
+              MacPlan(source: "es", target: "en", language: "English", from: "target", same: false))
+        check("mac plan: Auto with a last message off the list keeps the target",
+              plan("Hola, ¿cómo vas con el reporte?", auto: true, last: "Ég kem á morgun.")?.from, "target")
+        check("mac plan: Auto off ignores the last message",
+              plan("Hola, ¿cómo vas con el reporte?", auto: false, last: "Tudo certo por aqui, obrigado!")?.language, "English")
+        check("mac plan: English to English comes back as it is", plan("See you then.")?.same, true)
+        check("mac plan: Spanish to Spanish comes back as it is", plan("Hola, ¿cómo vas con el reporte?", "Español")?.same, true)
+        check("mac plan: Portuguese in a chat in Portuguese comes back as it is",
+              plan("Tudo certo por aqui, obrigado!", auto: true, last: "Tudo certo por aqui, obrigado!")?.same, true)
+        check("mac plan: a source off the list is named in itself", plan("Ég kem á morgun.")?.sourceName, "Íslenska")
+        // The real rule: NaturalLanguage, 6 letters and 50%.
+        check("mac clear: Spanish", MacLanguages.clear("¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada."), "es")
+        check("mac clear: Portuguese", MacLanguages.clear("Você consegue me mandar a apresentação até amanhã? Obrigado!"), "pt")
+        check("mac clear: ok is too short", MacLanguages.clear("ok"), String?.none)
+        check("mac clear: Chinese keeps its script", MacLanguages.clear("我明天上午把报告发给你，请有空的时候看一下。"), "zh-Hans")
+        check("mac plan: real rule, Auto with a German last message",
+              MacPlan.make(text: "Te mando la liga en un rato, ya quedó lista.", target: "English", auto: true,
+                           last: "Kannst du mir bitte die Folien bis morgen schicken?", hint: "es")?.language, "Deutsch")
     }
 
     // The start message's locale, from Settings: the chosen one first, then its language's others; es-MX when missing.

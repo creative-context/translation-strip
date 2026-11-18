@@ -2,9 +2,12 @@
 import { basename } from "node:path";
 import { DICTATION, LANGUAGES } from "./languages";
 
-export type Model = "haiku" | "sonnet" | "opus";
+// "mac": Apple's Translation framework on this Mac (src/mac.ts), with no Claude session.
+export type Model = "haiku" | "sonnet" | "opus" | "mac";
+export type ClaudeModel = Exclude<Model, "mac">;
 export type Mode = "send" | "leave";
-export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "missing" | "failed";
+// mac: the helper that translates on this Mac isn't there, or says this Mac can't.
+export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "missing" | "failed" | "mac";
 export type Status = "starting" | "ready" | "busy" | "error";
 
 // notes: each language's own notes, only non-empty ones, keyed by the language's name.

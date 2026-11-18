@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- A new model, Mac, first in the gear's Model row, translates on your Mac with Apple's Translation (macOS 26 or later): no internet, and nothing from your plan. It doesn't follow your voice guide, so Formal and Adjust are off with it.
+- When Claude can't answer (no internet, your plan's limit, Claude Code signed out, out of date or not installed, or no answer), the strip translates on the Mac instead and says "Translated on this Mac", with the reason in its title. While the plan's limit lasts, it goes straight to the Mac.
+- On the Mac's translations, :) :D ;) :( become the emoji Teams shows when you type them, and the blank lines Translation adds between lines come out.
+
 ## 0.8.8
 
 - A message with a long link goes out. Teams shortens a long link in its box a moment after the paste, to its start and "…", and the strip took that for a different text and stopped. It now compares links by their whole address, in the box and in the chat.

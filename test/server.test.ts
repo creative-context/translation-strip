@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { classify, errorFor, stderrWord } from "../src/errors";
 import { DICTATION, LANGUAGES } from "../src/languages";
+import { dropAddedBlankLines, emojiFor, fixMacText, hintFor, outcomeOf } from "../src/mac";
 import { answerFor, parseReply, requestTurn, systemPrompt } from "../src/protocol";
 import { checkChange, loadSettings } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/state";
@@ -211,6 +212,51 @@ describe("pure parts", () => {
     expect(DICTATION.map((d) => d.id)).toEqual(["es-MX", "es-US", "es-ES", "en-US", "en-GB", "pt-BR", "pt-PT", "fr-FR", "de-DE", "it-IT"]);
   });
 
+  test("the mac model is a setting like the others", () => {
+    expect(checkChange({ model: "mac" }, DEFAULT_SETTINGS)).toEqual({ model: "mac" });
+    const f = join(mkdtempSync(join(tmpdir(), "strip-settings-")), "settings.json");
+    writeFileSync(f, JSON.stringify({ model: "mac" }));
+    expect(loadSettings(f).model).toBe("mac");
+    writeFileSync(f, JSON.stringify({ model: "Mac" }));
+    expect(loadSettings(f).model).toBe("sonnet");
+  });
+
+  test("the helper's text: blank lines come out only when the source had none", () => {
+    const list = "To do tomorrow:\n\n- the slides\n\n- the budget";
+    expect(dropAddedBlankLines("pendientes para mañana:\n- las slides\n- el presupuesto", list)).toBe("To do tomorrow:\n- the slides\n- the budget");
+    expect(dropAddedBlankLines("pendientes:\n\n- las slides\n- el presupuesto", list)).toBe(list); // the source had one: kept as it is
+    expect(dropAddedBlankLines("pendientes:\n  \n- las slides", list)).toBe(list); // a line of spaces is blank too
+    expect(dropAddedBlankLines("una línea", "One line.\n \n\n\nAnother.")).toBe("One line.\nAnother.");
+    expect(dropAddedBlankLines("a\r\nb", "A\r\n\r\nB")).toBe("A\nB");
+    expect(dropAddedBlankLines("hola", "Hello")).toBe("Hello");
+  });
+
+  test("the helper's text: each emoticon standing alone becomes Teams' emoji, none inside a link or a word", () => {
+    expect(emojiFor(":) Thanks :-) see https://example.test/:D and a:)b ;) ok :(. Sure :D")).toBe("🙂 Thanks 🙂 see https://example.test/:D and a:)b 😉 ok 🙁. Sure 😄");
+    for (const [typed, emoji] of [[":)", "🙂"], [":-)", "🙂"], [":D", "😄"], [":-D", "😄"], [";)", "😉"], [";-)", "😉"], [":(", "🙁"], [":-(", "🙁"]]) {
+      expect(emojiFor(typed)).toBe(emoji);
+      expect(emojiFor(`Done ${typed}`)).toBe(`Done ${emoji}`);
+      for (const after of [".", ",", "!", "?", " ok", "\nNext"]) expect(emojiFor(`Done ${typed}${after}`)).toBe(`Done ${emoji}${after}`);
+      expect(emojiFor(`Done\n${typed}`)).toBe(`Done\n${emoji}`); // a line's start
+    }
+    for (const left of ["x:)", "Done :)x", "Done :Dear", "(:)", "Done :))", "Done :D;", "https://example.test/a:)b", "http://example.test/:-D", "mailto:Dana", "12:30", "a;)"]) expect(emojiFor(left)).toBe(left);
+    expect(fixMacText("ok\n- a\n- b", "Ok :)\n\n- a\n\n- b")).toBe("Ok 🙂\n- a\n- b");
+  });
+
+  test("the helper's hint and replies", () => {
+    expect(hintFor("es-MX")).toBe("es");
+    expect(hintFor("pt-BR")).toBe("pt");
+    expect(hintFor("fr-FR")).toBe("fr");
+    const ask = { target: "English", auto: true };
+    expect(outcomeOf({ id: "a", text: " Olá ", language: "Português", from: "chat" }, ask)).toEqual({ ok: true, text: "Olá", language: "Português", from: "chat" });
+    expect(outcomeOf({ id: "a", text: "Olá", language: "português", from: "chat" }, { target: "English", auto: false })).toEqual({ ok: true, text: "Olá", language: "Português", from: "target" });
+    expect(outcomeOf({ id: "a", text: "Hi" }, ask)).toEqual({ ok: true, text: "Hi", language: "English", from: "target" });
+    expect(outcomeOf({ id: "a", error: "language", source: "Español", language: "Íslenska" }, ask)).toEqual({ ok: false, error: "language", source: "Español", language: "Íslenska" });
+    expect(outcomeOf({ id: "a", error: "language", source: "Español" }, ask)).toEqual({ ok: false, error: "failed" }); // never a made-up name
+    expect(outcomeOf({ id: "a", error: "failed" }, ask)).toEqual({ ok: false, error: "failed" });
+    expect(outcomeOf({ id: "a", text: "  " }, ask)).toEqual({ ok: false, error: "failed" });
+  });
+
   test("opened from Finder (a short PATH), the server still finds claude where its installer puts it", async () => {
     const home = mkdtempSync(join(tmpdir(), "strip-test-home-"));
     try {
@@ -264,7 +310,7 @@ describe("Translation Strip server", () => {
   test("polishes a message", async () => {
     const r = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: { chat: "Design review", from: "Sam Lee", last: "I'll share the deck later." } });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [] });
+    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" });
     const f = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "formal" });
     expect(f.body.text).toBe("Could you please send me the slides before lunch?");
     expect(turns().at(-1)).toMatchObject({ target: "English", auto: false, notes: null });
@@ -302,7 +348,7 @@ describe("Translation Strip server", () => {
 
   test("a reply with another request's id, once: the fresh session's answer goes through", async () => {
     const r = await post("/api/translate", { text: "WRONGID-ONCE ¿me mandas las slides?", register: "normal" });
-    expect(r).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [] } });
+    expect(r).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" } });
     await statusIs("ready");
   });
 
@@ -315,7 +361,7 @@ describe("Translation Strip server", () => {
     const before = turns().length;
     const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ text: "Could you send me the slides before lunch?", language: "English", from: "target", lint: [] });
+    expect(r.body).toEqual({ text: "Could you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" });
     const t = turns().slice(before);
     expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]); // the fix ran on a fresh session of its own
     expect(t[0].pid).not.toBe(t[1].pid);
@@ -339,7 +385,7 @@ describe("Translation Strip server", () => {
   test("adjusts the current text with a note", async () => {
     const r = await post("/api/adjust", { text: "¿me mandas las slides?", current: "Can you send me the slides before lunch?", note: "add thanks", register: "normal", language: "English" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [] });
+    expect(r.body).toEqual({ text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "English", auto: false });
     expect(turns().at(-1).keys).not.toContain("english");
   });
@@ -444,7 +490,7 @@ describe("Translation Strip server", () => {
     expect((await post("/api/settings", { auto: true, languages: ["English", "Português"], notes: { Português: "Formal uses o senhor." } })).status).toBe(200);
     const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
     const a = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: pt });
-    expect(a.body).toEqual({ text: "[Português] Can you send me the slides before lunch?", language: "Português", from: "chat", lint: [] });
+    expect(a.body).toEqual({ text: "[Português] Can you send me the slides before lunch?", language: "Português", from: "chat", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ task: "polish", target: "English", auto: true, notes: { Português: "Formal uses o senhor." } });
 
     // No clear language in the chat: the target.
@@ -465,7 +511,7 @@ describe("Translation Strip server", () => {
     // Auto off: always the target, whatever the chat.
     expect((await post("/api/settings", { target: "Español", auto: false })).status).toBe(200);
     const es = await post("/api/translate", { text: "¿me mandas las slides?", context: pt });
-    expect(es.body).toEqual({ text: "[Español] Can you send me the slides before lunch?", language: "Español", from: "target", lint: [] });
+    expect(es.body).toEqual({ text: "[Español] Can you send me the slides before lunch?", language: "Español", from: "target", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ target: "Español", auto: false });
     const de = await post("/api/translate", { text: "¿me mandas las slides?", target: "Deutsch" });
     expect(de.body).toMatchObject({ text: "[Deutsch] Can you send me the slides before lunch?", language: "Deutsch", from: "target" });
@@ -483,7 +529,7 @@ describe("Translation Strip server", () => {
     expect((await post("/api/settings", { auto: true })).status).toBe(200);
     const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
     const r = await post("/api/adjust", { text: "¿me mandas las slides?", current: "[Deutsch] Can you send me the slides.", note: "add thanks", register: "normal", context: pt, language: "Deutsch" });
-    expect(r.body).toEqual({ text: "[Deutsch] Can you send me the slides, thanks!", language: "Deutsch", from: "target", lint: [] });
+    expect(r.body).toEqual({ text: "[Deutsch] Can you send me the slides, thanks!", language: "Deutsch", from: "target", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "Deutsch", auto: false });
     // A language the list doesn't have is kept as its own name.
     expect((await post("/api/adjust", { text: "x", current: "Hej.", note: "add thanks", language: "Dansk" })).body).toMatchObject({ language: "Dansk", from: "target" });
@@ -495,7 +541,7 @@ describe("Translation Strip server", () => {
     const before = turns().length;
     const pt = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
     const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal", context: pt });
-    expect(r.body).toEqual({ text: "[Português] Could you send me the slides before lunch?", language: "Português", from: "chat", lint: [] });
+    expect(r.body).toEqual({ text: "[Português] Could you send me the slides before lunch?", language: "Português", from: "chat", lint: [], engine: "claude" });
     const t = turns().slice(before);
     expect(t.map((x: any) => x.task)).toEqual(["polish", "adjust"]);
     expect(t[1]).toMatchObject({ target: "Português", auto: false });
@@ -788,5 +834,263 @@ describe("Translation Strip server: its limits", () => {
     expect(log).toContain("woke");
     expect(log).not.toContain(SECRET);
     expect(log).not.toContain("unknown option");
+  }, 30000);
+});
+
+// Translating on this Mac: a third server, after the second has ended, with a stand-in helper
+// (test/fake-mac.ts, pointed at with STRIP_MAC): first as the stand-in for a Claude model that can't
+// answer, then as the mac model itself.
+describe("Translation Strip server: translating on this Mac", () => {
+  const DIR3 = mkdtempSync(join(tmpdir(), "strip-test-mac-"));
+  const GUIDE3 = join(DIR3, "guide.md");
+  const MAC = join(DIR3, "translate-on-mac");
+  const CLAUDE3 = join(DIR3, "claude");
+  const SLIDES = "Can you send me the slides before lunch?";
+  const CHAT = { chat: "Ops sync", from: "Kim Park", last: "Any news?" };
+  const PT = { chat: "Field trip", from: "Rui Costa", last: "PT: Pode mandar os slides?" };
+  const starts3 = () => lines(join(DIR3, "fake-starts.jsonl"));
+  const turns3 = () => lines(join(DIR3, "fake-turns.jsonl"));
+  const macStarts = () => lines(join(DIR3, "fake-mac-starts.jsonl"));
+  const macAsks = () => lines(join(DIR3, "fake-mac-requests.jsonl"));
+  const ask = (text: string, more: object = {}) => post("/api/translate", { text, register: "normal", ...more });
+  const settled = () => until("a settled translator", async () => ["ready", "error"].includes((await state()).translator.status));
+  let server3: Subprocess;
+  let server3Out: ReturnType<typeof collect>;
+  let parent3: Subprocess;
+
+  beforeAll(async () => {
+    writeFileSync(GUIDE3, GUIDE_TEXT);
+    writeFileSync(join(DIR3, "settings.json"), JSON.stringify({ voiceGuide: GUIDE3, linter: join(ROOT, "test/fake-lint.ts"), model: "haiku", mode: "send" }));
+    writeFileSync(CLAUDE3, `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test/fake-claude.ts")}" "$@"\n`);
+    writeFileSync(MAC, `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test/fake-mac.ts")}" "$@"\n`);
+    chmodSync(CLAUDE3, 0o755);
+    chmodSync(MAC, 0o755);
+    if (await fetch(`${BASE}/api/state`).then(() => true, () => false)) throw new Error(`something still answers on port ${PORT}`);
+    parent3 = Bun.spawn(["sleep", "600"]);
+    server3 = Bun.spawn([process.execPath, join(ROOT, "server.ts")], {
+      cwd: ROOT,
+      env: { ...process.env, STRIP_PORT: String(PORT), STRIP_DIR: DIR3, STRIP_CLAUDE: CLAUDE3, STRIP_MAC: MAC, STRIP_PARENT_PID: String(parent3.pid), CLAUDECODE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    server3Out = collect(server3 as any);
+    currentLog = server3Out.text;
+    await until("the third server's translator", async () => (await state()).translator.status === "ready");
+  });
+
+  afterAll(() => {
+    try { server3.kill(); } catch {}
+    try { parent3.kill(); } catch {}
+    rmSync(DIR3, { recursive: true, force: true });
+  });
+
+  test("Claude's replies say engine claude, and the helper waits until it's needed", async () => {
+    const r = await ask("¿me mandas las slides antes de comer?", { context: CHAT });
+    expect(r).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "claude" } });
+    expect(macStarts().length).toBe(0);
+  });
+
+  test("a polish Claude can't answer is translated on the Mac, and the reply says why", async () => {
+    for (const [word, error] of [["EXIT-OFFLINE", "offline"], ["EXIT-LOGIN", "login"], ["EXIT-UPDATE", "update"], ["CRASH", "failed"]]) {
+      await settled();
+      const claudeTurns = turns3().length;
+      const r = await ask(`${word} ¿me mandas las slides?`, { context: CHAT });
+      expect(r).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: error } });
+      expect(turns3().length - claudeTurns).toBe(error === "failed" ? 2 : 1); // failed only after Claude's second try
+      expect(macAsks().at(-1)).toMatchObject({ keys: ["id", "text", "target", "auto", "last", "hint"], target: "English", auto: false, last: "Any news?", hint: "es" });
+    }
+    expect(macStarts().length).toBe(1); // started on first need, then kept
+    await settled();
+    expect((await ask("¿me mandas las slides?")).body.engine).toBe("claude");
+  }, 40000);
+
+  test("no claude to start: the Mac stands in for missing", async () => {
+    renameSync(CLAUDE3, `${CLAUDE3}-away`);
+    try {
+      await post("/api/translator/restart");
+      await until("the missing error", async () => (await state()).translator.error === "missing");
+      expect(await ask("¿me mandas las slides?")).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: "missing" } });
+    } finally {
+      renameSync(`${CLAUDE3}-away`, CLAUDE3);
+    }
+    await post("/api/translator/restart");
+    await statusIs("ready");
+  });
+
+  test("the guide error and adjusts never fall back", async () => {
+    const asked = macAsks().length;
+    const adjust = await post("/api/adjust", { text: "EXIT-OFFLINE más corto", current: "Can you send me the slides?", note: "shorter", language: "English" });
+    expect(adjust).toEqual({ status: 503, body: { error: "offline" } });
+    rmSync(GUIDE3);
+    try {
+      await post("/api/translator/restart");
+      await until("the guide error", async () => (await state()).translator.error === "guide");
+      expect(await ask("¿me mandas las slides?")).toEqual({ status: 503, body: { error: "guide" } });
+    } finally {
+      writeFileSync(GUIDE3, GUIDE_TEXT);
+    }
+    expect(macAsks().length).toBe(asked);
+    await post("/api/translator/restart");
+    await statusIs("ready");
+  });
+
+  test("when the helper can't either, the Claude error goes back", async () => {
+    await settled();
+    expect(await ask("EXIT-OFFLINE MAC-FAIL ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "offline" } });
+    await settled();
+    expect(await ask("EXIT-OFFLINE MAC-LANG ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "offline" } });
+    await settled();
+  });
+
+  test("busy while the Mac stands in", async () => {
+    await settled();
+    const slow = ask("EXIT-OFFLINE MAC-SLOW ¿me mandas las slides?");
+    await statusIs("busy");
+    expect(await ask("otra cosa")).toEqual({ status: 409, body: { error: "busy" } });
+    expect((await slow).body).toMatchObject({ engine: "mac", fallback: "offline" });
+    await settled();
+  });
+
+  test("the plan's limit falls back with until, and while until is ahead Claude is skipped", async () => {
+    await post("/api/translator/restart");
+    await statusIs("ready");
+    const r = await ask("LIMIT ¿me mandas las slides?");
+    expect(r).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: "limit", until: LIMIT_UNTIL } });
+    expect((await state()).translator).toMatchObject({ error: "limit", until: LIMIT_UNTIL });
+    const claudeTurns = turns3().length;
+    const asked = macAsks().length;
+    expect(await ask("¿me mandas las slides?")).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: "limit", until: LIMIT_UNTIL } });
+    expect(turns3().length).toBe(claudeTurns); // straight to the helper
+    expect(macAsks().length).toBe(asked + 1);
+    // The helper failing too: the limit, as before, still without asking Claude.
+    expect(await ask("MAC-FAIL ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "limit", until: LIMIT_UNTIL } });
+    expect(turns3().length).toBe(claudeTurns);
+    await post("/api/translator/restart"); // forgets the limit
+    await statusIs("ready");
+    expect((await ask("¿me mandas las slides?")).body.engine).toBe("claude");
+  });
+
+  test("the mac model: no Claude session runs, and the state follows the helper", async () => {
+    await statusIs("ready");
+    const before = await settle(starts3);
+    const spare = before.at(-1).pid;
+    const r = await post("/api/settings", { model: "mac" });
+    expect(r.body.settings.model).toBe("mac");
+    const s = await statusIs("ready");
+    expect(s.translator).toMatchObject({ model: "mac", error: null, until: null });
+    await until("the spare stopped", async () => !alive(spare));
+    await Bun.sleep(400);
+    expect(starts3().length).toBe(before.length);
+  });
+
+  test("the mac model: a translate goes to the helper with target, Auto, the last message and the hint", async () => {
+    const claudeTurns = turns3().length;
+    expect((await post("/api/settings", { auto: true, languages: ["English", "Português"] })).status).toBe(200);
+    const a = await ask("¿me mandas las slides antes de comer?", { register: "formal", context: PT });
+    expect(a).toEqual({ status: 200, body: { text: `[Português] ${SLIDES}`, language: "Português", from: "chat", lint: [], engine: "mac" } });
+    expect(macAsks().at(-1)).toMatchObject({ keys: ["id", "text", "target", "auto", "last", "hint"], target: "English", auto: true, last: PT.last, hint: "es" });
+    // The one-time override: Auto off.
+    const once = await ask("¿me mandas las slides?", { context: PT, target: "Deutsch" });
+    expect(once.body).toMatchObject({ text: `[Deutsch] ${SLIDES}`, language: "Deutsch", from: "target", engine: "mac" });
+    expect(macAsks().at(-1)).toMatchObject({ target: "Deutsch", auto: false });
+    // No context: no last message. The hint follows the dictation locale.
+    expect((await post("/api/settings", { auto: false, dictation: "fr-FR" })).status).toBe(200);
+    expect((await ask("tu peux m'envoyer les slides ?")).status).toBe(200);
+    expect(macAsks().at(-1)).toMatchObject({ keys: ["id", "text", "target", "auto", "hint"], auto: false, hint: "fr" });
+    expect((await post("/api/settings", { dictation: "es-MX", languages: ["English"] })).status).toBe(200);
+    expect(turns3().length).toBe(claudeTurns); // never Claude
+  });
+
+  test("the mac model: the linter runs with no fix turn, and the two fixes apply", async () => {
+    const claudeTurns = turns3().length;
+    const asked = macAsks().length;
+    const k = await ask("MAC-KINDLY ¿me mandas las slides?");
+    expect(k).toEqual({ status: 200, body: { text: "Could you kindly send me the slides before lunch?", language: "English", from: "target", lint: [{ level: "error", message: "Sounds stiff: «kindly»" }], engine: "mac" } });
+    expect(macAsks().length).toBe(asked + 1);
+    expect(turns3().length).toBe(claudeTurns);
+    expect((await ask("MAC-LIST pendientes para mañana:\n- las slides\n- el presupuesto")).body.text).toBe("To do tomorrow:\n- the slides\n- the budget");
+    expect((await ask("MAC-LIST pendientes para mañana:\n\n- las slides\n- el presupuesto")).body.text).toBe("To do tomorrow:\n\n- the slides\n\n- the budget");
+    expect((await ask("MAC-SMILE gracias")).body.text).toBe("🙂 Thanks 🙂 see https://example.test/:D and a:)b 😉 ok 🙁. Sure 😄");
+  });
+
+  test("the mac model: adjust is 409 mac, a language not on this Mac is 503 with both names, a failure is failed", async () => {
+    expect(await post("/api/adjust", { text: "¿me mandas las slides?", current: SLIDES, note: "shorter", language: "English" })).toEqual({ status: 409, body: { error: "mac" } });
+    expect(await ask("MAC-LANG ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "language", source: "Español", language: "Polski" } });
+    expect(await ask("MAC-FAIL ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "failed" } });
+    await statusIs("ready");
+  });
+
+  test("the mac model: busy while it translates", async () => {
+    const slow = ask("MAC-SLOW ¿me mandas las slides?");
+    await statusIs("busy");
+    expect(await ask("otra cosa")).toEqual({ status: 409, body: { error: "busy" } });
+    expect((await slow).status).toBe(200);
+    await statusIs("ready");
+  });
+
+  test("the helper is started once more when it dies; dying again, it waits for the next request", async () => {
+    let n = macStarts().length;
+    expect(await ask("MAC-DIE-ONCE ¿me mandas las slides?")).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac" } });
+    expect(macStarts().length).toBe(n + 1);
+    n = macStarts().length;
+    expect(await ask("MAC-DIE ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "failed" } });
+    expect(macStarts().length).toBe(n + 1); // once, not a loop
+    expect((await statusIs("error")).translator.error).toBe("failed");
+    await Bun.sleep(400);
+    expect(macStarts().length).toBe(n + 1);
+    expect((await ask("¿me mandas las slides?")).status).toBe(200); // a request starts it again
+    await statusIs("ready");
+  });
+
+  test("a helper that says this Mac can't, or isn't there: error mac", async () => {
+    writeFileSync(join(DIR3, "fake-mac-cant"), "");
+    try {
+      await post("/api/translator/restart");
+      const s = await until("error mac", async () => ((await state()).translator.error === "mac" ? await state() : false));
+      expect(s.translator.status).toBe("error");
+      expect(await ask("¿me mandas las slides?")).toEqual({ status: 503, body: { error: "mac" } });
+    } finally {
+      unlinkSync(join(DIR3, "fake-mac-cant"));
+    }
+    await post("/api/translator/restart");
+    await statusIs("ready");
+
+    renameSync(MAC, `${MAC}-away`);
+    try {
+      await until("error mac, no helper", async () => (await state()).translator.error === "mac"); // the tick sees it
+      expect(await ask("¿me mandas las slides?")).toEqual({ status: 503, body: { error: "mac" } });
+      // A Claude model with no helper: the Claude error, as before.
+      expect((await post("/api/settings", { model: "haiku" })).status).toBe(200);
+      await statusIs("ready");
+      await settled();
+      expect(await ask("EXIT-OFFLINE ¿me mandas las slides?")).toEqual({ status: 503, body: { error: "offline" } });
+    } finally {
+      renameSync(`${MAC}-away`, MAC);
+    }
+  }, 30000);
+
+  test("a Claude model chosen again starts Claude again", async () => {
+    await settled();
+    const n = (await settle(starts3)).length;
+    expect((await post("/api/settings", { model: "mac" })).status).toBe(200);
+    await statusIs("ready");
+    expect((await post("/api/settings", { model: "sonnet" })).status).toBe(200);
+    await until("a sonnet start", async () => starts3().length > n && starts3().at(-1).model === "sonnet");
+    const s = await statusIs("ready");
+    expect(s.translator.model).toBe("sonnet");
+    expect((await ask("¿me mandas las slides?")).body.engine).toBe("claude");
+  });
+
+  test("its log says when the Mac stood in, never the text", async () => {
+    parent3.kill();
+    await Promise.race([server3.exited, Bun.sleep(9000)]);
+    await Promise.race([server3Out.done, Bun.sleep(2000)]);
+    const log = server3Out.text();
+    for (const e of ["offline", "login", "update", "failed", "missing", "limit"]) expect(log).toContain(`translated on the Mac instead (${e})`);
+    expect(log).toContain("helper exited (code 1); starting it once more");
+    expect(log).toContain("helper exited again (code 1); not starting it until a request");
+    expect(log).toContain("the helper says this Mac can't translate");
+    expect(log).toContain("spare stopped (translating on this Mac");
+    for (const never of [SECRET, "slides", "To do tomorrow", "Pode mandar", "kindly", "Any news", "Kim Park", "Polski"]) expect(log).not.toContain(never);
   }, 30000);
 });

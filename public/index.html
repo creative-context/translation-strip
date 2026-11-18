@@ -133,6 +133,12 @@
   [data-fit~="nonotice"] #tagrow #status { display: none; }
   [data-fit~="tone"] .tone { display: none; }
   .btn:disabled { opacity: .4; pointer-events: none; }
+  /* Off for a reason the title gives (this Mac's model has no register and no adjust): still there, in the
+     off color, so the pointer can show the title. */
+  #tone button[aria-disabled="true"] { color: var(--color-text-disabled); cursor: default; }
+  #tone button[aria-disabled="true"][aria-pressed="true"] { background: transparent; }
+  #adjustBtn[aria-disabled="true"] { color: var(--color-text-disabled); cursor: default; }
+  #adjustBtn[aria-disabled="true"]:hover { background: transparent; }
   /* Nothing to send or translate yet: a gray button you can still read, not a dimmed one. */
   .send:disabled, #translate:disabled { opacity: 1; background: var(--color-overlay-hover); color: var(--color-text-secondary); }
 
@@ -152,8 +158,11 @@
   .menu .prow { display: flex; align-items: center; gap: 8px; height: 26px; }
   .menu .prow .pl { flex: none; width: 52px; padding-left: 8px; font-size: var(--csm-text-meta); line-height: var(--csm-lh-meta); color: var(--color-text-secondary); }
   .menu .posrow { display: flex; gap: 2px; }
-  .menu .posrow button { width: auto; min-width: 28px; height: 24px; padding: 0 8px; justify-content: center; color: var(--color-text-primary); }
-  .menu .posrow button[aria-checked="true"] { background: var(--color-overlay-pressed); }
+  /* The chosen option stands out the way the design system's segmented choices do: the others in
+     secondary text (4.5:1 or more), the chosen one in primary text on its pressed chip. */
+  .menu .posrow button { width: auto; min-width: 28px; height: 24px; padding: 0 8px; justify-content: center; color: var(--color-text-secondary); }
+  .menu .posrow button:hover { color: var(--obsidian-text-hover); }
+  .menu .posrow button[aria-checked="true"] { background: var(--color-overlay-pressed); color: var(--color-text-primary); }
   .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
   /* Four settings in a 2 x 2 grid of rows (On ⌘⏎, Model / Reply in, Position), so the menu keeps the strip's height. */
   .menu .col.prefs { display: grid; grid-template-columns: auto auto; grid-auto-rows: 26px; column-gap: 20px; align-content: start; align-self: start; }
@@ -275,6 +284,7 @@
         <button role="menuitemradio" data-mode="leave" aria-checked="false" title="Put in Teams without sending">Put in Teams</button>
       </div></div>
       <div class="prow"><span class="pl" id="modelLabel">Model</span><div class="posrow" role="group" aria-labelledby="modelLabel">
+        <button role="menuitemradio" data-model="mac" aria-checked="false" title="Translates on this Mac, without your voice guide">Mac</button>
         <button role="menuitemradio" data-model="haiku" aria-checked="false">Haiku</button>
         <button role="menuitemradio" data-model="sonnet" aria-checked="true">Sonnet</button>
         <button role="menuitemradio" data-model="opus" aria-checked="false">Opus</button>
@@ -561,7 +571,7 @@ function paintReplyIn() {
 
 let drawn = "";
 function paint() {
-  const f = fields(), v = SS.view(st, srv), t = st.teams, open = st.adjustOpen && SS.canAdjust(st, f);
+  const f = fields(), v = SS.view(st, srv), t = st.teams, model = settings().model, open = st.adjustOpen && SS.canAdjust(st, f, model);
   box.dataset.state = v.state;
   box.dataset.teams = SS.dataTeams(st);
   box.dataset.access = st.access.accessibility === false ? "no" : "ok";
@@ -580,7 +590,12 @@ function paint() {
   send.disabled = !SS.canSend(st, f, false);
   send.innerHTML = `${settings().mode === "leave" ? "Put in Teams" : "Send"} <kbd>⌘⏎</kbd>`;
   $("translate").disabled = !SS.canTranslate(st, f);
-  for (const b of document.querySelectorAll("#tone button")) b.setAttribute("aria-pressed", b.dataset.register === st.register);
+  // This Mac's model has no register: Normal and Formal are off, and their title says what they need.
+  const toneOff = SS.toneOff(model);
+  for (const b of document.querySelectorAll("#tone button")) {
+    b.setAttribute("aria-pressed", b.dataset.register === st.register);
+    if (toneOff) { b.setAttribute("aria-disabled", "true"); b.title = toneOff; } else { b.removeAttribute("aria-disabled"); b.removeAttribute("title"); }
+  }
   for (const b of menu.querySelectorAll("[data-mode]")) b.setAttribute("aria-checked", b.dataset.mode === settings().mode);
   for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
   for (const b of menu.querySelectorAll("[data-layout]")) b.setAttribute("aria-checked", b.dataset.layout === st.layout);
@@ -599,7 +614,11 @@ function paint() {
     lb.setAttribute("aria-disabled", String(!SS.canRetarget(st, f, target)));
   }
 
-  $("adjustBtn").style.display = SS.canAdjust(st, f) && !open ? "" : "none";
+  // Adjust shows where it would work, and stays off (with its title saying why) on a translation this Mac made.
+  const adjOff = SS.adjustOff(st, f, model), adjBtn = $("adjustBtn");
+  adjBtn.style.display = (SS.canAdjust(st, f, model) || adjOff) && !open ? "" : "none";
+  adjBtn.setAttribute("aria-disabled", String(!!adjOff));
+  adjBtn.title = adjOff || "Adjust ⌘K";
   $("tagrow").style.display = (v.tag || v.actions.length) && !open ? "" : "none";
   // The tag and its buttons are redrawn only when they change, so a button under the pointer isn't rebuilt.
   const sig = JSON.stringify([v.tag, v.actions]);
@@ -608,7 +627,8 @@ function paint() {
     const status = $("status"), actions = $("actions");
     status.replaceChildren(); actions.replaceChildren();
     if (v.tag) {
-      status.className = `status tag s-${v.tag.kind}`;
+      // "info" (this Mac stood in for Claude) is the design system's still gray tag.
+      status.className = `status tag s-${v.tag.kind}${v.tag.kind === "info" ? " s-idle" : ""}`;
       status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
       const mark = document.createElement("span");
       if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
@@ -661,14 +681,14 @@ async function translate(target) {
 }
 
 function openAdjust() {
-  if (!SS.canAdjust(st, fields())) return;
+  if (!SS.canAdjust(st, fields(), settings().model)) return;
   commit(SS.setAdjustOpen(st, true)); paint();
   adjIn.value = ""; adjIn.focus();
 }
 function closeAdjust(focusBack) { commit(SS.setAdjustOpen(st, false)); paint(); if (focusBack) esIn.focus(); }
 
 async function adjust(note) {
-  const go = SS.adjustStart(st, fields(), note, settings().target);
+  const go = SS.adjustStart(st, fields(), note, settings().target, settings().model);
   if (!go) return;
   commit(go.st);
   paint();
@@ -683,6 +703,7 @@ async function adjust(note) {
 function undo() { commit(SS.undo(st)); paint(); }
 
 function setRegister(reg) {
+  if (SS.toneOff(settings().model)) return;   // this Mac's model has no register
   const r = SS.setRegister(st, reg, fields());
   commit(r.st); paint();
   if (r.again) translate();   // the answer in flight, or the English on show, was for the other register

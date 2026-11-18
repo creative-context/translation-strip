@@ -14,8 +14,10 @@
 // Captures go to .local/page-check/ (kept out of git). The eight frames are saved by their state name:
 //   01-idle  02-ready-long  03-adjust-open  04-menu-open  05-send-error-long-chat  06-first-run  07-dictation-preparing  08-written-for
 //   09-auto-portuguese  10-menu-narrow
+// and this Mac's Translation (0.9.0), each at a typical strip's size (1200 x 145) and narrow (640 x 145):
+//   11-menu-mac  12-mac-reply  13-fallback  14-error-mac  15-error-language   (named <frame>-1200 and <frame>-640)
 // and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
-//   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run
+//   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run  v08-menu-mac
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
 import { join, resolve } from "node:path";
 import { mkdirSync, rmSync } from "node:fs";
@@ -259,7 +261,7 @@ const colCheck = (group: string, name: string, fn: () => Promise<string | void>)
 const narrowCheck = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "narrow" });
 // The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
 // about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
-const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language"]);
+const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language", "This Mac"]);
 const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are four labeled rows/, /^a long message scrolls inside its box/, /^a short strip/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
@@ -618,7 +620,7 @@ check("Settings menu", "the button opens the menu with its two columns; outside 
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "menu visible");
   eq(await t.p.locator("#more").getAttribute("aria-expanded"), "true", "aria-expanded");
-  eq(await t.p.locator("#menu button").count(), 15, "menu items (2 + 3 + Auto and 2 languages + 5 + 2 commands)");
+  eq(await t.p.locator("#menu button").count(), 16, "menu items (2 + 4 + Auto and 2 languages + 5 + 2 commands)");
   await t.p.click("#es", { position: { x: 100, y: 20 } });
   ok(!(await vis(t.p, "#menu")), "outside click should close the menu");
   await t.p.fill("#es", "texto");
@@ -630,7 +632,7 @@ check("Settings menu", "the button opens the menu with its two columns; outside 
   await t.p.click("#more");
   ok(!(await vis(t.p, "#menu")), "a second click on the button should close it");
 });
-check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On ⌘⏎ and Model, then Reply in and Position) with no title row above them; every command is in primary text; the gear is the footer's last control, 28 × 28", async () => {
+check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On ⌘⏎ and Model, then Reply in and Position) with no title row above them; every command and each row's chosen option are in primary text, the options not chosen in secondary text; the gear is the footer's last control, 28 × 28", async () => {
   const t = await open();
   await ready(t);
   await t.p.click("#more");
@@ -641,9 +643,15 @@ check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On 
   eq(await t.p.locator("#menu .mh").count(), 0, "title rows");
   const tops = await t.p.evaluate(() => [document.querySelector("#menu .prow")!, document.querySelector("#menu [data-do]")!].map((e) => Math.round(e.getBoundingClientRect().top)));
   ok(Math.abs(tops[0] - tops[1]) <= 2, `the first row and the first command should start on one line (${tops.join(", ")})`);
-  const colors = await t.p.evaluate(() => [...document.querySelectorAll("#menu button")].map((b) => ({ t: (b.textContent || "").trim(), c: getComputedStyle(b).color, off: b.classList.contains("off") })));
-  const prim = await t.p.evaluate(() => { const d = document.createElement("i"); d.style.color = "var(--color-text-primary)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; });
-  for (const b of colors) ok(b.c === prim && !b.off, `"${b.t}" should be in primary text (${b.c}, off=${b.off}, wanted ${prim})`);
+  const colors = await t.p.evaluate(() => [...document.querySelectorAll("#menu button")].map((b) => ({ t: (b.textContent || "").trim(), c: getComputedStyle(b).color, off: b.classList.contains("off"), option: !!b.closest(".posrow"), chosen: b.getAttribute("aria-checked") === "true" })));
+  const token = (name: string) => t.p.evaluate((n) => { const d = document.createElement("i"); d.style.color = `var(${n})`; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; }, name);
+  const prim = await token("--color-text-primary"), sec = await token("--color-text-secondary");
+  for (const b of colors) {
+    const want = b.option && !b.chosen ? sec : prim;
+    ok(b.c === want && !b.off, `"${b.t}" should be in ${want === prim ? "primary" : "secondary"} text (${b.c}, off=${b.off}, wanted ${want})`);
+  }
+  const chosenPerRow = await t.p.evaluate(() => [...document.querySelectorAll("#menu .posrow")].map((r) => r.querySelectorAll('button[aria-checked="true"]').length));
+  ok(chosenPerRow.length === 4 && chosenPerRow.every((n) => n >= 1), `a chosen option in each row (${chosenPerRow.join(", ")})`);
   const r = await t.p.evaluate(() => { const g = (id: string) => document.getElementById(id)!.getBoundingClientRect(); const m = g("more"), s = g("send"), me = g("menu"); return { more: [m.width, m.height, m.left, m.right], sendRight: s.right, sendTop: s.top, menuBottom: me.bottom, W: window.innerWidth }; });
   eq(r.more[0], 28, "gear width"); eq(r.more[1], 28, "gear height");
   ok(r.more[2] >= r.sendRight, "the gear should sit after Send");
@@ -674,7 +682,7 @@ check("Settings menu", "Put in Teams item (its title says 'without sending'): se
   eq((await t.p.locator("#send").innerText()).replace(/\s+/g, " "), "Put in Teams ⌘⏎", "Send button label");
   await resetSettings();
 });
-check("Settings menu", "Model: Haiku, Sonnet and Opus in one row; Sonnet to start; Haiku and Opus set the model (request, pressed); Sonnet sets it back", async () => {
+check("Settings menu", "Model: Mac, Haiku, Sonnet and Opus in one row; Sonnet to start; Haiku, Opus and Mac set the model (request, pressed); Sonnet sets it back", async () => {
   await resetSettings();
   const t = await open();
   await t.p.click("#more");
@@ -690,10 +698,18 @@ check("Settings menu", "Model: Haiku, Sonnet and Opus in one row; Sonnet to star
   eq(await t.p.locator("#menu [data-model=opus]").getAttribute("aria-checked"), "true", "Opus checked");
   eq(await t.p.locator("#menu [data-model=haiku]").getAttribute("aria-checked"), "false", "Haiku unchecked");
   const tops = await t.p.locator("#menu [data-model]").evaluateAll((bs: any[]) => bs.map((b) => Math.round(b.getBoundingClientRect().top)));
-  ok(tops.length === 3 && new Set(tops).size === 1, `one row of three: ${tops.join(", ")}`);
+  ok(tops.length === 4 && new Set(tops).size === 1, `one row of four: ${tops.join(", ")}`);
+  eq((await t.p.locator("#menu [data-model]").allInnerTexts()).join(", "), "Mac, Haiku, Sonnet, Opus", "the models, in order");
+  eq(await t.p.locator("#menu [data-model=mac]").getAttribute("title"), "Translates on this Mac, without your voice guide", "Mac's title");
+  await t.p.click("#menu [data-model=mac]");
+  await settle(t.p, 300);
+  eq(JSON.stringify(reqsTo(t, "/api/settings")[2]?.body), JSON.stringify({ model: "mac" }), "Mac's settings request");
+  eq(await t.p.locator("#menu [data-model=mac]").getAttribute("aria-checked"), "true", "Mac checked");
+  eq(await t.p.locator("#menu [data-model=opus]").getAttribute("aria-checked"), "false", "Opus unchecked");
+  await expectLayout(t.p);
   await t.p.click("#menu [data-model=sonnet]");
   await settle(t.p, 300);
-  eq(JSON.stringify(reqsTo(t, "/api/settings")[2]?.body), JSON.stringify({ model: "sonnet" }), "third settings request");
+  eq(JSON.stringify(reqsTo(t, "/api/settings")[3]?.body), JSON.stringify({ model: "sonnet" }), "fourth settings request");
   eq(await t.p.locator("#menu [data-model=sonnet]").getAttribute("aria-checked"), "true", "Sonnet checked");
   await new Promise((r) => setTimeout(r, 1800));
 });
@@ -1957,6 +1973,14 @@ const layoutCases: [string, () => Promise<T>][] = [
   ["Auto in Portuguese + long chat", async () => { await putSettings({ auto: true }); const t = await open("chat=pt"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?" }); await ready(t, LONG_EN); return t; }],
   ["Auto in Portuguese, a send error notice", async () => { await putSettings({ auto: true }); const t = await open("chat=pt&send=not-front"); await ready(t); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 3000 }); return t; }],
   ["menu open, Auto on, three languages", async () => { await putSettings({ auto: true, languages: ["English", "Português", "Français"] }); const t = await open(); await ready(t); await t.p.click("#more"); return t; }],
+  // This Mac's Translation (0.9.0).
+  ["menu open, Mac chosen", async () => { const t = await open("model=mac"); await ready(t, LONG_EN); await t.p.click("#more"); return t; }],
+  ["a Mac reply + long chat (Adjust off)", async () => { const t = await open("model=mac"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); return t; }],
+  ["a stand-in reply + long chat", async () => { const t = await open("fallback=offline"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); return t; }],
+  ["a stand-in reply, Auto in Portuguese + long chat", async () => { await putSettings({ auto: true }); const t = await open("fallback=limit&chat=pt"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?" }); await ready(t, LONG_EN); return t; }],
+  ["a stand-in reply with a voice finding", async () => { const t = await open("fallback=login"); await translateFlow(t, "kindly revisa"); return t; }],
+  ["can't translate on this Mac", async () => { const t = await open("model=mac"); await t.p.fill("#es", "NOMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "mac"); return t; }],
+  ["the language isn't on this Mac", async () => { const t = await open("model=mac"); await t.p.fill("#es", "NOTONMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "language"); return t; }],
 ];
 const LAYOUT_CASES = new Set(layoutCases.map(([n]) => n));
 for (const [name, mk] of layoutCases) {
@@ -2116,6 +2140,147 @@ check("Page", "no script errors or console errors in any run", async () => {
   ok(!pageErrors.length, `${pageErrors.length} error(s): ${[...new Set(pageErrors)].slice(0, 3).join(" | ")}`);
 });
 
+
+// ===================================================================================== this Mac's Translation (0.9.0)
+// The model "mac" (the page's ?model=mac, read by the mock from each request's Referer) and the stand-in (?fallback=<error>).
+const offColor = (p: any) => p.evaluate(() => { const d = document.createElement("i"); d.style.color = "var(--color-text-disabled)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; });
+// The tag's words against what's behind them, every surface composited down to the page: the contrast ratio.
+const tagContrast = (p: any) => p.evaluate(() => {
+  const rgba = (c: string) => { const m = c.match(/[\d.]+/g)!.map(Number); return { r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1 }; };
+  const words = document.querySelector("#status > span:last-child") as HTMLElement;
+  const layers: any[] = [];
+  for (let e: HTMLElement | null = words; e; e = e.parentElement) { const c = rgba(getComputedStyle(e).backgroundColor); if (c.a > 0) layers.push(c); }
+  let bg = { r: 0, g: 0, b: 0 };   // under it all, the page's own dark
+  for (const l of layers.reverse()) bg = { r: l.r * l.a + bg.r * (1 - l.a), g: l.g * l.a + bg.g * (1 - l.a), b: l.b * l.a + bg.b * (1 - l.a) };
+  const fg0 = rgba(getComputedStyle(words).color), fg = { r: fg0.r * fg0.a + bg.r * (1 - fg0.a), g: fg0.g * fg0.a + bg.g * (1 - fg0.a), b: fg0.b * fg0.a + bg.b * (1 - fg0.a) };
+  const lum = (c: any) => { const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const a = lum(fg), b = lum(bg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+});
+check("This Mac", "Mac chosen: Normal and Formal are off with their title, a click changes nothing; Translate still works, with no register asked of it", async () => {
+  const t = await open("model=mac");
+  for (const r of ["normal", "formal"]) {
+    const b = t.p.locator(`#tone [data-register=${r}]`);
+    eq(await b.getAttribute("aria-disabled"), "true", `${r} aria-disabled`);
+    eq(await b.getAttribute("title"), "Formal needs Haiku, Sonnet or Opus", `${r}'s title`);
+    eq(await b.evaluate((e: any) => getComputedStyle(e).color), await offColor(t.p), `${r} in the off color`);
+  }
+  // (force: Playwright won't click what is aria-disabled, and the page must ignore the click itself)
+  await t.p.click("#tone [data-register=formal]", { force: true });
+  eq(await t.p.locator("#tone [data-register=formal]").getAttribute("aria-pressed"), "false", "Formal stays unpressed");
+  await translateFlow(t);
+  has(await val(t.p, "en"), EN_NORMAL, "the Mac's translation");
+  eq(reqsTo(t, "/api/translate").length, 1, "one translate request");
+  await t.p.click("#tone [data-register=formal]", { force: true });
+  await settle(t.p, 300);
+  eq(reqsTo(t, "/api/translate").length, 1, "Formal asks nothing again");
+  const t2 = await open();
+  eq(await t2.p.locator("#tone [data-register=formal]").getAttribute("aria-disabled"), null, "with Sonnet, Formal is on");
+});
+check("This Mac", "a Mac reply: Adjust shows but is off, with its title; a click and ⌘K open nothing and ask nothing; Send still sends", async () => {
+  const t = await open("model=mac");
+  await translateFlow(t);
+  ok(await vis(t.p, "#adjustBtn"), "Adjust should show");
+  eq(await t.p.locator("#adjustBtn").getAttribute("aria-disabled"), "true", "Adjust aria-disabled");
+  eq(await t.p.locator("#adjustBtn").getAttribute("title"), "Adjust needs Haiku, Sonnet or Opus", "Adjust's title");
+  eq(await t.p.locator("#adjustBtn").evaluate((e: any) => getComputedStyle(e).color), await offColor(t.p), "Adjust in the off color");
+  await t.p.click("#adjustBtn", { force: true });
+  await t.p.keyboard.press("Meta+k");
+  await settle(t.p, 200);
+  ok(!(await vis(t.p, ".adjust-row")), "the note row should stay closed");
+  eq(reqsTo(t, "/api/adjust").length, 0, "adjust requests");
+  eq(await t.p.locator("#status").innerText(), "", "a plain Mac reply has no tag");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  await t.p.click("#send");
+  await waitState(t.p, "sent");
+  // After the send, a Claude model's reply has its Adjust back.
+  const t2 = await open();
+  await translateFlow(t2);
+  eq(await t2.p.locator("#adjustBtn").getAttribute("aria-disabled"), "false", "Adjust on with Sonnet");
+  eq(await t2.p.locator("#adjustBtn").getAttribute("title"), "Adjust ⌘K", "Adjust's own title");
+});
+check("This Mac", "a Mac reply's language button still writes it in the target, once", async () => {
+  await putSettings({ auto: true });
+  try {
+    const t = await open("model=mac&chat=pt");
+    await translateFlow(t);
+    eq(await t.p.locator("#langName").innerText(), "Português", "the chat's language");
+    eq(await t.p.locator("#lang").getAttribute("aria-disabled"), "false", "the button works");
+    await t.p.click("#lang");
+    await waitState(t.p, "ready");
+    await t.p.waitForFunction(() => document.getElementById("langName")!.textContent === "English", null, { timeout: 3000 });
+    eq(reqsTo(t, "/api/translate")[1]?.body?.target, "English", "the one-time target");
+    has(await val(t.p, "en"), EN_NORMAL, "the English");
+  } finally { await resetSettings(); }
+});
+const FALLBACKS: [string, string | RegExp][] = [
+  ["offline", "Claude couldn't be reached, so this Mac translated it, without your voice guide."],
+  ["limit", /^Claude's plan limit was reached until (\w{3} )?\d{1,2}:\d{2}\s?[AP]M, so this Mac translated it, without your voice guide\.$/],
+  ["login", "Claude Code isn't signed in, so this Mac translated it, without your voice guide."],
+  ["update", "Claude Code needs an update, so this Mac translated it, without your voice guide."],
+  ["missing", "Claude Code isn't installed, so this Mac translated it, without your voice guide."],
+  ["failed", "Claude didn't answer, so this Mac translated it, without your voice guide."],
+];
+for (const [why, title] of FALLBACKS) {
+  check("This Mac", `a stand-in after ${why}: a gray "Translated on this Mac" tag with the still dot, its title says why; Adjust off, Send on`, async () => {
+    const t = await open(`fallback=${why}`);
+    await translateFlow(t);
+    eq(await tagText(t.p), "Translated on this Mac", "the tag");
+    const tag = await t.p.evaluate(() => { const s = document.getElementById("status")!; return { cls: s.className, title: s.title, dot: !!s.querySelector(".sdot") }; });
+    ok(/\bs-info\b/.test(tag.cls) && /\bs-idle\b/.test(tag.cls), `the tag's kind: ${tag.cls}`);
+    ok(tag.dot, "the still dot");
+    if (typeof title === "string") eq(tag.title, title, "the tag's title"); else ok(title.test(tag.title), `the tag's title: ${JSON.stringify(tag.title)}`);
+    const c = await tagContrast(t.p);
+    ok(c >= 4.5, `the tag's words reach ${c.toFixed(2)}:1, under 4.5:1`);
+    eq(await state(t.p), "ready", "data-state");
+    eq(await t.p.locator("#adjustBtn").getAttribute("aria-disabled"), "true", "Adjust off");
+    ok(await t.p.locator("#send").isEnabled(), "Send on");
+    eq(await t.p.locator("#tone [data-register=formal]").getAttribute("aria-disabled"), null, "Normal and Formal stay on: the model is still Claude's");
+    return `contrast ${c.toFixed(2)}:1`;
+  });
+}
+check("This Mac", "a stand-in with a voice finding: the stand-in's tag stays, the finding joins its title", async () => {
+  const t = await open("fallback=offline");
+  await translateFlow(t, "kindly revisa");
+  eq(await tagText(t.p), "Translated on this Mac", "the tag");
+  eq(await t.p.locator("#status").getAttribute("title"), "Claude couldn't be reached, so this Mac translated it, without your voice guide.\n\"Kindly\" sounds stiff", "the title");
+});
+check("This Mac", "Can't translate on this Mac: a gray tag with its title, no button; Translate stays on", async () => {
+  const t = await open("model=mac");
+  await t.p.fill("#es", "NOMAC");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "mac");
+  eq(await tagText(t.p), "Can't translate on this Mac", "the tag");
+  eq(await t.p.locator("#status").getAttribute("title"), "Needs macOS 26 or later.", "the title");
+  ok(/\bs-idle\b/.test(await t.p.locator("#status").getAttribute("class")), "a gray tag");
+  eq((await actionLabels(t.p)).join(","), "", "no buttons");
+  ok(await t.p.locator("#translate").isEnabled(), "Translate on");
+});
+check("This Mac", "a language that isn't on this Mac: '<source> to <language> isn't on this Mac' with its title, and Try again asks again", async () => {
+  const t = await open("model=mac");
+  await t.p.fill("#es", "NOTONMAC");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "language");
+  eq(await tagText(t.p), "Español to 日本語 isn't on this Mac", "the tag");
+  eq(await t.p.locator("#status").getAttribute("title"), "Download it in System Settings, General, Language & Region, Translation Languages.", "the title");
+  eq((await actionLabels(t.p)).join(","), "Try again", "buttons");
+  await t.p.click("#actions button");
+  await waitState(t.p, "language");
+  eq(reqsTo(t, "/api/translate").length, 2, "Try again asks again");
+});
+check("This Mac", "a Claude error in the server's state doesn't keep Translate off, and an empty strip says nothing of it", async () => {
+  const t = await open();
+  for (const error of ["offline", "limit", "login", "update", "missing", "failed"]) {
+    await t.p.evaluate((error: string) => { (0, eval)(`srv = Object.assign({}, srv, { translator: Object.assign({}, srv.translator, { status: "error", error: ${JSON.stringify(error)} }) }); paint();`); }, error);
+    await t.p.fill("#es", "");
+    eq(await t.p.locator("#status").innerText(), "", `${error}: no tag on an empty strip`);
+    await t.p.fill("#es", ES);
+    ok(await t.p.locator("#translate").isEnabled(), `${error}: Translate on`);
+  }
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "ready");
+});
+
 // ===================================================================================== frames
 type Frame = { file: string; query?: string; size?: { w: number; h: number }; before?: () => Promise<unknown>; make: (t: T) => Promise<void> };
 const frames: Frame[] = [
@@ -2138,6 +2303,15 @@ const frames: Frame[] = [
   { file: "09-auto-portuguese", query: "chat=pt", before: () => putSettings({ auto: true }), make: async (t) => { await ready(t); } },
   { file: "10-menu-narrow", size: { w: 640, h: 145 }, before: () => putSettings({ auto: true }), make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
 ];
+// This Mac's Translation, at the strip's real size under Teams and narrow.
+const macFrames: Frame[] = [
+  { file: "11-menu-mac", query: "model=mac", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
+  { file: "12-mac-reply", query: "model=mac", make: async (t) => { await ready(t); await t.p.click("#es"); } },
+  { file: "13-fallback", query: "fallback=offline", make: async (t) => { await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false, shape: "ok" }); await ready(t, LONG_EN); await t.p.click("#es"); } },
+  { file: "14-error-mac", query: "model=mac", make: async (t) => { await t.p.fill("#es", "NOMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "mac"); } },
+  { file: "15-error-language", query: "model=mac", make: async (t) => { await t.p.fill("#es", "NOTONMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "language"); } },
+];
+for (const f of macFrames) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
     if (f.before) await f.before();
@@ -2285,7 +2459,7 @@ colCheck("Column", "the settings menu stacks its two groups in one column over t
   ok(new Set(lefts).size === 1, `the labels and the commands should start in one line: ${lefts.join(", ")}`);
   const dividers = await t.p.evaluate(() => [...document.querySelectorAll("#menu hr")].map((h) => { const r = h.getBoundingClientRect(); return [r.width, r.height]; }));
   ok(dividers.length === 1 && dividers.every(([w, h]) => w > 100 && h === 1), `the divider should run across: ${JSON.stringify(dividers)}`);
-  eq(await t.p.locator("#menu button").count(), 15, "items");
+  eq(await t.p.locator("#menu button").count(), 16, "items (2 + 4 + Auto and 2 languages + 5 + 2 commands)");
   await expectLayout(t.p);
   await t.p.click("#menu [data-mode=leave]");
   await settle(t.p, 250);
@@ -2422,6 +2596,7 @@ const colFrames: Frame[] = [
   { file: "v05-adjust-open", make: async (t) => { await ready(t, LONG_EN); await t.p.keyboard.press("Meta+k"); } },
   { file: "v06-menu-open", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
   { file: "v07-first-run", query: "access=0", make: async () => {} },
+  { file: "v08-menu-mac", query: "model=mac", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); } },
 ];
 for (const f of colFrames) {
   colCheck("Frames", `capture ${f.file}`, async () => {

@@ -1067,3 +1067,176 @@ describe("undo and the one-time target keep the language right", () => {
     expect(fresh.st.langAuto).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------------------- this Mac's Translation (0.9.0)
+describe("translating on this Mac", () => {
+  // A translation whose reply is `d` (with the text EN unless d says otherwise).
+  function replied(d: any, teams: any = PRIYA): S {
+    let s = type(start(teams), ES);
+    s = applied(s, SS.translateStart(s.st, s.f).st);
+    return applied(s, SS.translateDone(s.st, s.f, { text: EN, language: "English", from: "target", lint: [], ...d }));
+  }
+  const srvOf = (model: string, translator: any = { status: "ready" }) => ({ translator: { model, ...translator }, settings: { model } });
+
+  type Engine = [string, any, string, any];   // name, reply, engine, fallback
+  const engines: Engine[] = [
+    ["a Claude reply", { engine: "claude" }, "claude", null],
+    ["a reply that doesn't say (a server before 0.9.0)", {}, "claude", null],
+    ["a Mac reply", { engine: "mac" }, "mac", null],
+    ["a stand-in after offline", { engine: "mac", fallback: "offline" }, "mac", { kind: "offline", until: undefined }],
+    ["a stand-in after the plan limit, with its time", { engine: "mac", fallback: "limit", until: "2030-01-01T15:00:00Z" }, "mac", { kind: "limit", until: "2030-01-01T15:00:00Z" }],
+  ];
+  for (const [name, d, engine, fallback] of engines) {
+    test(`the reply says what wrote it: ${name}`, () => {
+      const s = replied(d);
+      expect(s.st.phase).toBe("ready");
+      expect(s.st.engine).toBe(engine);
+      expect(s.st.fallback).toEqual(fallback);
+    });
+  }
+
+  // The stand-in's tag: kind info with the still dot, "Translated on this Mac", the why in its title.
+  type Why = [string, any, string | RegExp];
+  const whys: Why[] = [
+    ["offline", {}, "Claude couldn't be reached, so this Mac translated it, without your voice guide."],
+    ["limit", {}, "Claude's plan limit was reached, so this Mac translated it, without your voice guide."],
+    ["limit", { until: new Date(Date.now() + 3 * 86400_000).toISOString() }, /^Claude's plan limit was reached until [A-Z][a-z]{2} \d{1,2}:\d{2}\s?[AP]M, so this Mac translated it, without your voice guide\.$/],
+    ["limit", { until: "not a date" }, "Claude's plan limit was reached, so this Mac translated it, without your voice guide."],
+    ["login", {}, "Claude Code isn't signed in, so this Mac translated it, without your voice guide."],
+    ["update", {}, "Claude Code needs an update, so this Mac translated it, without your voice guide."],
+    ["missing", {}, "Claude Code isn't installed, so this Mac translated it, without your voice guide."],
+    ["failed", {}, "Claude didn't answer, so this Mac translated it, without your voice guide."],
+    ["something new", {}, "Claude didn't answer, so this Mac translated it, without your voice guide."],
+  ];
+  for (const [kind, extra, title] of whys) {
+    test(`a stand-in after ${kind}${extra.until ? ` (until ${extra.until})` : ""}: the tag and its title`, () => {
+      const v = view(replied({ engine: "mac", fallback: kind, ...extra }));
+      expect(v.state).toBe("ready");
+      expect(v.tag.kind).toBe("info");
+      expect(v.tag.text).toBe("Translated on this Mac");
+      if (typeof title === "string") expect(v.tag.title).toBe(title); else expect(v.tag.title).toMatch(title);
+      expect(v.actions).toEqual([]);
+    });
+  }
+
+  type Place = [string, () => S, string | null];   // name, state, tag
+  const places: Place[] = [
+    ["voice findings join the stand-in's title; the tag stays the stand-in's", () => replied({ engine: "mac", fallback: "offline", lint: [{ level: "warning", message: "Stiff" }, { level: "warning", message: "Long" }] }), "info: Translated on this Mac"],
+    ["a plain Mac reply has no tag", () => replied({ engine: "mac" }), null],
+    ["a plain Mac reply with a finding shows the finding", () => replied({ engine: "mac", lint: [{ level: "warning", message: "Stiff" }] }), "needs: Stiff"],
+    ["a send's notice wins over the stand-in", () => sendAnd(replied({ engine: "mac", fallback: "offline" }), { ok: false, reason: "not-front" }), "error: Teams didn't come forward"],
+    ["Teams closed wins over the stand-in", () => withTeams(replied({ engine: "mac", fallback: "offline" }), CLOSED), "idle: Teams isn't open"],
+    ["out of date wins over the stand-in", () => type(replied({ engine: "mac", fallback: "offline" }), ES + "!"), "error: Translation out of date"],
+  ];
+  for (const [name, mk, tag] of places) test(name, () => expect(tagOf(mk())).toBe(tag));
+
+  test("the stand-in's title holds its findings, one per line, after the why", () => {
+    const v = view(replied({ engine: "mac", fallback: "offline", lint: [{ level: "warning", message: "Stiff" }, { level: "warning", message: "Long" }] }));
+    expect(v.tag.title).toBe("Claude couldn't be reached, so this Mac translated it, without your voice guide.\nStiff\nLong");
+  });
+
+  // Adjust: on a Claude reply with a Claude model only. Off (shown, with its title) on a Mac reply or with the Mac chosen.
+  type Adj = [string, () => S, string, boolean, string | null];   // name, state, model, canAdjust, adjustOff
+  const adjusts: Adj[] = [
+    ["a Claude reply, Sonnet", () => replied({ engine: "claude" }), "sonnet", true, null],
+    ["a Claude reply, no settings yet", () => replied({ engine: "claude" }), "", true, null],
+    ["a Mac reply, Mac chosen", () => replied({ engine: "mac" }), "mac", false, "Adjust needs Haiku, Sonnet or Opus"],
+    ["a stand-in, Sonnet chosen", () => replied({ engine: "mac", fallback: "offline" }), "sonnet", false, "Adjust needs Haiku, Sonnet or Opus"],
+    ["a Claude reply, then Mac chosen", () => replied({ engine: "claude" }), "mac", false, "Adjust needs Haiku, Sonnet or Opus"],
+    ["typed in an empty strip, Mac chosen", () => { const s = start(); const f = { es: "", en: EN }; return { st: SS.editedEnglish(s.st, EN, f, "English"), f }; }, "mac", false, "Adjust needs Haiku, Sonnet or Opus"],
+    ["typed in an empty strip, Opus", () => { const s = start(); const f = { es: "", en: EN }; return { st: SS.editedEnglish(s.st, EN, f, "English"), f }; }, "opus", true, null],
+    ["nothing translated, Mac chosen (hidden, not off)", () => start(), "mac", false, null],
+    ["a Mac reply written for another chat (hidden: the chat comes first)", () => withTeams(replied({ engine: "mac" }), DANIEL), "mac", false, null],
+  ];
+  for (const [name, mk, model, can, off] of adjusts) {
+    test(`Adjust: ${name}`, () => {
+      const s = mk();
+      expect(SS.canAdjust(s.st, s.f, model)).toBe(can);
+      expect(SS.adjustOff(s.st, s.f, model)).toBe(off);
+      if (!can) expect(SS.adjustStart(s.st, s.f, "corto", "English", model)).toBeNull();
+    });
+  }
+
+  type Tone = [string, string | null];
+  const tones: Tone[] = [["haiku", null], ["sonnet", null], ["opus", null], ["", null], ["mac", "Formal needs Haiku, Sonnet or Opus"]];
+  for (const [model, off] of tones) test(`Normal and Formal with the model ${model || "unknown"}: ${off ? "off" : "on"}`, () => expect(SS.toneOff(model)).toBe(off));
+
+  test("the language button's one-time target still works on a Mac reply", () => {
+    const s = replied({ engine: "mac", language: "Português", from: "chat" });
+    expect(SS.canRetarget(s.st, s.f, "English")).toBe(true);
+    const go = SS.translateStart(s.st, s.f, { auto: true, target: "English" });
+    expect(go.body.target).toBe("English");
+    expect(go.st.engine).toBe("");
+    expect(go.st.fallback).toBeNull();
+  });
+
+  // The new errors, from a translation (and an adjust refused because the model is the Mac's).
+  type Err = [string, any, string, string, string, string[]];   // name, reply, data-state, tag, title, buttons
+  const errors: Err[] = [
+    ["this Mac can't translate", { error: "mac" }, "mac", "idle: Can't translate on this Mac", "Needs macOS 26 or later.", []],
+    ["the language pair isn't on this Mac", { error: "language", source: "Español", language: "日本語" }, "language", "idle: Español to 日本語 isn't on this Mac", "Download it in System Settings, General, Language & Region, Translation Languages.", ["Try again"]],
+    ["the language pair, with no source named", { error: "language", language: "日本語" }, "language", "idle: 日本語 isn't on this Mac", "Download it in System Settings, General, Language & Region, Translation Languages.", ["Try again"]],
+    ["the language pair, with nothing named", { error: "language" }, "language", "idle: This language isn't on this Mac", "Download it in System Settings, General, Language & Region, Translation Languages.", ["Try again"]],
+  ];
+  for (const [name, d, state, tag, title, buttons] of errors) {
+    test(`an error: ${name}`, () => {
+      let s = type(start(), ES);
+      s = applied(s, SS.translateStart(s.st, s.f).st);
+      s = applied(s, SS.translateDone(s.st, s.f, d));
+      expect(s.st.phase).toBe("error");
+      const v = view(s);
+      expect(v.state).toBe(state);
+      expect(tagOf(s)).toBe(tag);
+      expect(v.tag.title).toBe(title);
+      expect(labels(s)).toEqual(buttons);
+      expect(SS.canTranslate(s.st, s.f)).toBe(true);
+    });
+  }
+  test("an adjust refused because the model is the Mac's says Adjust needs a Claude model, and the English stays", () => {
+    let s = replied({ engine: "claude" });
+    s = applied(s, SS.adjustStart(s.st, s.f, "corto", "English", "sonnet").st);
+    const r = SS.adjustDone(s.st, s.f, { error: "mac" });
+    expect(r.st.phase).toBe("ready");
+    expect(r.st.en).toBe(EN);
+    expect(tagOf({ ...s, st: r.st })).toBe("idle: Adjust needs Haiku, Sonnet or Opus");
+    expect(labels({ ...s, st: r.st })).toEqual([]);
+  });
+
+  // A Claude error in the server's state never keeps Translate off: the Mac may stand in.
+  type Srv = [string, string, any, string | null, string?];   // name, model, translator, idle tag, data-state
+  const servers: Srv[] = [
+    ["Claude offline", "sonnet", { status: "error", error: "offline" }, null],
+    ["Claude at its plan limit", "opus", { status: "error", error: "limit", until: "2030-01-01T15:00:00Z" }, null],
+    ["Claude Code not signed in", "haiku", { status: "error", error: "login" }, null],
+    ["Claude Code needs an update", "sonnet", { status: "error", error: "update" }, null],
+    ["Claude Code missing", "sonnet", { status: "error", error: "missing" }, null],
+    ["the translator failed", "sonnet", { status: "error", error: "failed" }, null],
+    ["the Mac chosen, its helper starting", "mac", { status: "starting" }, null],
+    ["the Mac chosen, and the guide missing (the Mac needs none)", "mac", { status: "ready", guide: "missing" }, null],
+    ["the Mac chosen, and it can't translate", "mac", { status: "error", error: "mac" }, "idle: Can't translate on this Mac", "mac"],
+    ["a Claude model and the guide missing (as before)", "sonnet", { status: "ready", guide: "missing" }, "idle: Voice guide not set", "noguide"],
+  ];
+  for (const [name, model, translator, tag, state] of servers) {
+    test(`Translate stays on: ${name}`, () => {
+      const idle = start(), typed = type(start(), ES), srv = srvOf(model, translator);
+      expect(tagOf(idle, srv)).toBe(tag);
+      if (state) expect(view(idle, srv).state).toBe(state);
+      expect(SS.canTranslate(typed.st, typed.f)).toBe(true);
+      expect(SS.translateStart(typed.st, typed.f)).not.toBeNull();
+    });
+  }
+
+  type Reset = [string, (s: S) => St];
+  const resets: Reset[] = [
+    ["Esc", (s) => SS.clearAll(s.st).st],
+    ["a send", (s) => SS.sendDone(SS.sendStart(s.st, s.f, false, "send").st, { ok: true }, "9:41 AM")],
+    ["a new translation", (s) => { const t = type(s, "Otra cosa"); return SS.translateStart(t.st, t.f).st; }],
+  ];
+  for (const [name, go] of resets) {
+    test(`${name} forgets that the Mac stood in`, () => {
+      const n = go(replied({ engine: "mac", fallback: "offline" }));
+      expect(n.engine).toBe("");
+      expect(n.fallback).toBeNull();
+    });
+  }
+});

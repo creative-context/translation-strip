@@ -29,6 +29,18 @@ done
 lipo -create build/TranslationStrip-arm64 build/TranslationStrip-x86_64 \
   -output "$APP/Contents/MacOS/TranslationStrip"
 
+# The Mac's own translator (app/TranslateOnMac.swift), a program of its own that the server starts:
+# universal like the app. Apple's Translation framework is weak-linked, since macOS 14 and 15 lack
+# what it uses; there the helper says so and exits.
+for arch in arm64 x86_64; do
+  swiftc -O -swift-version 5 -parse-as-library -target "$arch-apple-macos14.0" \
+    -framework NaturalLanguage -Xlinker -weak_framework -Xlinker Translation \
+    app/TranslateOnMac.swift app/MacPlan.swift app/Detect.swift \
+    -o "build/translate-on-mac-$arch"
+done
+lipo -create build/translate-on-mac-arm64 build/translate-on-mac-x86_64 \
+  -output "$APP/Contents/MacOS/translate-on-mac"
+
 cp app/Info.plist "$APP/Contents/Info.plist"
 
 # Icon: draw once at 1024 px, then let sips and iconutil make the sizes.
@@ -55,12 +67,18 @@ cp -R public "$APP/Contents/Resources/"
 # app and the Accessibility grant survives a rebuild. Otherwise ad hoc, and each build has to be
 # allowed again.
 # A release is always ad hoc: a local identity belongs to one Mac and means nothing on another.
+# The helper is signed first, with its own identifier, then the app around it.
 IDENTITY="Translation Strip Local Signing"
+HELPER="$APP/Contents/MacOS/translate-on-mac"
+HELPER_ID="$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" app/Info.plist).translate-on-mac"
 if [ "$1" != "--release" ] && security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+  codesign --force --sign "$IDENTITY" --identifier "$HELPER_ID" "$HELPER" >/dev/null 2>&1
   codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1
 else
+  codesign --force --sign - --identifier "$HELPER_ID" "$HELPER" >/dev/null
   codesign --force --sign - "$APP" >/dev/null
 fi
+codesign --verify --deep --strict "$APP"
 echo "Built $APP"
 
 if [ "$1" = "--release" ]; then
