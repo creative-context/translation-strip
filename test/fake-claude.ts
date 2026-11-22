@@ -183,6 +183,8 @@ async function turn(content: string) {
   // The server's linter fix: an adjust whose note names «kindly» drops the word, unless the text says STUBBORN.
   else if (req.task === "adjust" && /«kindly»/.test(String(req.note))) reply = answer(text.includes("STUBBORN") ? current : current.replace(/\bkindly /i, ""));
   else if (req.task === "adjust") reply = answer(`${current.replace(/[.!]$/, "")}, thanks!`);
+  // Dictation checked by Claude: the words it misheard ("pre su puesto") fixed, the rest as heard.
+  else if (req.task === "fix") reply = answer(text.replace(/\bpre su puesto\b/g, "presupuesto"));
   else if (text.includes("KINDLY")) reply = answer(inLanguage("Could you kindly send me the slides before lunch?"));
   else if (text.includes("MEMORY")) reply = answer(`Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}`);
   else reply = answer(inLanguage(req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?"));

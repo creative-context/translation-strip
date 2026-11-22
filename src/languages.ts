@@ -36,6 +36,9 @@ export const DICTATION = [
   { id: "it-IT", name: "Italiano" },
 ] as const;
 export const isDictation = (v: unknown): v is string => typeof v === "string" && DICTATION.some((d) => d.id === v);
+// The language a dictation locale is in, by its own name in LANGUAGES: "pt-BR" is Português. Español for anything else.
+const DICTATION_LANGUAGE: Record<string, Language> = { es: "Español", en: "English", pt: "Português", fr: "Français", de: "Deutsch", it: "Italiano" };
+export const dictationLanguage = (locale: string): Language => DICTATION_LANGUAGE[String(locale).slice(0, 2).toLowerCase()] ?? "Español";
 
 export const MAX_LANGUAGES = 8; // "Your languages": 1 to 8
 export const MAX_NOTE = 600; // characters in one language's notes

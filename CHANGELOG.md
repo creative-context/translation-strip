@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0
+
+- The mic works as Session Monitor's: the same button, lit white while it listens; five bars beside "Listening" that follow your voice; two soft notes going up when it starts listening and down when it stops (Settings › Dictation › Sounds turns them off; your own sound files can replace them, as in Session Monitor). It reads the microphone straight from its device, so it hears you with any speakers or display as the sound output. It stops by itself after a minute, and after 4 seconds of no sound from the microphone it stops and says so.
+- End what you dictate with "enviar mensaje" ("send message" in English) and pause: the mic stops, the phrase leaves the box and the strip translates. Settings › Dictation › After “enviar mensaje” chooses what comes next: Review first (the default) waits for your ⌘⏎; Send right away sends to the open chat as ⌘⏎ does, unless the reply has a tag to read first. Talk on and it keeps listening; Esc drops it.
+- Settings › Dictation › Words by: This Mac, or Claude. With Claude, once the mic stops, your reply model fixes the words this Mac misheard (a name, a word that sounds alike, punctuation) before the strip translates. Only the words go, as when you translate.
+- The Settings window's title bar is the page's own dark, with no line under it.
+
 ## 0.12.1
 
 - The strip no longer comes over another app while Teams sits behind it. A Teams notification or pop-up used to bring the strip in front of everything; now it comes in front only with Teams, and otherwise stays just above Teams' window, covered by whatever covers Teams.

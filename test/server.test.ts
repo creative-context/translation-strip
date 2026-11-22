@@ -249,6 +249,7 @@ describe("pure parts", () => {
       { languages: [] }, { languages: "English" }, { languages: ["English", "English"] }, { languages: ["English", "Klingon"] }, { languages: [...LANGUAGES.slice(0, 9)] },
       { notes: [] }, { notes: "x" }, { notes: { Klingon: "x" } }, { notes: { English: 3 } }, { notes: { English: null } }, { notes: { English: "x".repeat(601) } },
       { dictation: "es" }, { dictation: "xx-XX" },
+      { dictationEngine: "cloud" }, { dictationEngine: true }, { dictationSounds: "no" }, { dictationSounds: 0 }, { dictationPhrase: "auto" }, { dictationPhrase: true },
       { model: "gpt" }, { mode: "shout" },
     ]) expect(checkChange(bad, now)).toBeNull();
     expect(checkChange({ notes: { English: "x".repeat(600) } }, now)).not.toBeNull();
@@ -354,7 +355,7 @@ describe("Translation Strip server", () => {
     const first = await until("the server", () => state());
     expect(["starting", "ready"]).toContain(first.translator.status);
     expect(first.server.version).toBe(require("../package.json").version);
-    expect(first.settings).toEqual({ model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX", files: { voiceGuide: "guide.md", linter: "fake-lint.ts" } });
+    expect(first.settings).toEqual({ model: "haiku", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX", dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review", files: { voiceGuide: "guide.md", linter: "fake-lint.ts" } });
     expect(first.options).toEqual({ languages: [...LANGUAGES], dictation: DICTATION.map((d) => ({ id: d.id, name: d.name })) });
     expect(JSON.stringify(first)).not.toContain(DIR); // no paths reach the page
     expect(JSON.stringify(first)).not.toContain(ROOT);
@@ -464,6 +465,26 @@ describe("Translation Strip server", () => {
     expect(r.body).toEqual({ text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "English", auto: false });
     expect(turns().at(-1).keys).not.toContain("english");
+  });
+
+  test("dictation checked by Claude: the misheard words fixed, in the dictation's language, as a fix turn", async () => {
+    const r = await post("/api/fix", { text: "¿Puedes revisar el pre su puesto antes del jueves?", locale: "es-MX" });
+    expect(r).toEqual({ status: 200, body: { text: "¿Puedes revisar el presupuesto antes del jueves?" } });
+    expect(turns().at(-1)).toMatchObject({ task: "fix", target: "Español", auto: false });
+    expect((await post("/api/fix", { text: "Vou revisar o orçamento", locale: "pt-BR" })).status).toBe(200);
+    expect(turns().at(-1)).toMatchObject({ task: "fix", target: "Português" });
+    expect(await post("/api/fix", { text: "  " })).toEqual({ status: 400, body: { error: "text" } });
+  });
+
+  test("dictation's engine, sounds and phrase are settings: saved, read back, and they don't restart the translator", async () => {
+    const before = starts().length;
+    const r = await post("/api/settings", { dictationEngine: "claude", dictationSounds: false, dictationPhrase: "send" });
+    expect(r.status).toBe(200);
+    expect(r.body.settings).toMatchObject({ dictationEngine: "claude", dictationSounds: false, dictationPhrase: "send" });
+    expect(JSON.parse(readFileSync(SETTINGS, "utf8"))).toMatchObject({ dictationEngine: "claude", dictationSounds: false });
+    const back = await post("/api/settings", { dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review" });
+    expect(back.body.settings).toMatchObject({ dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review" });
+    expect(starts().length).toBe(before);
   });
 
   test("rejects bad requests", async () => {
@@ -1160,6 +1181,8 @@ describe("Translation Strip server: translating on this Mac", () => {
     await until("the spare stopped", async () => !alive(spare));
     await Bun.sleep(400);
     expect(starts3().length).toBe(before.length);
+    // Dictation checked by Claude needs a Claude model: with this Mac's, the page keeps the Mac's words.
+    expect(await post("/api/fix", { text: "hola", locale: "es-MX" })).toEqual({ status: 409, body: { error: "mac" } });
   });
 
   test("the mac model: a translate goes to the helper with target, Auto, the last message and the hint", async () => {

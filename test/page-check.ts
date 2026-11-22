@@ -20,6 +20,8 @@
 //   16-menu-settings  17-fallback-retry  18-unconfirmed  19-idle-placeholder   (named <frame>-1200 and <frame>-640)
 // and the recent messages and the update checks (0.12.0), at the same two sizes:
 //   20-menu-recent  21-restored  22-teams-changed  23-claude-changed   (named <frame>-1200 and <frame>-640)
+// and the mic as Session Monitor's (0.13.0), at the same two sizes:
+//   24-mic-idle  25-listening  26-armed  27-mic-silent  28-claude-checking   (named <frame>-1200 and <frame>-640)
 // and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
 //   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run  v08-menu-mac
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
@@ -119,6 +121,9 @@ async function resetSettings() {
   if (s.settings.auto !== false) patch.auto = false;
   if (JSON.stringify(s.settings.languages) !== JSON.stringify(MOCK_LANGS)) patch.languages = MOCK_LANGS;
   if (s.settings.dictation !== "es-MX") patch.dictation = "es-MX";
+  if (s.settings.dictationEngine !== "mac") patch.dictationEngine = "mac";
+  if (s.settings.dictationSounds !== true) patch.dictationSounds = true;
+  if (s.settings.dictationPhrase !== "review") patch.dictationPhrase = "review";
   if (Object.keys(patch).length) {
     await fetch(`${BASE}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
     await new Promise((r) => setTimeout(r, patch.model ? 1800 : 100));
@@ -422,16 +427,32 @@ check("Normal / Formal", "Formal while translating drops the first answer", asyn
 });
 
 // ===================================================================================== mic
-check("Mic", "mic button dictates into the box (listening label with a still dot, full text, back to off)", async () => {
+check("Mic", "the mic is Session Monitor's chip: 24 x 22, a fill that shows it can be pressed, lit white while listening", async () => {
+  const t = await open();
+  const look = () => t.p.evaluate(() => { const m = document.getElementById("mic")!, r = m.getBoundingClientRect(), cs = getComputedStyle(m), i = m.querySelector("svg")!.getBoundingClientRect();
+    return { w: r.width, h: r.height, radius: cs.borderRadius, bg: cs.backgroundColor, color: cs.color, icon: i.width }; });
+  const off = await look();
+  eq(`${off.w}x${off.h}`, "24x22", "size");
+  eq(off.radius, "6px", "corners (the design system's element radius)");
+  eq(off.bg, "rgba(255, 255, 255, 0.15)", "fill at rest");
+  eq(off.icon, 14, "icon size");
+  await t.p.click("#mic");
+  await settle(t.p, 250);
+  const on = await look();
+  eq(on.bg, "rgb(247, 248, 248)", "fill while listening");
+  eq(on.color, "rgb(13, 14, 16)", "icon while listening");
+  await t.p.click("#mic");
+});
+check("Mic", "mic button dictates into the box (listening label with five bars that follow the voice, full text, back to off)", async () => {
   const t = await open();
   await t.p.click("#mic");
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "true", "mic pressed");
   await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Listening"), null, { timeout: 3000 })
     .catch(() => { throw new Fail("no 'Listening' label"); });
-  ok(await vis(t.p, "#dictLabel .sdot"), "the still dot should show beside Listening");
-  eq(await t.p.locator(".level").count(), 0, "moving level bars");
-  const dot = await t.p.evaluate(() => { const d = document.querySelector("#dictLabel .sdot")!; const cs = getComputedStyle(d, "::before"); return { anim: getComputedStyle(d).animationName, before: cs.animationName }; });
-  ok(dot.anim === "none" && dot.before === "none", `the dot should not move (${JSON.stringify(dot)})`);
+  eq(await t.p.locator("#dictLabel .wave i").count(), 5, "bars beside Listening");
+  has(await t.p.locator("#dictLabel").innerText(), "End with “enviar mensaje” to translate", "the closing phrase's hint");
+  await t.p.waitForFunction(() => [...document.querySelectorAll("#dictLabel .wave i")].some((b) => Number((b as HTMLElement).style.getPropertyValue("--h")) > 0.3), null, { timeout: 2000 })
+    .catch(() => { throw new Fail("the bars never rose with the level"); });
   ok((await t.msgs()).some((m) => m.type === "dictation" && m.action === "start"), "the shell was not told to start");
   await t.p.waitForFunction((s: string) => (document.getElementById("es") as HTMLTextAreaElement).value === s, ES, { timeout: 6000 })
     .catch(async () => { throw new Fail(`the field ended as ${JSON.stringify(await val(t.p, "es"))}`); });
@@ -490,6 +511,95 @@ check("Mic", "?mic=denied shows 'Microphone not allowed' and Open Settings; the 
   eq(await val(t.p, "es"), "", "Spanish box");
   await t.p.click("#dictLabel [data-act=mic-settings]");
   eq((await opens(t, "microphone")).length, 1, "open microphone messages");
+});
+
+check("Mic", "ending with “enviar mensaje” and a pause stops the mic, leaves the phrase out and translates; the English waits", async () => {
+  const t = await open("dict=phrase");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Translating… Keep talking"), null, { timeout: 5000 })
+    .catch(async () => { throw new Fail(`never armed; label ${JSON.stringify(await t.p.locator("#dictLabel").innerText())}`); });
+  eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "true", "still listening while armed");
+  await waitState(t.p, "ready", 10000);
+  const r = reqsTo(t, "/api/translate");
+  eq(r.length, 1, "translate requests");
+  eq(r[0].body.text, ES, "what was translated (without the phrase)");
+  eq(await val(t.p, "es"), ES, "the Spanish box");
+  eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic after");
+  eq((await t.msgs()).filter((m) => m.type === "send").length, 0, "sends to Teams");
+});
+check("Mic", "Words by Claude: when the mic stops, 'Claude is checking what you said…', then the misheard words are fixed in the box", async () => {
+  try {
+  await putSettings({ dictationEngine: "claude" });
+  const t = await open("dict=misheard");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Claude is checking what you said"), null, { timeout: 6000 })
+    .catch(async () => { throw new Fail(`never checked; label ${JSON.stringify(await t.p.locator("#dictLabel").innerText())}`); });
+  has(await val(t.p, "es"), "pre su puesto", "what this Mac heard, while Claude checks");
+  ok(await t.p.locator("#translate").isDisabled(), "Translate should wait for the check");
+  await t.p.waitForFunction((s: string) => (document.getElementById("es") as HTMLTextAreaElement).value === s, ES, { timeout: 4000 })
+    .catch(async () => { throw new Fail(`the box ended as ${JSON.stringify(await val(t.p, "es"))}`); });
+  eq(reqsTo(t, "/api/fix").length, 1, "fix requests");
+  eq(JSON.stringify(reqsTo(t, "/api/fix")[0].body), JSON.stringify({ text: ES.replace("presupuesto", "pre su puesto"), locale: "es-MX" }), "what went to Claude");
+  eq(await t.p.locator("#dictLabel").innerText(), "", "label at the end");
+  } finally { await resetSettings(); }
+});
+check("Mic", "Words by Claude: ⏎ while dictating stops, Claude fixes the words, then it translates the fixed ones", async () => {
+  try {
+  await putSettings({ dictationEngine: "claude" });
+  const t = await open("dict=misheard");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.includes("pre su puesto"), null, { timeout: 4000 });
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "ready", 10000);
+  eq(reqsTo(t, "/api/fix").length, 1, "fix requests");
+  const r = reqsTo(t, "/api/translate");
+  eq(r.length, 1, "translate requests");
+  ok(!r[0].body.text.includes("pre su puesto") && r[0].body.text.includes("presupuesto"), `translated ${JSON.stringify(r[0].body.text)}`);
+  } finally { await resetSettings(); }
+});
+check("Mic", "Words by This Mac (the default): nothing goes to Claude after dictating", async () => {
+  const t = await open("dict=misheard");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("mic")!.getAttribute("aria-pressed") === "false", null, { timeout: 6000 });
+  await settle(t.p, 700);
+  eq(reqsTo(t, "/api/fix").length, 0, "fix requests");
+  has(await val(t.p, "es"), "pre su puesto", "the box keeps what this Mac heard");
+});
+check("Mic", "After the phrase: Send right away translates, then sends to the open chat as ⌘⏎ does", async () => {
+  try {
+  await putSettings({ dictationPhrase: "send" });
+  const t = await open("dict=phrase");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Sending… Keep talking"), null, { timeout: 5000 })
+    .catch(async () => { throw new Fail(`never armed to send; label ${JSON.stringify(await t.p.locator("#dictLabel").innerText())}`); });
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.state === "sent", null, { timeout: 10000 })
+    .catch(async () => { throw new Fail(`never sent; state ${await t.p.evaluate(() => document.getElementById("strip")!.dataset.state)}`); });
+  eq(reqsTo(t, "/api/translate").length, 1, "translate requests");
+  eq((await sends(t)).length, 1, "sends");
+  ok(String((await sends(t))[0].text).startsWith(EN_NORMAL), `what was sent: ${JSON.stringify((await sends(t))[0].text)}`);
+  } finally { await resetSettings(); }
+});
+check("Mic", "Esc while armed drops it: nothing is translated", async () => {
+  const t = await open("dict=phrase");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Translating…"), null, { timeout: 5000 });
+  await t.p.keyboard.press("Escape");
+  await settle(t.p, 1600);
+  eq(reqsTo(t, "/api/translate").length, 0, "translate requests");
+  eq(await val(t.p, "es"), "", "the Spanish box");
+});
+check("Mic", "?dict=silent: a microphone with no sound ends listening with a note", async () => {
+  const t = await open("dict=silent");
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("gives no sound"), null, { timeout: 3000 })
+    .catch(() => { throw new Fail("no note about the silent microphone"); });
+  eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic after");
+});
+check("Mic", "the start message carries the settings' sounds choice", async () => {
+  const t = await open();
+  await t.p.click("#mic");
+  eq((await t.msgs()).find((m: any) => m.type === "dictation" && m.action === "start")?.sounds, true, "sounds by default");
+  await t.p.click("#mic");
 });
 
 // ===================================================================================== Adjust
@@ -1734,13 +1844,13 @@ check("Translate button", "pressing it while dictating stops the mic and transla
 });
 
 // ===================================================================================== dictation states
-check("Dictation", "?dict=prep: 'Getting dictation ready…', then Listening with the dot, then the words", async () => {
+check("Dictation", "?dict=prep: 'Getting dictation ready…', then Listening with the bars, then the words", async () => {
   const t = await open("dict=prep");
   await t.p.click("#mic");
   await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Getting dictation ready"), null, { timeout: 1200 })
     .catch(() => { throw new Fail("no 'Getting dictation ready…' label"); });
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "true", "mic pressed while preparing");
-  ok(!(await vis(t.p, "#dictLabel .sdot")), "no listening dot while preparing");
+  ok(!(await vis(t.p, "#dictLabel .wave")), "no bars while preparing");
   eq(await val(t.p, "es"), "", "Spanish box while preparing");
   await expectLayout(t.p);
   await t.p.waitForFunction(() => /ready… \d+%$/.test(document.getElementById("dictLabel")!.textContent!), null, { timeout: 1200 })
@@ -1748,7 +1858,7 @@ check("Dictation", "?dict=prep: 'Getting dictation ready…', then Listening wit
   await expectLayout(t.p);
   await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Listening"), null, { timeout: 3500 })
     .catch(() => { throw new Fail("never changed to Listening"); });
-  ok(await vis(t.p, "#dictLabel .sdot"), "the dot should show while listening");
+  ok(await vis(t.p, "#dictLabel .wave"), "the bars should show while listening");
   await t.p.waitForFunction((s: string) => (document.getElementById("es") as HTMLTextAreaElement).value === s, ES, { timeout: 6000 })
     .catch(async () => { throw new Fail(`the field ended as ${JSON.stringify(await val(t.p, "es"))}`); });
   eq(await t.p.locator("#dictLabel").innerText(), "", "label at the end");
@@ -2740,11 +2850,33 @@ const nextFrames: Frame[] = [
   { file: "22-teams-changed", make: async (t) => { await setTeams(t.p, TEAMS_CHANGED); await t.p.click("#es"); } },
   { file: "23-claude-changed", make: async (t) => { await setClaudeCheck(t.p, CLAUDE_MISSING); await t.p.click("#es"); } },
 ];
-for (const f of [...macFrames, ...quickFrames, ...nextFrames]) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
+// The mic as Session Monitor's (0.13.0), at the same two sizes.
+const micFrames: Frame[] = [
+  { file: "24-mic-idle", make: async (t) => { await t.p.hover("#mic"); } },
+  { file: "25-listening", make: async (t) => {
+      await t.p.click("#mic");
+      await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.length > 20, null, { timeout: 3000 });
+      await t.p.evaluate(() => (window as any).strip.dictLevel(0.6));
+  } },
+  { file: "26-armed", query: "dict=phrase", make: async (t) => {
+      await t.p.click("#mic");
+      await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Translating…"), null, { timeout: 5000 });
+  } },
+  { file: "28-claude-checking", query: "dict=misheard", before: () => putSettings({ dictationEngine: "claude" }), make: async (t) => {
+      await t.p.click("#mic");
+      await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("Claude is checking"), null, { timeout: 6000 });
+  } },
+  { file: "27-mic-silent", query: "dict=silent", make: async (t) => {
+      await t.p.click("#mic");
+      await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("gives no sound"), null, { timeout: 3000 });
+  } },
+];
+for (const f of [...macFrames, ...quickFrames, ...nextFrames, ...micFrames]) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
     if (f.before) await f.before();
     if (f.size) ({ w: W, h: H } = f.size);
+    try {
     const t = await open(f.query ?? "");
     await f.make(t);
     if (!f.file.startsWith("16")) await t.p.mouse.move(W / 2, 0);   // (16 keeps the pointer on Settings…)
@@ -2753,6 +2885,7 @@ for (const f of frames) {
     const r = await layout(t.p);
     ok(!r.issues.length, r.issues.join("; "));
     return r.info.length ? r.info.join("; ") : undefined;
+    } finally { if (f.before) await resetSettings(); }
   });
 }
 
@@ -2849,7 +2982,7 @@ colCheck("Column", "the Spanish footer is today's row: Normal / Formal, the mic,
   eq(mod.b - f2.b, 8, "the footer's distance from the module's bottom");
   ok(tone.r <= mic.l && mic.r <= tr.l, "the row runs Normal / Formal, mic, Translate");
   eq(Math.round(mic.cy), Math.round(tr.cy), "the mic and Translate on one line");
-  eq(mic.w, 28, "mic width"); eq(tr.h, 28, "Translate height");
+  eq(mic.w, 24, "mic width (Session Monitor's chip)"); eq(tr.h, 28, "Translate height");
   ok(foot.h > f2.h, "the note adds a row");
 });
 colCheck("Column", "'Sent · time' sits in the English footer, and the gear still works", async () => {

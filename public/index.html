@@ -60,11 +60,27 @@
      neutral white, never a state color. */
   .dict-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--csm-text-meta); color: var(--color-text-secondary); white-space: nowrap; }
   .dict-label:empty { display: none; }
-  .dict-label .sdot { color: var(--color-text-primary); }
-  .mic { width: 28px; height: 28px; border-radius: 50%; }
-  .mic svg.i { width: 16px; height: 16px; }
+  /* The mic is Session Monitor's: a 24 × 22 chip that always shows it can be pressed, lit white while it
+     listens. */
+  .mic { box-sizing: border-box; width: 24px; height: 22px; border-radius: var(--radius-element); background: #FFFFFF26; color: var(--color-text-primary);
+    transition: background-color var(--duration-fast) var(--ease-standard); }
+  .mic:hover { background: #FFFFFF33; color: var(--color-text-primary); }
+  .mic svg.i { width: 14px; height: 14px; }
   [data-dict="on"] .f.es { background: var(--color-overlay-pressed); }
-  [data-dict="on"] .mic { background: var(--color-text-primary); color: var(--color-on-light); }
+  [data-dict="on"] .mic, [data-dict="on"] .mic:hover { background: #F7F8F8; color: var(--color-on-light); }
+  /* Five bars beside "Listening" follow the mic's level, as in Session Monitor: each takes the level with
+     its own weight and a little chance, in transform only. Quiet, they rest low and breathe. Reduce Motion
+     keeps them still. */
+  .dict-label .wave { flex: none; display: inline-flex; align-items: center; gap: 2px; height: 14px; color: var(--color-text-primary); }
+  .dict-label .wave i { width: 2px; height: 14px; border-radius: 1px; background: currentColor; transform: scaleY(var(--h, 0.2)); transition: transform 110ms var(--ease-standard); }
+  .dict-label .wave.hush i { animation: wave-idle 1600ms var(--ease-standard) infinite; }
+  .dict-label .wave i:nth-child(2) { animation-delay: 120ms; }
+  .dict-label .wave i:nth-child(3) { animation-delay: 240ms; }
+  .dict-label .wave i:nth-child(4) { animation-delay: 360ms; }
+  .dict-label .wave i:nth-child(5) { animation-delay: 480ms; }
+  @keyframes wave-idle { 0%, 100% { transform: scaleY(0.2); } 50% { transform: scaleY(0.36); } }
+  @media (prefers-reduced-motion: reduce) { .dict-label .wave i, .dict-label .wave.hush i { transform: scaleY(0.6); animation: none; transition: none; } }
+  .dict-label .dw b { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
 
   /* The adjust line: a note on the translation, in Spanish or English. */
   .adjust-row { display: none; align-items: center; gap: 8px; margin: 0 -4px; }
@@ -369,7 +385,7 @@ function post(msg) {
 
 // The stand-in bridge, for a browser with no shell: a made-up chat and a made-up last message, and a
 // send that succeeds after a moment without sending anything. The query string picks a case to
-// try: ?teams=closed|nochat  ?chat=pt|new  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
+// try: ?teams=closed|nochat  ?chat=pt|new  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable|silent|phrase|misheard
 // ?send=draft|no-teams|no-chat|not-front|mismatch|not-sent|not-posted|unconfirmed|chat-changed|no-paste|not-own-server|no-access
 // ?check=changed (Teams moved its message box: the update check's tag)
 const qp = new URLSearchParams(location.search);
@@ -414,13 +430,20 @@ function standIn(msg) {
     if (msg.action === "start") {
       if (qp.get("mic") === "denied") { window.strip.dictation({ state: "denied" }); return; }
       if (qp.get("dict") === "unavailable") { window.strip.dictation({ state: "unavailable" }); return; }
+      // ?dict=phrase: the words end with the closing phrase and the mic keeps listening, so the pause runs out.
+      // ?dict=misheard: "presupuesto" heard as "pre su puesto", for Claude to fix.
+      const said = qp.get("dict") === "phrase" ? [...PREVIEW_DICTATION, "Enviar", "mensaje."]
+        : qp.get("dict") === "misheard" ? PREVIEW_DICTATION.join(" ").replace("presupuesto", "pre su puesto").split(" ") : PREVIEW_DICTATION;
       let n = 0;
       const listen = () => {
         window.strip.dictation({ state: "on", text: "" });
+        if (qp.get("dict") === "silent") { previewTimer = setTimeout(() => window.strip.dictation({ state: "silent" }), 600); return; }
         previewTimer = setInterval(() => {
         n++;
-        window.strip.dictation({ state: n >= PREVIEW_DICTATION.length ? "off" : "on", text: PREVIEW_DICTATION.slice(0, n).join(" ") });
-        if (n >= PREVIEW_DICTATION.length) clearInterval(previewTimer);
+        const end = n >= said.length && qp.get("dict") !== "phrase";
+        if (n <= said.length) window.strip.dictation({ state: end ? "off" : "on", text: said.slice(0, n).join(" ") });
+        if (n <= said.length) window.strip.dictLevel(0.35 + 0.4 * Math.abs(Math.sin(n)));
+        if (end) clearInterval(previewTimer);
         }, 160);
       };
       // ?dict=prep: the first time, macOS downloads its Spanish model before listening.
@@ -431,7 +454,7 @@ function standIn(msg) {
       }
       else listen();
     } else if (msg.action === "stop") {
-      clearTimeout(previewTimer);
+      clearTimeout(previewTimer); clearInterval(previewTimer);
       window.strip.dictation({ state: "off" });
     }
   }
@@ -459,6 +482,7 @@ window.strip = {
   teams(m) { commit(SS.shellTeams(st, m)); paint(); },
   sent(m) { onSent(m || {}); },
   dictation(m) { onDictation(m || {}); },
+  dictLevel(level) { if (st.dict === "on") { dictLevel = Number(level) || 0; drawWave(dictLevel); } },
   access(m) {
     const r = SS.shellAccess(st, m);
     if (r.stopDictation) post(stopMsg);
@@ -471,7 +495,7 @@ window.strip = {
 
 // ------------------------------------------------------------------------------ the server
 let srv = null;       // { translator, settings, … } from /api/state
-const DEFAULT_SETTINGS = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], dictation: "es-MX" };
+const DEFAULT_SETTINGS = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], dictation: "es-MX", dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review" };
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, srv && srv.settings);
 // Each language's code, for the boxes' and the buttons' lang attribute (spelling and voices).
 const LANG_CODES = { English: "en", "Español": "es", "Português": "pt", "Français": "fr", Deutsch: "de", Italiano: "it", Nederlands: "nl", Polski: "pl", Svenska: "sv", "Türkçe": "tr", "日本語": "ja", "한국어": "ko", "中文": "zh" };
@@ -702,7 +726,14 @@ function paint() {
   const words = (text) => { const w = document.createElement("span"); w.className = "dw"; w.textContent = text; label.title = text; return w; };
   label.removeAttribute("title");
   if (dl && dl.kind === "prep") label.append(words(dl.text));
-  else if (dl && dl.kind === "listening") { label.innerHTML = `<span class="sdot"></span>`; label.append(words("Listening")); }
+  else if (dl && (dl.kind === "listening" || dl.kind === "armed")) {
+    label.innerHTML = `<span class="wave hush" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>`;
+    // "Listening · End with “…” to translate", the hint giving way first (it ends in an ellipsis); armed, what happens next.
+    const w = words(dl.kind === "armed" ? dl.text : `Listening · ${dl.text}`);
+    if (dl.kind === "listening") { w.textContent = ""; const b = document.createElement("b"); b.textContent = "Listening"; w.append(b, ` · ${dl.text}`); }
+    label.append(w);
+    drawWave(dictLevel);
+  }
   else if (dl && dl.kind === "note") label.append(words(dl.text));
   else if (dl && dl.kind === "denied") {
     label.append(words("Microphone not allowed"));
@@ -793,7 +824,7 @@ function onSent(m) {
 // ------------------------------------------------------------------------------ dictation
 function startDictation() {
   const loc = settings().dictation, opt = ((srv && srv.options && srv.options.dictation) || []).find((d) => d && d.id === loc);
-  const go = SS.dictStart(st, fields(), loc, opt ? opt.name : "");
+  const go = SS.dictStart(st, fields(), loc, opt ? opt.name : "", settings().dictationSounds !== false, settings().dictationPhrase === "send");
   if (!go) return;
   commit(go.st); paint(); esIn.focus();
   post(go.msg);
@@ -804,18 +835,68 @@ function stopDictation(then) {
   if (!go) { if (then) then(); return; }
   commit(go.st); paint();
   clearTimeout(dictTimer);
-  dictThen = () => { clearTimeout(dictTimer); dictThen = null; commit(SS.dictFinish(st)); paint(); if (then) then(); };
+  dictThen = () => { clearTimeout(dictTimer); dictThen = null; commit(SS.dictFinish(st)); paint(); fixDictation(then); };
   dictTimer = setTimeout(() => { if (dictThen) dictThen(); }, 1800); // longer than the shell's 1.5 s wait for the final result
   post(go.msg);   // after the above: the stand-in answers at once
 }
 function onDictation(m) {
+  const was = st.dict;
   const r = SS.onDictation(st, m, fields());
   commit(r.st);
+  if (was === "on" && m.state === "off" && !r.done) { paint(); fixDictation(); return; }   // it ended by itself (the minute ran out)
+  if (st.dict !== "on") { clearTimeout(armTimer); dictLevel = 0; }
   if (r.done) {
     if (dictThen) { dictThen(); return; }
     commit(SS.dictFinish(st));
   }
+  if (typeof m.text === "string") armDict(m.text);
   paint();
+}
+// Settings › Dictation › Claude: once the mic is off, Claude checks what this Mac heard (the translator's
+// model; not with this Mac's), then whatever waited on the words runs. Esc or typing in the box drops it.
+async function fixDictation(then) {
+  const go = settings().dictationEngine === "claude" && settings().model !== "mac" ? SS.fixStart(st, fields()) : null;
+  if (!go) { if (then) then(); return; }
+  commit(go.st); paint();
+  const id = st.req;
+  const r = await ask("/api/fix", { text: go.words, locale: st.dictLocale }, id);
+  if (!r || !st.dictFixing) return;
+  commit(SS.fixDone(st, fields(), r.status === 200 ? r.data : { error: r.data.error || "failed" })); paint();
+  if (then) then();
+}
+// The closing phrase: armed when the words end with it, disarmed when more words follow; after 1.2 s
+// armed, the phrase comes out of the box, the mic stops and it translates, as ⏎ does.
+let armTimer = 0;
+function armDict(words) {
+  const on = st.dict === "on" && !st.dictPrep && !!SS.phraseAtEnd(words, st.dictLocale);
+  if (on === !!st.dictArmed) return;
+  clearTimeout(armTimer);
+  commit(SS.dictArm(st, on));
+  if (!on) return;
+  armTimer = setTimeout(() => {
+    if (st.dict !== "on" || !st.dictArmed) return;
+    commit(SS.dictByPhrase(st, fields())); paint();
+    stopDictation(st.dictPhraseSends ? translateThenSend : translate);
+  }, SS.ARM_MS);
+}
+// Settings › Dictation › After the phrase: Send right away. It translates, then sends as ⌘⏎ does, but only a
+// reply that came back clean: a question, an error, a tag to read (a voice finding, a stand-in) or a box you
+// changed meanwhile leaves the reply waiting for you.
+async function translateThenSend() {
+  await translate();
+  if (st.phase !== "ready" || st.notice || st.fallback || (Array.isArray(st.lint) && st.lint.length)) return;
+  send(false);
+}
+// The five bars, from the mic's level (0 to 1, about 10 times a second). The curve lifts a normal voice
+// to the middle; each bar takes it with its own weight and a little chance, so speech doesn't read as one pump.
+let dictLevel = 0;
+const WAVE_K = [0.55, 0.85, 1, 0.8, 0.5];
+function drawWave(level) {
+  const w = document.querySelector("#dictLabel .wave");
+  if (!w) return;
+  const lvl = Math.pow(Math.max(0, Math.min(1, Number(level) || 0)), 0.7);
+  w.classList.toggle("hush", lvl < 0.08);
+  [...w.children].forEach((b, i) => b.style.setProperty("--h", (0.2 + Math.min(0.8, lvl * WAVE_K[i] * (0.65 + Math.random() * 0.5))).toFixed(3)));
 }
 function toggleDictation() { if (st.dict === "on") stopDictation(); else startDictation(); }
 

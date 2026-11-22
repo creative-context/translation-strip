@@ -40,7 +40,7 @@ const DICTATION = [
 ];
 type Settings = { model: "haiku" | "sonnet" | "opus" | "mac"; mode: "send" | "leave"; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string };
 // The mock starts with two languages, so the menu's Reply in row has a choice (the app's default is English alone).
-const MOCK_DEFAULTS: Settings = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX" };
+const MOCK_DEFAULTS: Settings = { model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English", "Português"], notes: {}, dictation: "es-MX", dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review" };
 const settings: Settings = structuredClone(MOCK_DEFAULTS);
 const translator = { status: "ready" as "starting" | "ready" | "busy" | "error", error: null as string | null, until: null as string | null, guide: "ok", linter: "ok" };
 let version = 0;
@@ -195,6 +195,17 @@ async function translate(body: any, flags: Flags = NO_FLAGS) {
   return json({ text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text), engine: "claude" });
 }
 
+// POST /api/fix: Claude checking dictated words. The made-up misheard "pre su puesto" comes back fixed after a
+// moment; words with FIXFAIL answer 503 offline, so the page keeps the Mac's words.
+async function fix(body: any, flags: Flags = NO_FLAGS) {
+  if (modelFor(flags) === "mac") return json({ error: "mac" }, 409);
+  const text = String(body?.text ?? "").trim();
+  if (!text) return json({ error: "text" }, 400);
+  await Bun.sleep(500);
+  if (text.includes("FIXFAIL")) return json({ error: "offline" }, 503);
+  return json({ text: text.replace(/\bpre su puesto\b/g, "presupuesto") });
+}
+
 async function adjust(body: any, flags: Flags = NO_FLAGS) {
   if (modelFor(flags) === "mac") return json({ error: "mac" }, 409);
   const note = String(body?.note ?? "");
@@ -231,6 +242,9 @@ function applySettings(body: any): boolean {
     }
   }
   if (has("dictation")) { if (!DICTATION.some((d) => d.id === body.dictation)) return false; next.dictation = body.dictation; }
+  if (has("dictationEngine")) { if (!["mac", "claude"].includes(body.dictationEngine)) return false; next.dictationEngine = body.dictationEngine; }
+  if (has("dictationPhrase")) { if (!["review", "send"].includes(body.dictationPhrase)) return false; next.dictationPhrase = body.dictationPhrase; }
+  if (has("dictationSounds")) { if (typeof body.dictationSounds !== "boolean") return false; next.dictationSounds = body.dictationSounds; }
   // A target that isn't one of your languages joins them; with eight already, the server refuses it.
   if (!next.languages.includes(next.target)) { if (next.languages.length >= 8) return false; next.languages = [...next.languages, next.target]; }
   // Notes belong to a language on the list, as on the server.
@@ -268,6 +282,7 @@ Bun.serve({
       try { body = await req.json(); } catch {}
       if (p === "/api/translate") return translate(body, flags);
       if (p === "/api/adjust") return adjust(body, flags);
+      if (p === "/api/fix") return fix(body, flags);
       if (p === "/api/settings") {
         if (!applySettings(body)) return json({ error: "settings" }, 400);
         broadcast();

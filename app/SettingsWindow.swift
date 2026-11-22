@@ -43,6 +43,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
         w.isReleasedWhenClosed = false
         w.appearance = NSAppearance(named: .darkAqua) // the page is dark only
         w.backgroundColor = NSColor(srgbRed: 3 / 255, green: 3 / 255, blue: 4 / 255, alpha: 1) // the page's body, so nothing flashes
+        // The title bar in the page's own dark, not the system's gray, with no line under it.
+        w.titlebarAppearsTransparent = true
+        w.titlebarSeparatorStyle = .none
         w.collectionBehavior = [.fullScreenNone]
         // A fixed width, the height the user's: the page scrolls when its languages don't fit.
         w.contentMinSize = NSSize(width: Self.width, height: Self.minHeight)

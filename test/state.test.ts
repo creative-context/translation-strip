@@ -745,9 +745,9 @@ describe("dictation's states", () => {
 
   test("start says so to the shell and listens", () => {
     const { s, go } = listening();
-    expect(go.msg).toEqual({ type: "dictation", action: "start", locale: "es-MX" });
+    expect(go.msg).toEqual({ type: "dictation", action: "start", locale: "es-MX", sounds: true });
     expect(s.st.dict).toBe("on");
-    expect(SS.dictLabel(s.st)).toEqual({ kind: "listening" });
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "listening", text: "End with “enviar mensaje” to translate" });
   });
 
   const nope: [string, () => S][] = [
@@ -788,7 +788,7 @@ describe("dictation's states", () => {
     s = applied(s, SS.onDictation(s.st, { state: "preparing" }, s.f).st);   // no number: keeps the last one
     expect(SS.dictLabel(s.st)?.text).toContain("55%");
     s = applied(s, SS.onDictation(s.st, { state: "on", text: "" }, s.f).st);
-    expect(SS.dictLabel(s.st)).toEqual({ kind: "listening" });
+    expect(SS.dictLabel(s.st)?.kind).toBe("listening");
   });
 
   test("preparing, when it isn't listening, says nothing", () => {
@@ -1012,9 +1012,141 @@ describe("the language a translation is in", () => {
 describe("dictation's language", () => {
   test("the start message carries the settings' locale, es-MX when there is none", () => {
     const s = start();
-    expect(SS.dictStart(s.st, s.f, "pt-BR").msg).toEqual({ type: "dictation", action: "start", locale: "pt-BR" });
+    expect(SS.dictStart(s.st, s.f, "pt-BR").msg).toEqual({ type: "dictation", action: "start", locale: "pt-BR", sounds: true });
+    expect(SS.dictStart(s.st, s.f, "pt-BR", "", false).msg.sounds).toBe(false); // the settings turned the two notes off
     expect(SS.dictStart(s.st, s.f, "").msg.locale).toBe("es-MX");
     expect(SS.dictStart(s.st, s.f, null).msg.locale).toBe("es-MX");
+  });
+});
+
+// The closing phrase (as in Session Monitor): "enviar mensaje" as the last words, a pause, and it translates.
+describe("dictation's closing phrase", () => {
+  const cases: [string, string, string | null][] = [
+    ["at the very end", "Lo reviso mañana. Enviar mensaje.", "enviar mensaje"],
+    ["alone", "enviar mensaje", "enviar mensaje"],
+    ["without accents or case", "ENVIAR MENSAJE", "enviar mensaje"],
+    ["more words follow", "enviar mensaje al equipo", null],
+    ["inside a sentence, not as its words", "hay que enviar el mensaje al equipo", null],
+    ["part of a word", "reenviar mensaje", null],
+    ["empty", "", null],
+  ];
+  for (const [what, text, want] of cases) test(`es-MX, ${what}`, () => expect(SS.phraseAtEnd(text, "es-MX")).toBe(want));
+  test("each dictation language has its own; an unknown one falls back to Spanish", () => {
+    expect(SS.phraseAtEnd("I'll check it tomorrow, send message", "en-US")).toBe("send message");
+    expect(SS.phraseAtEnd("Vou revisar amanhã. Enviar mensagem", "pt-BR")).toBe("enviar mensagem");
+    expect(SS.phraseAtEnd("enviar mensaje", "en-US")).toBe(null);
+    expect(SS.sendPhrases("xx-YY")).toEqual(["enviar mensaje"]);
+  });
+  const strips: [string, string][] = [
+    ["Lo reviso mañana. Enviar mensaje.", "Lo reviso mañana."],
+    ["¿Lo revisas tú? Enviar mensaje", "¿Lo revisas tú?"],
+    ["Lo reviso mañana, enviar mensaje", "Lo reviso mañana"],
+    ["enviar mensaje", ""],
+    ["enviar mensaje al equipo", "enviar mensaje al equipo"],
+  ];
+  for (const [text, want] of strips) test(`stripped: "${text}"`, () => expect(SS.stripPhrase(text, "es-MX")).toBe(want));
+
+  const listening = () => { const s = start(); return applied(s, SS.dictStart(s.st, s.f, "es-MX").st); };
+  test("with Send right away, the hint and the armed label say it sends", () => {
+    const s = start();
+    let n = applied(s, SS.dictStart(s.st, s.f, "es-MX", "", true, true).st);
+    expect(SS.dictLabel(n.st)).toEqual({ kind: "listening", text: "End with “enviar mensaje” to send" });
+    n = applied(n, SS.dictArm(n.st, true));
+    expect(SS.dictLabel(n.st)).toEqual({ kind: "armed", text: "Sending… Keep talking to go on" });
+  });
+  test("armed, the label says it translates; talking on disarms it", () => {
+    let s = applied(listening(), SS.onDictation(listening().st, { state: "on", text: "Lo reviso mañana. Enviar mensaje." }, listening().f).st);
+    s = applied(s, SS.dictArm(s.st, true));
+    expect(SS.dictLabel(s.st)).toEqual({ kind: "armed", text: "Translating… Keep talking to go on" });
+    s = applied(s, SS.dictArm(s.st, false));
+    expect(SS.dictLabel(s.st)?.kind).toBe("listening");
+  });
+  test("the pause ran out: the phrase leaves the box now and the last words come without it", () => {
+    let s = listening();
+    s = applied(s, SS.onDictation(s.st, { state: "on", text: "Lo reviso mañana. Enviar mensaje." }, s.f).st);
+    s = applied(s, SS.dictArm(s.st, true));
+    s = applied(s, SS.dictByPhrase(s.st, s.f));
+    expect(s.f.es).toBe("Lo reviso mañana.");
+    const stop = SS.dictStop(s.st)!;
+    s = applied(s, stop.st);
+    const r = SS.onDictation(s.st, { state: "off", text: "Lo reviso mañana. Enviar mensaje." }, s.f);
+    expect(r.done).toBe(true);
+    expect(applied(s, r.st).f.es).toBe("Lo reviso mañana.");
+  });
+  test("stopped with the mic while armed: the phrase comes out too", () => {
+    let s = listening();
+    s = applied(s, SS.onDictation(s.st, { state: "on", text: "Ya quedó, enviar mensaje" }, s.f).st);
+    s = applied(s, SS.dictArm(s.st, true));
+    s = applied(s, SS.dictStop(s.st)!.st);
+    expect(applied(s, SS.onDictation(s.st, { state: "off", text: "Ya quedó, enviar mensaje" }, s.f).st).f.es).toBe("Ya quedó");
+  });
+  test("not armed, the same words stay as said", () => {
+    let s = listening();
+    s = applied(s, SS.dictStop(s.st)!.st);
+    expect(applied(s, SS.onDictation(s.st, { state: "off", text: "Ya quedó, enviar mensaje" }, s.f).st).f.es).toBe("Ya quedó, enviar mensaje");
+  });
+  const notes: [string, string][] = [
+    ["silent", "The microphone gives no sound. Check that it isn't muted"],
+    ["failed", "The microphone didn't start. Try again"],
+  ];
+  for (const [state, note] of notes) test(`the shell says ${state}: listening ends with a note`, () => {
+    const s = listening();
+    const r = SS.onDictation(s.st, { state }, s.f);
+    expect(r.st.dict).toBe("off");
+    expect(SS.dictLabel(r.st)).toEqual({ kind: "note", text: note });
+  });
+});
+
+// Settings › Dictation › Claude: once the mic is off, Claude checks what this Mac heard.
+describe("dictation checked by Claude", () => {
+  const heard = (before = "") => {
+    let s = start();
+    if (before) s = { ...s, f: { ...s.f, es: before } };
+    s = applied(s, SS.dictStart(s.st, s.f, "es-MX").st);
+    s = applied(s, SS.dictStop(s.st)!.st);
+    s = applied(s, SS.onDictation(s.st, { state: "off", text: "Revisa el pre su puesto" }, s.f).st);
+    return applied(s, SS.dictFinish(s.st));
+  };
+  test("only the dictated words go, not what the box held before; the label says Claude is checking", () => {
+    const go = SS.fixStart(heard("Antes:").st, heard("Antes:").f)!;
+    expect(go.words).toBe("Revisa el pre su puesto");
+    expect(SS.dictLabel(go.st)).toEqual({ kind: "prep", text: "Claude is checking what you said…" });
+    expect(SS.canTranslate(go.st, heard("Antes:").f)).toBe(false);
+  });
+  test("the fixed words take the place of what was heard", () => {
+    const s = heard("Antes:");
+    const go = SS.fixStart(s.st, s.f)!;
+    const done = applied({ st: go.st, f: s.f }, SS.fixDone(go.st, s.f, { text: "Revisa el presupuesto" }));
+    expect(done.f.es).toBe("Antes: Revisa el presupuesto");
+    expect(done.st.dictFixing).toBe(false);
+  });
+  const keeps: [string, any, string | null][] = [
+    ["an error keeps the Mac's words, with a note", { error: "offline" }, "Claude couldn't check the words. They're as this Mac heard them"],
+    ["an empty answer keeps them too", { text: "  " }, "Claude couldn't check the words. They're as this Mac heard them"],
+  ];
+  for (const [what, m, note] of keeps) test(what, () => {
+    const s = heard();
+    const go = SS.fixStart(s.st, s.f)!;
+    const n = SS.fixDone(go.st, s.f, m);
+    expect(applied({ st: go.st, f: s.f }, n).f.es).toBe("Revisa el pre su puesto");
+    expect(SS.dictLabel(n)).toEqual({ kind: "note", text: note });
+  });
+  test("you typed meanwhile: yours stays and the answer is dropped", () => {
+    const s = heard();
+    const go = SS.fixStart(s.st, s.f)!;
+    const typedF = { ...s.f, es: "Revisa el presupuesto, porfa" };
+    expect(applied({ st: go.st, f: typedF }, SS.fixDone(go.st, typedF, { text: "Revisa el presupuesto" })).f.es).toBe("Revisa el presupuesto, porfa");
+  });
+  test("nothing dictated, or still listening: nothing to check", () => {
+    const s = start();
+    expect(SS.fixStart(s.st, s.f)).toBe(null);
+    const on = applied(s, SS.dictStart(s.st, s.f, "es-MX").st);
+    expect(SS.fixStart(on.st, { ...on.f, es: "hola" })).toBe(null);
+  });
+  test("Esc while checking drops it", () => {
+    const s = heard();
+    const go = SS.fixStart(s.st, s.f)!;
+    expect(SS.clearAll(go.st, s.f).st.dictFixing).toBe(false);
   });
 });
 

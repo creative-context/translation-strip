@@ -40,8 +40,19 @@ enum SwiftCheck {
         ownServer()
         dictationLocales()
         macPlan()
+        cues()
         print("\(failures == 0 ? "ok" : "FAILED"): \(failures) failed, \(known) known")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    // The dictation's two cues: a third of a second of 16-bit mono WAV each, the start going up and the stop down.
+    static func cues() {
+        let up = Cue.wav([(659.3, 0, 0.06), (880, 0.075, 0.11)]), down = Cue.wav([(880, 0, 0.06), (659.3, 0.075, 0.11)])
+        check("cue: a WAV header", String(decoding: up.prefix(4), as: UTF8.self) + String(decoding: up[8..<12], as: UTF8.self), "RIFFWAVE")
+        check("cue: about a third of a second at 44.1 kHz", up.count, 44 + Int(44_100 * 0.34) * 2)
+        check("cue: start and stop are different sounds", up == down, false)
+        let peak = stride(from: 44, to: up.count - 1, by: 2).map { abs(Int(Int16(bitPattern: UInt16(up[$0]) | UInt16(up[$0 + 1]) << 8))) }.max() ?? 0
+        check("cue: soft, never clipping (peak under half of full scale)", peak > 2_000 && peak < 16_384, true)
     }
 
     // Where the strip goes in the window stack: in front only with Teams or the strip in front;

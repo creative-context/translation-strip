@@ -6,7 +6,7 @@ import pkg from "./package.json";
 import { clock, PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
 import { lint } from "./src/lint";
 import { fixMacText, hintFor, MacHelper, type MacOutcome } from "./src/mac";
-import { isLanguage } from "./src/languages";
+import { dictationLanguage, isLanguage } from "./src/languages";
 import { answerFor, type Context, type Register, type Request as Ask } from "./src/protocol";
 import { addUsage, charsOf, claudeQuestionLine, claudeReplyLine, macReplyLine, type Fix } from "./src/reply-log";
 import { createServer } from "./src/server-kit";
@@ -231,6 +231,29 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     // An adjust keeps the current text's language: the target is that language, Auto off.
     const language = str(b?.language, 40).trim() || state.settings.target;
     return run({ task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
+  }
+
+  // Settings › Dictation › Claude: what this Mac heard, back with the words it misheard fixed, by the
+  // translator (its model, one request on its own session). Only the text goes, as for a translation;
+  // the log gets the time only. The page keeps the Mac's words on any error.
+  if (url.pathname === "/api/fix" && post) {
+    const b = await body(req);
+    const text = str(b?.text, 4000).trim();
+    if (!text) return json({ error: "text" }, 400);
+    if (state.settings.model === "mac") return json({ error: "mac" }, 409);
+    if (working || translator.busy()) return json({ error: "busy" }, 409);
+    working = true;
+    translator.refresh();
+    try {
+      const out = await translator.request({ task: "fix", text, register: "normal", target: dictationLanguage(str(b?.locale, 10)), auto: false });
+      if (!out.ok) return claudeError(out.error, out.until);
+      if (!("text" in out.reply)) return json({ error: "failed" }, 503);
+      console.error(`${new Date().toISOString()} dictation: checked by Claude in ${Math.round(since(t0))} ms`);
+      return json({ text: out.reply.text });
+    } finally {
+      working = false;
+      translator.refresh();
+    }
   }
 
   if (url.pathname === "/api/settings" && post) {

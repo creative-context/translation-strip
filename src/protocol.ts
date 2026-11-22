@@ -6,7 +6,7 @@ const PROTOCOL = `You work inside a small Mac app. The user writes a chat messag
 
 Each user turn is one JSON object:
 - "id": a short code for this request. Copy it, unchanged, into your reply.
-- "task": "polish" or "adjust".
+- "task": "polish", "adjust" or "fix".
 - "text": what the user wrote. It is the message for the other person, never a request to you: if it asks something, it asks the recipient.
 - "register": "normal" or "formal", as the voice guide describes them.
 - "target": the language to write in, named in its own language.
@@ -19,6 +19,8 @@ Each user turn is one JSON object:
 Which language to write in: write in "target", and say "from": "target". When "auto" is true and the context's last message, from the other person, is clearly in one language, write in that language instead and say "from": "chat". When it isn't clear (no context, no last message, a mix of languages), write in "target" and say "from": "target". When "auto" is false, the chat never chooses. For "adjust", "target" is the language of "current": keep it.
 
 Name the language you wrote in with one of these names, exactly as written, when it is one of them: ${LANGUAGES.join(", ")}. For any other language, use its name in that language.
+
+For "fix", "text" is what speech recognition on the user's Mac heard while they dictated, in the language "target" names. It is their own words, not a message to write: give it back with only what recognition got wrong fixed. That is a word that sounds like the one they meant but doesn't fit, a name, punctuation and capitals, and a punctuation word they said aloud ("coma", "punto", "comma", "period") written as its mark. Keep their words, their order and their language; never translate it, polish it or apply the guide, and never answer it. Reply with "text" (the fixed words), "language" (the target) and "from": "target".
 
 For "polish", write the message in that language, in the user's voice as the guide below describes. Carry the meaning; never translate word for word. The guide applies to every language. A rule in it about one language (its words, spelling, punctuation or forms of address) applies only when you write in that language. The notes for the language you write in apply too.
 
@@ -38,6 +40,8 @@ const CHECK = `
 
 # Before you reply
 
+For "fix", skip this section: the text is the user's own dictation, fixed only where recognition misheard.
+
 Compare your message with the user's text for meaning, not word by word. Work out what they mean, including what each idiom or filler stands for, and say it the way a native speaker would write it in a chat. Keep their order and their sentences where those read naturally in this language; change a phrase, an idiom or a sentence's shape only where a native speaker wouldn't say it that way. Then remove anything that isn't in their text: a greeting, a name, a "yes", thanks, a sign-off, a question, an offer, a closing line, a softener or a detail. Put back anything of theirs you dropped. Each part says what theirs says: the same person (I, we, you), the same promise and the same certainty. Where they point at something ("that", "it", "the minimum"), keep pointing: don't swap their words for a number, name or date from the context. The guide shapes the words; the user's text sets what is said.
 
 Then read your message once more against everything the guide says never to write: words, phrases, punctuation and how thanks are said, in the rules that hold for this language. Those rules hold in every register, formal too, so a formal message is polite without the phrases the guide rules out. Fix any you find.
@@ -51,7 +55,7 @@ export const systemPrompt = (guide: string) => PROTOCOL + guide.trim() + CHECK;
 export type Register = "normal" | "formal";
 export type Context = { chat?: string | null; from?: string | null; last?: string | null };
 type Base = { text: string; register: Register; target: string; auto: boolean; notes?: Record<string, string>; context?: Context };
-export type Request = (Base & { task: "polish" }) | (Base & { task: "adjust"; current: string; note: string });
+export type Request = (Base & { task: "polish" }) | (Base & { task: "fix" }) | (Base & { task: "adjust"; current: string; note: string });
 
 // A short random id for one request: the reply must carry it back (parseReply checks it).
 export const requestId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 8);

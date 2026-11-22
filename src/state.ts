@@ -6,6 +6,10 @@ import { DICTATION, LANGUAGES } from "./languages";
 export type Model = "haiku" | "sonnet" | "opus" | "mac";
 export type ClaudeModel = Exclude<Model, "mac">;
 export type Mode = "send" | "leave";
+// Who writes down what you dictate: this Mac alone, or this Mac and then Claude Code fixing the words it misheard.
+export type DictationEngine = "mac" | "claude";
+// What the closing phrase does: translate and wait for your ⌘⏎, or translate and send as ⌘⏎ does.
+export type DictationPhrase = "review" | "send";
 // mac: the helper that translates on this Mac isn't there, or says this Mac can't.
 export type TranslatorError = "login" | "update" | "offline" | "limit" | "guide" | "missing" | "failed" | "mac";
 export type Status = "starting" | "ready" | "busy" | "error";
@@ -21,9 +25,12 @@ export type Settings = {
   languages: string[];
   notes: Record<string, string>;
   dictation: string;
+  dictationEngine: DictationEngine;
+  dictationSounds: boolean; // the two notes when the mic starts and stops listening
+  dictationPhrase: DictationPhrase;
 };
 
-export const DEFAULT_SETTINGS: Settings = { voiceGuide: null, linter: null, model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX" };
+export const DEFAULT_SETTINGS: Settings = { voiceGuide: null, linter: null, model: "sonnet", mode: "send", target: "English", auto: false, languages: ["English"], notes: {}, dictation: "es-MX", dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review" };
 
 export const state = {
   translator: {
@@ -65,6 +72,9 @@ export function publicSettings(s: Settings = state.settings) {
     languages: [...s.languages],
     notes: { ...s.notes },
     dictation: s.dictation,
+    dictationEngine: s.dictationEngine,
+    dictationSounds: s.dictationSounds,
+    dictationPhrase: s.dictationPhrase,
     files: { voiceGuide: s.voiceGuide ? basename(s.voiceGuide) : null, linter: s.linter ? basename(s.linter) : null },
   };
 }

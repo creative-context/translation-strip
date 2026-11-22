@@ -39,6 +39,11 @@
       req: 0,            // bumps whenever an answer in flight stops mattering
       dict: "off",       // off on denied
       dictBase: "", dictStopping: false, dictPrep: false, dictProgress: null, dictNote: null,
+      dictLocale: "es-MX", // this dictation's locale: its closing phrase is in that language
+      dictArmed: false,  // the words end with the closing phrase: it translates after a short pause unless you talk on
+      dictPhraseSends: false, // this dictation's phrase translates and sends (Settings › Dictation), else it translates and waits
+      dictPhrase: false, // the phrase ended it (or you stopped it while armed): the phrase comes out of the words
+      dictFixing: false, dictFixFor: "", // Claude is checking what this Mac heard (Settings › Dictation › Claude), and the box it was asked for
       dictName: "",      // the dictation language's name, as the settings' options say it (for "Dictation in … isn't available")
       teams: null,       // the shell's last word on Teams: { open, chat, from, last, draft, shape? }
       layout: "automatic", // the shell's position setting: automatic, below, above, left, right
@@ -205,8 +210,10 @@
 
   // The words beside the mic: null when there is nothing to say.
   function dictLabel(st) {
+    if (st.dictFixing) return { kind: "prep", text: "Claude is checking what you said…" };
     if (st.dict === "on" && st.dictPrep) return { kind: "prep", text: "Getting dictation ready…" + (st.dictProgress == null ? "" : ` ${Math.round(st.dictProgress * 100)}%`) };
-    if (st.dict === "on") return { kind: "listening" };
+    if (st.dict === "on" && st.dictArmed) return { kind: "armed", text: `${st.dictPhraseSends ? "Sending" : "Translating"}… Keep talking to go on` };
+    if (st.dict === "on") { const p = sendPhrases(st.dictLocale)[0]; return { kind: "listening", text: `End with “${p}” to ${st.dictPhraseSends ? "send" : "translate"}` }; }
     if (st.dictNote) return { kind: "note", text: st.dictNote };
     if (st.dict === "denied") return { kind: "denied" };
     return null;
@@ -236,7 +243,7 @@
 
   // ---------------------------------------------------------------------------- what can be done
   // The Translate button and ⏎ ask the same thing.
-  const canTranslate = (st, f) => !!trim(f.es) && !BUSY.includes(st.phase) && !st.dictStopping;
+  const canTranslate = (st, f) => !!trim(f.es) && !BUSY.includes(st.phase) && !st.dictStopping && !st.dictFixing;
   // Adjust shows but is off on a translation this Mac made, or while the model is this Mac's: the title
   // says why. null when it isn't off for that reason (it may still be hidden: canAdjust).
   const adjustOff = (st, f, model) => (st.phase === "ready" && !!trim(f.en) && !mismatch(st) && (st.engine === "mac" || model === "mac") ? ADJUST_NEEDS : null);
@@ -244,7 +251,7 @@
   function canSend(st, f, afterDraft) {
     const t = st.teams;
     if (!(st.phase === "ready" || (afterDraft && st.phase === "draft"))) return false;
-    return !!trim(f.en) && !!(t && t.open && t.chat) && !shapeUnknown(st) && !shapeSeveral(st) && !mismatch(st) && st.access.accessibility !== false && !st.dictStopping;
+    return !!trim(f.en) && !!(t && t.open && t.chat) && !shapeUnknown(st) && !shapeSeveral(st) && !mismatch(st) && st.access.accessibility !== false && !st.dictStopping && !st.dictFixing;
   }
 
   // ---------------------------------------------------------------------------- translating and adjusting
@@ -371,7 +378,8 @@
     if (recent) Object.assign(n, recent);
     writeSpanish(n, ""); writeEnglish(n, "", []);
     const stop = st.dict === "on";
-    if (stop) n.dict = "off";
+    if (stop) { n.dict = "off"; n.dictArmed = false; }
+    n.dictFixing = false; n.dictFixFor = "";
     return { st: n, stopDictation: stop };
   }
 
@@ -445,18 +453,83 @@
   }
 
   // ---------------------------------------------------------------------------- dictation
+  // The closing phrase, as in Session Monitor: said as the last words, then a pause of 1.2 s, it stops
+  // the mic and translates, as ⏎ does; the English waits for your ⌘⏎. Only at the very end and as whole
+  // words, compared without case, accents or punctuation, so "hay que enviar el mensaje al equipo" never
+  // fires, and "enviar mensaje al equipo" doesn't while more words follow. It is in the dictation's language.
+  const SEND_PHRASES = { es: "enviar mensaje", en: "send message", pt: "enviar mensagem", fr: "envoyer le message", de: "Nachricht senden", it: "invia messaggio", nl: "bericht versturen" };
+  const ARM_MS = 1200;
+  const sendPhrases = locale => [SEND_PHRASES[String(locale || "es-MX").slice(0, 2).toLowerCase()] || SEND_PHRASES.es];
+  const normWords = t => String(t == null ? "" : t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  // The phrase the words end with, or null.
+  function phraseAtEnd(t, locale) {
+    const n = normWords(t);
+    return sendPhrases(locale).find(p => { const q = normWords(p); return n === q || n.endsWith(" " + q); }) || null;
+  }
+  // The words without the phrase at their end, and without the comma or dash before it; a sentence's
+  // own end (. ? !) stays.
+  function stripPhrase(t, locale) {
+    const hit = phraseAtEnd(t, locale);
+    if (!hit) return t;
+    const want = normWords(hit).split(" ");
+    const toks = [...String(t).matchAll(/\S+/g)];
+    const got = [];
+    for (let i = toks.length - 1; i >= 0; i--) {
+      got.unshift(...normWords(toks[i][0]).split(" ").filter(Boolean));
+      if (got.length >= want.length) return got.join(" ") === want.join(" ") ? String(t).slice(0, toks[i].index).replace(/[\s,;:—–-]+$/, "") : t;
+    }
+    return t;
+  }
+  // Armed or not, as the words end with the phrase or don't. The page runs the 1.2 s timer.
+  const dictArm = (st, on) => (st.dict === "on" && !!st.dictArmed !== !!on ? next(st, { dictArmed: !!on }) : st);
+  // The pause after the phrase ran out: the phrase comes out of the box now (and of the words still to come).
+  function dictByPhrase(st, f) {
+    if (st.dict !== "on") return st;
+    const n = next(st, { dictArmed: false, dictPhrase: true });
+    const text = stripPhrase(String(f.es == null ? "" : f.es), st.dictLocale);
+    if (text !== f.es) { writeSpanish(n, text); return typed(n, { es: text }); }
+    return n;
+  }
+
+  // Settings › Dictation › Claude: once the mic is off, what this Mac heard goes to Claude to fix the words
+  // it misheard. { st, words } (the words to send, without what was in the box before) or null: nothing to check.
+  function fixStart(st, f) {
+    const es = String(f.es == null ? "" : f.es), base = st.dictBase || "";
+    if (st.dict === "on" || st.dictStopping || st.dictFixing || !es.startsWith(base)) return null;
+    const words = es.slice(base.length).trim();
+    if (!words) return null;
+    return { st: next(st, { dictFixing: true, dictFixFor: es, dictNote: null }), words };
+  }
+  // Claude's answer: { text } puts the fixed words in place of what was heard; anything else keeps the Mac's
+  // words with a note. If you typed in the box meanwhile, yours stays and the answer is dropped.
+  function fixDone(st, f, m) {
+    if (!st.dictFixing) return st;
+    const n = next(st, { dictFixing: false, dictFixFor: "" });
+    if (String(f.es) !== st.dictFixFor) return n;
+    if (m && typeof m.text === "string" && m.text.trim()) {
+      const text = (st.dictBase || "") + m.text.trim();
+      if (text === f.es) return n;
+      writeSpanish(n, text);
+      return typed(n, { es: text });
+    }
+    n.dictNote = "Claude couldn't check the words. They're as this Mac heard them";
+    return n;
+  }
+
   // Start: { st, msg } or null. Dictation adds to what's in the box.
   // locale: the settings' dictation language (es-MX when there is none); name: its name, for the notes.
-  function dictStart(st, f, locale, name) {
-    if (st.dict !== "off" || st.dictStopping || ["sending", "translating", "adjusting"].includes(st.phase)) return null;
-    const n = next(st, { dictBase: trim(f.es) ? trim(f.es) + " " : "", dict: "on", dictPrep: false, dictProgress: null, dictNote: null, dictName: hasText(name) ? name : "" });
-    return { st: n, msg: { type: "dictation", action: "start", locale: hasText(locale) ? locale : "es-MX" } };
+  function dictStart(st, f, locale, name, sounds, phraseSends) {
+    if (st.dict !== "off" || st.dictStopping || st.dictFixing || ["sending", "translating", "adjusting"].includes(st.phase)) return null;
+    const loc = hasText(locale) ? locale : "es-MX";
+    const n = next(st, { dictBase: trim(f.es) ? trim(f.es) + " " : "", dict: "on", dictPrep: false, dictProgress: null, dictNote: null, dictName: hasText(name) ? name : "", dictLocale: loc, dictArmed: false, dictPhrase: false, dictPhraseSends: phraseSends === true });
+    return { st: n, msg: { type: "dictation", action: "start", locale: loc, sounds: sounds !== false } };
   }
   // Stop: listening ends now, and the last words may still come in (dictStopping) until dictFinish.
   // null when it wasn't listening, so whatever was to follow can run at once.
   function dictStop(st) {
     if (st.dict !== "on") return null;
-    return { st: next(st, { dict: "off", dictStopping: true }), msg: { type: "dictation", action: "stop" } };
+    // Stopped while armed: the phrase was your last words, so it comes out as when the pause runs out.
+    return { st: next(st, { dict: "off", dictStopping: true, dictArmed: false, dictPhrase: st.dictPhrase || st.dictArmed }), msg: { type: "dictation", action: "stop" } };
   }
   const dictFinish = st => next(st, { dictStopping: false });
   // What the shell says about dictation. { st, done }: done says the last words are in, so run what waited on them.
@@ -468,6 +541,10 @@
       if (st.dict !== "on") return { st, done: false };
       return { st: next(st, { dictPrep: true, dictProgress: typeof m.progress === "number" ? m.progress : st.dictProgress == null ? null : st.dictProgress }), done: false };
     }
+    // The microphone gave no sound, or didn't start: listening ends, and a note says why.
+    if (m.state === "silent" || m.state === "failed") {
+      return { st: next(st, { dict: "off", dictPrep: false, dictStopping: false, dictArmed: false, dictNote: m.state === "silent" ? "The microphone gives no sound. Check that it isn't muted" : "The microphone didn't start. Try again" }), done: !!st.dictStopping };
+    }
     if (m.state === "unavailable") {
       return { st: next(st, { dict: "off", dictPrep: false, dictStopping: false, dictNote: st.dictName ? `Dictation in ${st.dictName} isn't available on this Mac` : "Dictation isn't available on this Mac" }), done: false };
     }
@@ -476,12 +553,13 @@
     if (m.state === "on" && st.dict === "off" && !st.dictStopping) { n.dictBase = trim(f.es) ? trim(f.es) + " " : ""; n.dict = "on"; }
     // The text is the whole transcript so far: it replaces what dictation added.
     if (typeof m.text === "string" && (n.dict === "on" || n.dictStopping)) {
-      const text = n.dictBase + m.text;
+      const text = n.dictPhrase ? stripPhrase(n.dictBase + m.text, n.dictLocale) : n.dictBase + m.text;
       writeSpanish(n, text);
       n = typed(n, { es: text });
     }
     if (m.state === "off") {
       if (n.dict === "on") n.dict = "off";
+      n.dictArmed = false;
       if (st.dictStopping) return { st: n, done: true };
     }
     return { st: n, done: false };
@@ -502,7 +580,7 @@
     return { recent: [item].concat(list.filter(r => !(r.es === item.es && r.en === item.en))).slice(0, RECENT_MAX), recentId: id };
   }
   // Something is running that a restore would cut short: dictation, a translation, an adjust or a send.
-  const running = st => st.dict === "on" || st.dictStopping || ["translating", "adjusting", "sending"].includes(st.phase);
+  const running = st => st.dict === "on" || st.dictStopping || st.dictFixing || ["translating", "adjusting", "sending"].includes(st.phase);
   // ⌘Z brings back the newest only while both boxes are empty and nothing is running; anywhere else ⌘Z is the boxes' own undo.
   const canRestore = (st, f) => !!(st.recent && st.recent.length) && !trim(f.es) && !trim(f.en) && !running(st);
   // One comes back as it was: the written text and the reply in their boxes, phase ready, written for its chat
@@ -571,7 +649,7 @@
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
     sendStart, sendTimeout, sendDone,
-    dictStart, dictStop, dictFinish, onDictation,
+    dictStart, dictStop, dictFinish, onDictation, dictArm, dictByPhrase, fixStart, fixDone, phraseAtEnd, stripPhrase, sendPhrases, ARM_MS,
     shellTeams, shellAccess,
     RECENT_MAX, canRestore, restoreRecent, pickRecent, recentLabel, recentTitle, teamsChangedTitle, claudeChangedTitle,
   };

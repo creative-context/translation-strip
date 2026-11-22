@@ -5,10 +5,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { dirname } from "node:path";
 import { SETTINGS_FILE } from "./config";
 import { isDictation, isLanguage, MAX_LANGUAGES, MAX_NOTE } from "./languages";
-import { DEFAULT_SETTINGS, type Mode, type Model, type Settings } from "./state";
+import { DEFAULT_SETTINGS, type DictationEngine, type DictationPhrase, type Mode, type Model, type Settings } from "./state";
 
 export const MODELS: Model[] = ["haiku", "sonnet", "opus", "mac"];
 export const MODES: Mode[] = ["send", "leave"];
+export const DICTATION_ENGINES: DictationEngine[] = ["mac", "claude"];
+export const DICTATION_PHRASES: DictationPhrase[] = ["review", "send"];
 
 function readRaw(file = SETTINGS_FILE): Record<string, unknown> {
   try {
@@ -47,6 +49,9 @@ export function loadSettings(file = SETTINGS_FILE): Settings {
     languages: withTarget(listed, target),
     notes,
     dictation: isDictation(raw.dictation) ? raw.dictation : DEFAULT_SETTINGS.dictation,
+    dictationEngine: DICTATION_ENGINES.includes(raw.dictationEngine as DictationEngine) ? (raw.dictationEngine as DictationEngine) : DEFAULT_SETTINGS.dictationEngine,
+    dictationSounds: raw.dictationSounds !== false,
+    dictationPhrase: DICTATION_PHRASES.includes(raw.dictationPhrase as DictationPhrase) ? (raw.dictationPhrase as DictationPhrase) : DEFAULT_SETTINGS.dictationPhrase,
   };
 }
 
@@ -61,6 +66,9 @@ export type SettingsChange = {
   languages?: string[];
   notes?: Record<string, string>;
   dictation?: string;
+  dictationEngine?: DictationEngine;
+  dictationSounds?: boolean;
+  dictationPhrase?: DictationPhrase;
 };
 
 // Checks a POST's keys other than the paths against the rules, given the settings now. null: one
@@ -105,6 +113,18 @@ export function checkChange(b: Record<string, unknown>, now: Settings): Omit<Set
     if (!isDictation(b.dictation)) return null;
     c.dictation = b.dictation;
   }
+  if (b.dictationEngine !== undefined) {
+    if (!DICTATION_ENGINES.includes(b.dictationEngine as DictationEngine)) return null;
+    c.dictationEngine = b.dictationEngine as DictationEngine;
+  }
+  if (b.dictationSounds !== undefined) {
+    if (typeof b.dictationSounds !== "boolean") return null;
+    c.dictationSounds = b.dictationSounds;
+  }
+  if (b.dictationPhrase !== undefined) {
+    if (!DICTATION_PHRASES.includes(b.dictationPhrase as DictationPhrase)) return null;
+    c.dictationPhrase = b.dictationPhrase as DictationPhrase;
+  }
   if (c.target !== undefined || c.languages !== undefined) {
     const target = c.target ?? now.target;
     const languages = c.languages ?? now.languages;
@@ -127,7 +147,7 @@ export function checkChange(b: Record<string, unknown>, now: Settings): Omit<Set
 // The server is the only writer: the app's menu and Settings send their choices to POST /api/settings.
 export function saveSettings(change: SettingsChange, file = SETTINGS_FILE): Settings {
   const raw = readRaw(file);
-  for (const k of ["model", "mode", "target", "auto", "languages", "dictation"] as const) if (change[k] !== undefined) raw[k] = change[k];
+  for (const k of ["model", "mode", "target", "auto", "languages", "dictation", "dictationEngine", "dictationSounds", "dictationPhrase"] as const) if (change[k] !== undefined) raw[k] = change[k];
   if (change.notes !== undefined) {
     if (Object.keys(change.notes).length) raw.notes = change.notes;
     else delete raw.notes;

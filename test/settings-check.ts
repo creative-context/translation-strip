@@ -29,10 +29,10 @@ const DICTATION = [
   { id: "en-US", name: "English (US)" }, { id: "en-GB", name: "English (UK)" }, { id: "pt-BR", name: "Português (Brasil)" },
   { id: "pt-PT", name: "Português (Portugal)" }, { id: "fr-FR", name: "Français" }, { id: "de-DE", name: "Deutsch" }, { id: "it-IT", name: "Italiano" },
 ];
-type Settings = { model: string; mode: string; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string; files: { voiceGuide: string | null; linter: string | null } };
+type Settings = { model: string; mode: string; target: string; auto: boolean; languages: string[]; notes: Record<string, string>; dictation: string; dictationEngine: string; dictationSounds: boolean; dictationPhrase: string; files: { voiceGuide: string | null; linter: string | null } };
 const fresh = (): Settings => ({
   model: "haiku", mode: "send", target: "English", auto: false, languages: ["English", "Português"],
-  notes: { "Português": "Formal: o senhor, a senhora." }, dictation: "es-MX", files: { voiceGuide: "sample-voice.md", linter: null },
+  notes: { "Português": "Formal: o senhor, a senhora." }, dictation: "es-MX", dictationEngine: "mac", dictationSounds: true, dictationPhrase: "review", files: { voiceGuide: "sample-voice.md", linter: null },
 });
 let settings = fresh();
 let refuseNext = false; // the next POST /api/settings answers 400, as a server that refuses it
@@ -62,6 +62,9 @@ function apply(body: any): Settings | null {
         if (n.trim() === "") delete next.notes[l]; else next.notes[l] = n;
       }
     } else if (k === "dictation") { if (!DICTATION.some((d) => d.id === v)) return null; next.dictation = v as string; }
+    else if (k === "dictationEngine") { if (v !== "mac" && v !== "claude") return null; next.dictationEngine = v; }
+    else if (k === "dictationPhrase") { if (v !== "review" && v !== "send") return null; next.dictationPhrase = v; }
+    else if (k === "dictationSounds") { if (typeof v !== "boolean") return null; next.dictationSounds = v; }
     else if (k === "voiceGuide" || k === "linter") { if (typeof v !== "string") return null; next.files[k] = v ? basename(v) : null; }
     else if (k === "model" || k === "mode") { next[k] = v as string; }
     else return null;
@@ -420,6 +423,40 @@ check("Dictate in: every option, in its own name; a choice posts { dictation }",
   same(await posted(1), { dictation: "pt-BR" }, "body");
   same(await p.$eval("#dictation", (e: any) => e.value), "pt-BR", "shown");
   await shot(p, "12-dictation");
+});
+
+check("Words by: This Mac or Claude; a choice posts { dictationEngine }; with This Mac as the model, Claude is off", async () => {
+  const p = await open();
+  same(await p.$$eval("#dictationEngine option", (o: any[]) => o.map((x) => x.textContent)), ["This Mac", "Claude"], "options");
+  same(await p.$eval("#dictationEngine", (e: any) => e.value), "mac", "the default");
+  await p.selectOption("#dictationEngine", "claude");
+  same(await posted(1), { dictationEngine: "claude" }, "body");
+  await until(p, `document.getElementById("dictationEngine").value === "claude"`, "Claude shown");
+  await layout(p); await contrast(p);
+  await shot(p, "12b-dictation-claude");
+  settings.model = "mac"; settings.dictationEngine = "claude"; broadcast();
+  await until(p, `document.querySelector("#dictationEngine option[value=claude]").disabled`, "Claude off with This Mac's model");
+  same(await p.$eval("#dictationEngine", (e: any) => e.value), "mac", "shown as This Mac");
+  same(await p.textContent("#dictationEngine option[value=claude]"), "Claude (needs a Claude model)", "the reason");
+});
+
+check("After “enviar mensaje”: Review first by default, or Send right away; a choice posts { dictationPhrase }", async () => {
+  const p = await open();
+  same(await p.$$eval("#dictationPhrase option", (o: any[]) => o.map((x) => x.textContent)), ["Review first", "Send right away"], "options");
+  same(await p.$eval("#dictationPhrase", (e: any) => e.value), "review", "the default");
+  await p.selectOption("#dictationPhrase", "send");
+  same(await posted(1), { dictationPhrase: "send" }, "body");
+  await layout(p); await contrast(p);
+  await shot(p, "12d-dictation-phrase");
+});
+
+check("Sounds: on by default; turning it off posts { dictationSounds: false }", async () => {
+  const p = await open();
+  same(await p.$eval("#dictationSounds", (e: any) => e.checked), true, "on by default");
+  await p.click("#dictationSounds");
+  same(await posted(1), { dictationSounds: false }, "body");
+  await layout(p); await contrast(p);
+  await shot(p, "12c-dictation-sounds");
 });
 
 check("a refused change says so and puts back the server's value", async () => {

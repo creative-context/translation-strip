@@ -31,7 +31,7 @@ To paste, the app borrows the clipboard for a moment and puts back what was ther
 
 As you write, the app asks Apple's NaturalLanguage, on your Mac, which language your text is in, and shows the answer in the strip. The text goes nowhere else for this, and the app keeps neither the text nor the answer.
 
-The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in the language you chose in Settings (Mexican Spanish unless you pick another), and the audio never leaves it. The first time for each language, macOS downloads that model from Apple.
+The microphone listens only while you dictate. Apple's dictation model turns what you say into text on your Mac, in the language you chose in Settings (Mexican Spanish unless you pick another), and the audio never leaves it. The first time for each language, macOS downloads that model from Apple. If you set your own start and stop sounds, the app reads those two files to play them. The app reads the microphone's loudness to draw the five bars and to notice a silent microphone; it keeps none of it. With Settings › Dictation › Words by set to Claude, the words you dictated (never the audio) go to the translator's Claude Code session once the mic stops, to fix what was misheard, the same way your text goes when you translate. The log gets only how long that took.
 
 ## What it keeps
 
@@ -39,7 +39,7 @@ In the strip's memory only: your last five messages (what you wrote, the reply a
 
 In `~/.translation-strip`:
 
-- `settings.json`: the paths of your guide and linter, the model, what ⌘⏎ does, your target language, whether Auto is on, your languages, your notes for each language (the text you typed) and the dictation language. It holds no chat names and no per-chat languages.
+- `settings.json`: the paths of your guide and linter, the model, what ⌘⏎ does, your target language, whether Auto is on, your languages, your notes for each language (the text you typed), the dictation language, who writes down what you dictate (This Mac or Claude), what the closing phrase does and whether the mic's sounds are on. It holds no chat names and no per-chat languages.
 - `server.log`: when the server and the translator started, errors, and outcomes such as "send: not sent (mismatch)". Since 0.10.0 it also holds numbers about each send and each reply, to find what slows or breaks them: how many times the strip pasted, how long the paste and the whole send took, the text's length as a range (such as "100 to 499 chars"), whether it had a link, the mode, the engine and model, how long the reply took, its token counts as Claude Code reports them, the linter's error count, whether its fix was kept, dropped or not run, how many tries a reply took, which model answered when Opus was busy and Sonnet stood in, a marker when the reply was a question, the error the Mac stood in for when it replaced Claude, Teams' version, whether Teams was in front when a send began and how long it took to come forward and to empty its box, and whether Teams and Claude Code still have what the strip relies on. It never holds message text or chat names.
 - `translator/`: the hidden session's working folder. The app never reads anything back from it.
 

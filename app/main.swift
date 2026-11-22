@@ -146,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             if let text { m["text"] = text }
             self?.call("dictation", m)
         }
+        dictation.onLevel = { [weak self] level in self?.call("dictLevel", level) }
         dictation.onProgress = { [weak self] fraction in
             self?.call("dictation", ["state": "preparing", "progress": fraction])
         }
@@ -541,7 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         case "layout":
             if let l = (m["value"] as? String).flatMap(DockLayout.init(rawValue:)) { setLayout(l) }
         case "dictation":
-            if (m["action"] as? String) == "start" { dictation.start(locale: m["locale"] as? String) } else { dictation.stop() }
+            if (m["action"] as? String) == "start" { dictation.start(locale: m["locale"] as? String, sounds: m["sounds"] as? Bool ?? true) } else { dictation.stop() }
         case "open":
             open(m["what"] as? String ?? "")
         case "detect":

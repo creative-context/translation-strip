@@ -295,6 +295,29 @@ Decided while building (0.10.0):
 - The closing check in the system prompt (`src/protocol.ts`, CHECK) compares the reply with the user's text for meaning, not part by part: the translator works out what each idiom or filler stands for and says it as a native speaker would write it in a chat, keeping the user's order and sentences where they read naturally and changing a phrase or a sentence's shape only where a native speaker wouldn't say it that way. The add-nothing and drop-nothing rules after it are unchanged. Asked for because replies read too literal; "part by part" pulled toward the Spanish sentence shape.
 - A voice finding's tag (kind needs, the first finding's words) has a "Fix it" action (`fix-voice`) on a Claude reply: it runs an adjust whose note is the server's own fix note, "The user's voice guide rules this out, so change only it and keep everything else as it is: <findings>", so Undo works as after any adjust. Not on a reply the Mac made, which can't be adjusted.
 
+## The mic as Session Monitor's, and words by Claude (0.13.0)
+
+Asked on 2026-11-22: the mic button and its dictation as Session Monitor's, with its start and end sounds and its closing phrase; and a choice between this Mac and Claude for the words. This section adds to the ones above and wins where they differ.
+
+Shell (`app/Dictation.swift`):
+- The microphone is read with an `AVCaptureSession` on the default input device (16 kHz mono 16-bit), not an `AVAudioEngine`: an engine also runs the output device, and with a display or a virtual device as the output it won't start or hears nothing. Both recognizers take it: the Speech recognizer appends the sample buffers; the dictation model gets them converted to its format.
+- While listening, `dictLevel(<0..1>)` about 10 times a second: the loudness from -50 dB to 0, quick to rise, slow to fall.
+- `dictation({state})` gains `"silent"` (4 s with nothing above -90 dB and no words yet) and `"failed"` (the microphone didn't start); both end listening.
+- It stops by itself after 60 s, as a stop does.
+- The start message carries `sounds` (default true). With it, two notes going up (E5, A5) when listening starts and down when the mic goes off with your words, made as tones in memory, or the files named in the app's defaults `dictationStartSound` and `dictationStopSound`, as in Session Monitor. A silent or failed microphone plays none.
+- The log gets the time, the buffers, the loudest dB and the number of characters, never words.
+
+Page:
+- The mic is a 24 × 22 chip with the element radius, `#FFFFFF26` at rest, `#FFFFFF33` on hover, `#F7F8F8` with `--color-on-light` while listening, a 14 px icon.
+- The label while listening: five bars, then "**Listening** · End with “<phrase>” to translate", the hint giving way first. Reduce Motion keeps the bars still.
+- The closing phrase, by the dictation language: es "enviar mensaje", en "send message", pt "enviar mensagem", fr "envoyer le message", de "Nachricht senden", it "invia messaggio". At the very end of the words, as whole words, without case, accents or punctuation, it arms; after 1.2 s still armed ("Translating… Keep talking to go on") the phrase leaves the box with the comma or dash before it (a sentence's own . ? ! stays), the mic stops and it translates, as ⏎ does. With `dictationPhrase: "send"` the armed label says "Sending… Keep talking to go on", the hint "End with “<phrase>” to send", and once the reply is ready it sends as ⌘⏎ does (the settings' mode), unless the reply came with a notice, a stand-in tag or linter findings, or the box changed: then it waits. A stop while armed also leaves the phrase out. Esc drops it all.
+- Notes: silent "The microphone gives no sound. Check that it isn't muted"; failed "The microphone didn't start. Try again".
+
+Words by This Mac or Claude:
+- Settings: `dictationEngine` `"mac"` (default) or `"claude"`, `dictationPhrase` `"review"` (default) or `"send"`, and `dictationSounds` (default true), in Settings › Dictation as "Words by" (This Mac, Claude), "After “enviar mensaje”" (Review first, Send right away; asked the same day) and "Sounds". With `model: "mac"` the Claude option is off ("Claude (needs a Claude model)") and the page acts as This Mac.
+- With Claude, once the mic is off and the last words are in, the page posts `/api/fix { text: <the dictated words, without what the box held before>, locale }`. Meanwhile the label says "Claude is checking what you said…" and Translate and Send wait. `{ text }` replaces the dictated words; any error keeps them, with the note "Claude couldn't check the words. They're as this Mac heard them". Typing in the box meanwhile, or Esc, drops the answer. Then whatever waited (a translate) goes on.
+- Server: `/api/fix` is one translator request with `task: "fix"`, `target` the dictation locale's language (Español for es-*, and so on), `auto: false`, no linter, no stand-in. 400 `text` when empty; 409 `mac` with this Mac's model; 409 `busy`; the Claude errors as 503. The protocol's "fix" task: fix only what recognition misheard, keep the words, order and language, never translate, polish, apply the guide or answer; the closing check is skipped for it.
+
 ## Recent messages, the second paste's numbers and the update check (0.12.0)
 
 Chosen after the research's "next" group. This section adds to the ones above and wins where they differ.

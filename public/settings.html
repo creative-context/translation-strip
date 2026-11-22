@@ -99,7 +99,11 @@
       <h2 id="h-dict">Dictation</h2>
       <div class="box">
         <div class="row"><label class="k" for="dictation">Dictate in</label><select id="dictation"></select></div>
+        <div class="row"><label class="k" for="dictationEngine">Words by<small id="engineNote">With Claude, your reply model fixes what this Mac misheard.</small></label><select id="dictationEngine"></select></div>
+        <div class="row"><label class="k" for="dictationPhrase">After “enviar mensaje”<small>Say it at the end and pause. Send right away sends as ⌘⏎ does.</small></label><select id="dictationPhrase"></select></div>
+        <div class="row"><label class="k" for="dictationSounds">Sounds<small>Two soft notes when the mic starts and stops listening.</small></label><input type="checkbox" class="switch" id="dictationSounds"></div>
       </div>
+      <div class="note">The phrase is in the language you dictate in: “send message” in English. Review first translates and waits for you to send. Send right away translates and sends to the open chat, unless the reply has a tag to read first.</div>
     </section>
 
     <p class="status" id="status" role="status" aria-live="polite"></p>
@@ -220,6 +224,8 @@ function paint() {
     ...(others.length ? [{ label: full ? "Other languages (your list is full)" : "Other languages", items: others.map(l => ({ value: l, text: label(l), disabled: full })) }] : []),
   ], target);
   $("auto").checked = !!s.auto;
+  $("dictationSounds").checked = s.dictationSounds !== false;
+  fillSelect($("dictationPhrase"), [{ items: [{ value: "review", text: "Review first" }, { value: "send", text: "Send right away" }] }], s.dictationPhrase === "send" ? "send" : "review");
 
   // Voice guide: the file's name only; the paths never reach the page.
   const files = s.files || {};
@@ -240,6 +246,10 @@ function paint() {
   const items = dict.map(d => ({ value: d.id, text: d.name }));
   if (s.dictation && !dict.some(d => d.id === s.dictation)) items.unshift({ value: s.dictation, text: s.dictation });
   fillSelect($("dictation"), [{ items }], s.dictation || "es-MX");
+  // This Mac or Claude. Claude uses the reply model, so with This Mac as the model it can't, and says so.
+  const onMac = s.model === "mac";
+  fillSelect($("dictationEngine"), [{ items: [{ value: "mac", text: "This Mac" }, { value: "claude", text: onMac ? "Claude (needs a Claude model)" : "Claude", disabled: onMac }] }],
+    s.dictationEngine === "claude" && !onMac ? "claude" : "mac");
 }
 
 function drawLangs(mine, target, full) {
@@ -296,6 +306,9 @@ $("target").addEventListener("change", e => {
 });
 $("auto").addEventListener("change", e => save({ auto: e.target.checked }));
 $("dictation").addEventListener("change", e => save({ dictation: e.target.value }));
+$("dictationEngine").addEventListener("change", e => save({ dictationEngine: e.target.value }));
+$("dictationPhrase").addEventListener("change", e => save({ dictationPhrase: e.target.value }));
+$("dictationSounds").addEventListener("change", e => save({ dictationSounds: e.target.checked }));
 for (const b of document.querySelectorAll("[data-choose]")) b.addEventListener("click", () => post({ type: "choose", what: b.dataset.choose }));
 
 // Notes go as the whole object with the one language changed: an empty string removes it.
