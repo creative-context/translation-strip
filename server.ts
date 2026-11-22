@@ -8,6 +8,7 @@ import { lint } from "./src/lint";
 import { fixMacText, hintFor, MacHelper, type MacOutcome } from "./src/mac";
 import { isLanguage } from "./src/languages";
 import { answerFor, type Context, type Register, type Request as Ask } from "./src/protocol";
+import { addUsage, charsOf, claudeQuestionLine, claudeReplyLine, macReplyLine, type Fix } from "./src/reply-log";
 import { createServer } from "./src/server-kit";
 import { checkChange, fileThere, loadSettings, saveSettings, settingsStamp } from "./src/settings";
 import { bump, onBump, publicSettings, snapshot, state, type TranslatorError } from "./src/state";
@@ -103,11 +104,18 @@ function onMac(r: Ask): Promise<MacOutcome> {
   return mac.translate({ text: r.text, target: r.target, auto: r.auto, ...(r.context?.last ? { last: r.context.last } : {}), hint: hintFor(state.settings.dictation) });
 }
 
+// The one log line per answered request: numbers and fixed words, never a text (src/reply-log.ts).
+const replyLog = (line: string) => console.error(`${new Date().toISOString()} ${line}`);
+const errorCount = (findings: { level: string }[]) => findings.filter((f) => f.level === "error").length;
+// How long since the request reached the server.
+const since = (t0: number) => performance.now() - t0;
+
 // A reply from the helper: the two fixes on its text, then the linter, with no fix turn.
-async function macReply(r: Ask, m: Extract<MacOutcome, { ok: true }>, extra: Record<string, unknown> = {}) {
+async function macReply(r: Ask, m: Extract<MacOutcome, { ok: true }>, t0: number, extra: { fallback?: string; until?: string | null } = {}) {
   const text = fixMacText(r.text, m.text);
   const l = await lint(text, state.settings.linter);
   linterSeen(l.ok);
+  replyLog(macReplyLine({ ms: since(t0), chars: charsOf(text), lintErrors: errorCount(l.lint), standIn: extra.fallback }));
   return json({ text, language: m.language, from: m.from, lint: l.lint, engine: "mac", ...extra });
 }
 
@@ -117,13 +125,14 @@ const standInLog = (error: string) => console.error(`${new Date().toISOString()}
 const claudeError = (error: string, until?: string | null) => json(until ? { error, until } : { error }, 503);
 
 // A request, one at a time, start to finish. The state says busy all along, on the helper too.
-async function run(r: Ask) {
+// t0: when the request reached the server (performance.now()), for the log's time.
+async function run(r: Ask, t0: number) {
   if (r.task === "adjust" && state.settings.model === "mac") return json({ error: "mac" }, 409);
   if (working || translator.busy()) return json({ error: "busy" }, 409);
   working = true;
   translator.refresh();
   try {
-    return state.settings.model === "mac" ? await runMac(r) : await runClaude(r);
+    return state.settings.model === "mac" ? await runMac(r, t0) : await runClaude(r, t0);
   } finally {
     working = false;
     translator.refresh();
@@ -131,9 +140,9 @@ async function run(r: Ask) {
 }
 
 // The mac model: the helper, the fixes and the linter. It translates; it doesn't polish or adjust.
-async function runMac(r: Ask) {
+async function runMac(r: Ask, t0: number) {
   const m = await onMac(r);
-  if (m.ok) return macReply(r, m);
+  if (m.ok) return macReply(r, m, t0);
   if (m.error === "language") return json({ error: "language", source: m.source, language: m.language }, 503);
   return json({ error: m.error }, 503);
 }
@@ -145,13 +154,14 @@ async function runMac(r: Ask) {
 // names the errors, in the reply's own language (Auto off), so the fix keeps the language. The fix
 // is kept only when it has fewer errors; else the first reply goes back with its findings, as before.
 // Warnings are left alone (the guide says they depend on the message).
-async function runClaude(r: Ask) {
+async function runClaude(r: Ask, t0: number) {
+  const model = state.settings.model;
   const until = translator.limitUntil();
   if (r.task === "polish" && until && Date.parse(until) > clock() && mac.available()) {
     const m = await onMac(r);
     if (m.ok) {
       standInLog("limit");
-      return macReply(r, m, { fallback: "limit", until });
+      return macReply(r, m, t0, { fallback: "limit", until });
     }
     return claudeError("limit", until);
   }
@@ -161,28 +171,36 @@ async function runClaude(r: Ask) {
       const m = await onMac(r);
       if (m.ok) {
         standInLog(out.error);
-        return macReply(r, m, { fallback: out.error, ...(out.error === "limit" && out.until ? { until: out.until } : {}) });
+        return macReply(r, m, t0, { fallback: out.error, ...(out.error === "limit" && out.until ? { until: out.until } : {}) });
       }
     }
     return claudeError(out.error, out.until);
   }
-  if ("question" in out.reply) return json({ question: out.reply.question });
+  if ("question" in out.reply) {
+    replyLog(claudeQuestionLine({ model, ms: since(t0) }));
+    return json({ question: out.reply.question });
+  }
   const { language, from } = answerFor(out.reply, r);
   let text = out.reply.text;
   let l = await lint(text, state.settings.linter);
   linterSeen(l.ok);
   const errors = l.lint.filter((f) => f.level === "error");
+  let usage = out.usage ?? null;
+  let fix: Fix = "none";
   if (errors.length && !translator.busy()) {
     const note = `The user's voice guide rules this out, so change only it and keep everything else as it is: ${errors.map((f) => f.message).join(" / ")}`;
-    const fix = await translator.request({ task: "adjust", text: r.text, current: text, note, register: r.register, target: language, auto: false, ...(r.notes ? { notes: r.notes } : {}), ...(r.context ? { context: r.context } : {}) });
-    if (fix.ok && "text" in fix.reply) {
-      const l2 = await lint(fix.reply.text, state.settings.linter);
+    const fixed = await translator.request({ task: "adjust", text: r.text, current: text, note, register: r.register, target: language, auto: false, ...(r.notes ? { notes: r.notes } : {}), ...(r.context ? { context: r.context } : {}) });
+    usage = addUsage(usage, fixed.usage);
+    fix = "dropped";
+    if (fixed.ok && "text" in fixed.reply) {
+      const l2 = await lint(fixed.reply.text, state.settings.linter);
       const left = l2.lint.filter((f) => f.level === "error").length;
       const kept = left < errors.length;
-      if (kept) { text = fix.reply.text; l = l2; }
+      if (kept) { text = fixed.reply.text; l = l2; fix = "kept"; }
       fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; a fix ${kept ? `kept (${left} left)` : "didn't help, the first reply goes back"}`);
     } else fixLog(`${errors.length} linter error${errors.length === 1 ? "" : "s"} in the reply; the fix got no message, the first reply goes back`);
   }
+  replyLog(claudeReplyLine({ model, ms: since(t0), usage, lintErrors: errorCount(l.lint), fix, tries: out.tries ?? 1, answeredBy: out.answeredBy }));
   return json({ text, language, from, lint: l.lint, engine: "claude" });
 }
 // Counts only, never the text.
@@ -193,6 +211,7 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
   if (post && !postAllowed(req)) return json({ error: "forbidden" }, 403);
   if (!url.pathname.startsWith("/api/")) return undefined;
 
+  const t0 = performance.now(); // the request reached the server
   if (url.pathname === "/api/translate" && post) {
     const b = await body(req);
     const text = str(b?.text).trim();
@@ -200,7 +219,7 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     // target, when given, is a one-time override: this request writes in it, with Auto off.
     if (b.target !== undefined && !isLanguage(b.target)) return json({ error: "target" }, 400);
     const lang = b.target !== undefined ? { target: b.target as string, auto: false } : { target: state.settings.target, auto: state.settings.auto };
-    return run({ task: "polish", text, register: register(b.register), ...lang, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) });
+    return run({ task: "polish", text, register: register(b.register), ...lang, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
   }
 
   if (url.pathname === "/api/adjust" && post) {
@@ -211,7 +230,7 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     if (!current || !note) return json({ error: "text" }, 400);
     // An adjust keeps the current text's language: the target is that language, Auto off.
     const language = str(b?.language, 40).trim() || state.settings.target;
-    return run({ task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) });
+    return run({ task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
   }
 
   if (url.pathname === "/api/settings" && post) {

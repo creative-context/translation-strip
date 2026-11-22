@@ -33,7 +33,7 @@
       err: null,         // { kind, until, what, source?, language? } when phase is "error"
       engine: "",        // what wrote the translation on show: "claude", "mac" (this Mac's Translation), or "" (typed, or none yet)
       fallback: null,    // { kind, until } when this Mac translated it because Claude couldn't (the Claude error)
-      notice: null,      // a tag over a ready translation: { kind, text, actions, env? }
+      notice: null,      // a tag over a ready translation: { kind, text, actions, env?, title? }
       sendMode: "send", sentAt: "", sentTo: "", lastText: "", leftover: null,
       chatFor: "",       // the chat the English was written for: what Teams showed when it was asked for
       req: 0,            // bumps whenever an answer in flight stops mattering
@@ -43,6 +43,8 @@
       teams: null,       // the shell's last word on Teams: { open, chat, from, last, draft, shape? }
       layout: "automatic", // the shell's position setting: automatic, below, above, left, right
       access: { accessibility: null, microphone: "unknown" },
+      recent: [],        // the last messages, newest first (in memory only: a reload or quit forgets them): see "recent messages"
+      recentId: 0,       // the next one's id
     };
   }
 
@@ -144,7 +146,7 @@
     else if (p === "stale") tag("error", "Translation out of date");
     else if (mismatch(st)) { tag("error", `Written for ${st.chatFor}`); v.state = "written"; }
     else if (p === "draft") tag("needs", "Teams has a draft", [{ act: "add", label: "Add after draft" }, { act: "cancel", label: "Cancel" }]);
-    else if (st.notice) { tag(st.notice.kind, st.notice.text, st.notice.actions || []); if (st.notice.kind === "error") v.state = "error"; }
+    else if (st.notice) { tag(st.notice.kind, st.notice.text, st.notice.actions || []); if (st.notice.title) v.tag.title = st.notice.title; if (st.notice.kind === "error") v.state = "error"; }
     // This Mac's model needs no guide; when its helper can't run, an empty strip says so.
     else if (p === "idle" && model === "mac" && tr.status === "error" && tr.error === "mac") { const e = errorView("mac"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "idle" && model !== "mac" && tr.guide === "missing") { const e = errorView("guide"); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
@@ -153,12 +155,43 @@
     else if (shapeUnknown(st)) tag("error", "Can't find Teams' message box");
     else if (shapeSeveral(st)) tag("needs", "Click the box in Teams first");
     else if (t && t.open && !t.chat) tag("idle", "No chat open in Teams");
+    // The update checks (0.12.0), while idle: Teams moved something the strip reads, or Claude Code dropped an
+    // option the translator passes. Orange, like the other things that need you; neither blocks anything.
+    else if (p === "idle" && t && t.open && t.check === "changed") { tag("needs", "Teams changed. Sending may fail"); v.tag.title = teamsChangedTitle(t.missing); }
+    else if (p === "idle" && model !== "mac" && tr.check === "changed") { tag("needs", "Claude Code changed. The strip may fail"); v.tag.title = claudeChangedTitle(tr.missing); }
     // This Mac stood in for Claude: the tag takes the notice's place, and voice findings join its title.
-    else if (p === "ready" && st.fallback) { tag("info", "Translated on this Mac"); v.tag.title = [fallbackTitle(st.fallback)].concat(st.lint.map(f => f.message)).join("\n"); }
-    else if (p === "ready" && st.lint.length) { tag("needs", st.lint[0].message); v.tag.title = st.lint.map(f => f.message).join("\n"); }
+    // "Try Claude again" asks for the same text again, as a normal request; not after the plan limit
+    // (the server goes straight to the Mac while it lasts), nor once the Mac is the model chosen.
+    else if (p === "ready" && st.fallback) {
+      tag("info", "Translated on this Mac", st.fallback.kind !== "limit" && model !== "mac" ? [{ act: "retry-claude", label: "Try Claude again" }] : []);
+      v.tag.title = [fallbackTitle(st.fallback)].concat(st.lint.map(f => f.message)).join("\n");
+    }
+    // A voice finding: "Fix it" asks for an adjust whose note names the findings, as the server's own
+    // fix does for errors; not on a reply the Mac made, which can't be adjusted.
+    else if (p === "ready" && st.lint.length) {
+      tag("needs", st.lint[0].message, st.engine !== "mac" && model !== "mac" ? [{ act: "fix-voice", label: "Fix it" }] : []);
+      v.tag.title = st.lint.map(f => f.message).join("\n");
+    }
     else if (p === "ready" && st.adjusted) tag("idle", "Adjusted");
     if (p === "ready" && st.adjusted) v.actions = v.actions.concat([{ act: "undo", label: "Undo" }]);
     return v;
+  }
+
+  // The update checks' titles: what moved, in words. missing: the shell's anchors ("box", "list", "title"), or the
+  // flags Claude Code no longer names; with none given, the title says it without the list.
+  const ANCHORS = { box: "the message box", list: "the message list", title: "the chat title" };
+  function inWords(list) {
+    const l = list.filter(Boolean);
+    return l.length <= 1 ? l.join("") : l.length === 2 ? `${l[0]} and ${l[1]}` : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+  }
+  function teamsChangedTitle(missing) {
+    const what = inWords((Array.isArray(missing) ? missing : []).map(m => ANCHORS[m] || (hasText(m) ? m : "")));
+    return `This version of Teams moved something the strip reads${what ? `: ${what}` : ""}. Sends may stop; the strip needs an update.`;
+  }
+  function claudeChangedTitle(missing) {
+    const flags = inWords((Array.isArray(missing) ? missing : []).filter(hasText));
+    return flags ? `This version of Claude Code lacks ${flags}, which the strip passes. Translations may fail; the strip needs an update.`
+      : "This version of Claude Code lacks an option the strip passes. Translations may fail; the strip needs an update.";
   }
 
   // The value of the strip's data-teams: what the shell said about Teams, as the page's styles know it.
@@ -194,6 +227,11 @@
     else title = other ? click.trim() : "Your target language.";
     return { auto: st.langAuto || st.from === "chat", name: st.language, title, other };
   }
+  // A language button that does nothing: no "Auto · ", and the reply is in the target, so a click
+  // can't write it in another. In a short footer it leaves before the notice's words shorten.
+  function langInert(st, target) { const lv = langView(st, target); return !!lv && !lv.auto && !lv.other; }
+  // The empty reply box says what it takes: the target, or what you type there sent as is.
+  const enPlaceholder = target => (hasText(target) ? target : "English");
   const canRetarget = (st, f, target) => st.phase === "ready" && !!st.language && !!target && st.language !== target && canTranslate(st, f);
 
   // ---------------------------------------------------------------------------- what can be done
@@ -323,9 +361,14 @@
   // "Sent" (or "Left in Teams") has been up for a few seconds: back to an empty strip.
   const fadeDone = st => (st.phase === "sent" || st.phase === "leave" ? next(st, { phase: "idle" }) : st);
 
-  // Esc: everything back to the start. { st, stopDictation }.
-  function clearAll(st) {
+  // Esc: everything back to the start. { st, stopDictation }. A strip with a reply keeps it in the recent
+  // messages first (what the boxes hold: f, or the state's own text when the page doesn't say); now is the time.
+  function clearAll(st, f, now) {
+    f = f || { es: st.es, en: st.en };
+    const recent = RECENT_PHASES.includes(st.phase) && trim(f.en)
+      ? keepRecent(st, { es: trim(f.es), en: trim(f.en), chat: st.chatFor, at: now, how: "cleared" }) : null;
     const n = next(st, { req: st.req + 1, es: "", prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, phase: "idle", chatFor: "", dictStopping: false, language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null });
+    if (recent) Object.assign(n, recent);
     writeSpanish(n, ""); writeEnglish(n, "", []);
     const stop = st.dict === "on";
     if (stop) n.dict = "off";
@@ -358,7 +401,8 @@
       // The shell answers ok only once the message shows in the chat (or sits in Teams' box, in
       // Put in Teams mode): then both boxes empty for the next message, and "Sent · time" stays in the
       // footer. Until then, and on any failure, the English stays here.
-      const n = next(st, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
+      const n = next(st, keepRecent(st, { es: st.es, en: st.lastText, chat: st.sentTo || st.chatFor, at: now, how: st.sendMode === "leave" ? "leave" : "sent" }));
+      Object.assign(n, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
       writeEnglish(n, "", []); writeSpanish(n, "");
       return n;
     }
@@ -382,6 +426,9 @@
       // Teams emptied its box but the message never showed in the chat: the English stays here, so
       // nothing is lost. It may still show late, so the notice says to look before sending again.
       case "not-posted": n.notice = { kind: "error", text: "Not in the chat. Check it" }; break;
+      // Teams emptied its box after Return, but the chat's message list couldn't be read to see the
+      // message there: maybe sent, maybe not. The English stays, with no button, so nothing goes twice.
+      case "unconfirmed": n.notice = { kind: "error", text: "Not confirmed. Check the chat", title: "Teams emptied its box, but the strip couldn't see the chat to check the message is there." }; break;
       // Teams emptied its box after the paste, twice, before Return: nothing went out, the English stays.
       case "cleared": n.notice = { kind: "error", text: "Teams cleared it. Not sent" }; break;
       // The box never changed after the paste: nothing is in it.
@@ -440,6 +487,70 @@
     return { st: n, done: false };
   }
 
+  // ---------------------------------------------------------------------------- recent messages (0.12.0)
+  // The last 5 messages, newest first, in the page's memory only: nothing goes to the server, the shell, the
+  // disk or the log, and a reload or quit forgets them. One is kept when a send is confirmed (Sent or Left in
+  // Teams) and when Esc clears a strip that had a reply. Each is what was written, the reply, its language and
+  // how it was chosen, the chat it was written for, the time, and how it ended (sent, leave or cleared).
+  const RECENT_MAX = 5;
+  const RECENT_PHASES = ["ready", "draft", "stale", "adjusting"];   // the phases that show a reply Esc would clear
+  // The patch that keeps one: { recent, recentId }. The same message again moves to the front instead of showing twice.
+  function keepRecent(st, m) {
+    const list = Array.isArray(st.recent) ? st.recent : [], id = (st.recentId || 0) + 1;
+    const item = { id, es: m.es || "", en: m.en || "", language: st.language || "", from: st.from || "", langAuto: !!st.langAuto, langWho: st.langWho || "",
+      chat: m.chat || "", at: m.at || "", how: m.how };
+    return { recent: [item].concat(list.filter(r => !(r.es === item.es && r.en === item.en))).slice(0, RECENT_MAX), recentId: id };
+  }
+  // Something is running that a restore would cut short: dictation, a translation, an adjust or a send.
+  const running = st => st.dict === "on" || st.dictStopping || ["translating", "adjusting", "sending"].includes(st.phase);
+  // ⌘Z brings back the newest only while both boxes are empty and nothing is running; anywhere else ⌘Z is the boxes' own undo.
+  const canRestore = (st, f) => !!(st.recent && st.recent.length) && !trim(f.es) && !trim(f.en) && !running(st);
+  // One comes back as it was: the written text and the reply in their boxes, phase ready, written for its chat
+  // (so "Written for <chat>" shows when Teams has another chat open). It leaves the list.
+  function bringBack(st, item) {
+    // A message kept with no reply (written text a Recent click set aside) comes back as text to translate.
+    const reply = !!trim(item.en);
+    const n = next(st, { req: st.req + 1, recent: st.recent.filter(r => r.id !== item.id), phase: reply ? "ready" : "idle", es: item.es, chatFor: reply ? item.chat : "",
+      language: item.language, from: item.from, langAuto: item.langAuto, langWho: item.langWho, once: "", onceFor: "", prevLang: null,
+      prev: "", prevLint: [], notice: null, err: null, adjusted: false, adjustOpen: false, engine: "", fallback: null, leftover: null });
+    writeSpanish(n, item.es); writeEnglish(n, item.en, []);
+    return n;
+  }
+  // ⌘Z: the newest, or null when ⌘Z is the boxes' own undo.
+  function restoreRecent(st, f) {
+    return canRestore(st, f) ? bringBack(st, st.recent[0]) : null;
+  }
+  // A click on one in the menu's Recent row: that one, the same way. The menu is a deliberate choice, so it works
+  // with text in the boxes too: what they hold is cleared as Esc clears it, and kept in the list first, with its
+  // reply or, written text with none, on its own, so nothing typed is lost.
+  // null while something is running, or when the id isn't in the list. now: the time, for the one kept.
+  function pickRecent(st, f, id, now) {
+    const item = (st.recent || []).find(r => r.id === id);
+    if (!item || running(st)) return null;
+    let base = next(st, { recent: st.recent.filter(r => r.id !== id) });
+    if (trim(f.es) || trim(f.en)) {
+      if (!RECENT_PHASES.includes(st.phase) || !trim(f.en)) base = next(base, keepRecent(base, { es: f.es, en: f.en, chat: (st.teams && st.teams.chat) || "", at: now, how: "cleared" }));
+      base = clearAll(base, f, now).st;
+    }
+    return bringBack(base, item);
+  }
+  // A menu button's words: the reply's first words, about 24 characters, then "…" (the written text when there's no reply).
+  function recentLabel(item) {
+    const text = String((item && (item.en || item.es)) || "").replace(/\s+/g, " ").trim();
+    if (text.length <= 24) return text;
+    let cut = text.slice(0, 24);
+    const sp = cut.lastIndexOf(" ");
+    if (sp >= 12) cut = cut.slice(0, sp);
+    return cut.replace(/[\s.,;:!?¿¡-]+$/, "") + "…";
+  }
+  // Its title: when, and where it went.
+  function recentTitle(item) {
+    const at = hasText(item.at) ? ` at ${item.at}` : "", to = hasText(item.chat) ? item.chat : "";
+    if (item.how === "sent") return to ? `Sent to ${to}${at}` : `Sent${at}`;
+    if (item.how === "leave") return to ? `Left in Teams for ${to}${at}` : `Left in Teams${at}`;
+    return `Cleared${at}`;
+  }
+
   // ---------------------------------------------------------------------------- what the shell says
   const shellTeams = (st, m) => next(st, { teams: m && typeof m === "object" ? m : null, notice: st.notice && st.notice.env ? null : st.notice });
   // The position setting, as the shell says it (an unknown value keeps the one before).
@@ -455,13 +566,14 @@
   }
 
   const api = {
-    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, canRetarget, untilText, clock,
+    create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, langInert, enPlaceholder, canRetarget, untilText, clock,
     canTranslate, canAdjust, adjustOff, canSend, toneOff, fallbackWhy, ADJUST_NEEDS, TONE_NEEDS,
     translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
     sendStart, sendTimeout, sendDone,
     dictStart, dictStop, dictFinish, onDictation,
     shellTeams, shellAccess,
+    RECENT_MAX, canRestore, restoreRecent, pickRecent, recentLabel, recentTitle, teamsChangedTitle, claudeChangedTitle,
   };
   root.StripState = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

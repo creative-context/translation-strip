@@ -137,13 +137,77 @@ struct TeamsContext: Equatable {
     var last: String?
     var draft: Bool
     var shape = "ok" // "unknown": a Teams window whose message box can't be found; "several": more than one box (a channel with a reply open) and none has the cursor
+    var check: String? = nil // the update check (TeamsCheck), once this Teams process was checked: "ok" or "changed"; nil before
+    var missing: [String] = [] // with "changed": what's missing, in words ("message box", "message list", "chat title")
 
     static let closed = TeamsContext(open: false, chat: nil, from: nil, last: nil, draft: false)
     static let noChat = TeamsContext(open: true, chat: nil, from: nil, last: nil, draft: false)
 
     var page: [String: Any] {
-        ["open": open, "chat": chat ?? NSNull(), "from": from ?? NSNull(), "last": last ?? NSNull(), "draft": draft, "shape": shape]
+        var p: [String: Any] = ["open": open, "chat": chat ?? NSNull(), "from": from ?? NSNull(), "last": last ?? NSNull(), "draft": draft, "shape": shape,
+                                "check": check ?? NSNull()]
+        if check != nil { p["missing"] = missing }
+        return p
     }
+}
+
+// The update check: once per Teams process, when Teams shows a chat window with its tree up, whether
+// the anchors the send relies on are still there: the message box (TeamsShape.boxIDPrefix), the message
+// list (TeamsShape.listID) and a chat title it can read (Teams.chatName). Pure, so the Swift check runs
+// it on made-up trees. It blocks nothing: the log and the page say it.
+enum TeamsCheck {
+    struct Anchors: Equatable {
+        var box: Bool
+        var list: Bool
+        var title: Bool
+        var ok: Bool { box && list && title }
+        // What's missing, in the page's words.
+        var missing: [String] {
+            [(box, "message box"), (list, "message list"), (title, "chat title")].filter { !$0.0 }.map(\.1)
+        }
+    }
+
+    // A look that shows something missing waits: Teams may still be building the view. It's the
+    // answer once it has held this long, over this many looks; one with everything there answers at once.
+    struct Pending: Equatable {
+        var since: TimeInterval
+        var looks: Int
+    }
+    static let settle: TimeInterval = 10
+    static let looks = 3
+    static let walkEvery: TimeInterval = 2 // while waiting, how often the window is walked again for the check
+
+    // What one look at a window shows. nil when it can't count: the page's tree isn't up (no element
+    // answered with a DOM id) or the window shows no chat by any of the three (another view, such as the
+    // calendar).
+    static func anchors(title: String, boxes: Int, hasList: Bool, domIDs: Int) -> Anchors? {
+        let a = Anchors(box: boxes > 0, list: hasList, title: Teams.chatName(title) != nil)
+        guard domIDs > 0, a.box || a.list || a.title else { return nil }
+        return a
+    }
+
+    static func anchors<E>(title: String, found: TeamsScan.Found<E>) -> Anchors? {
+        anchors(title: title, boxes: found.boxes, hasList: found.list != nil, domIDs: found.domIDs)
+    }
+
+    // One look: the new wait and, when the check is answered, its answer. A look that can't count
+    // (nil) ends a wait, so a view switched away from starts over.
+    static func step(_ pending: Pending?, _ seen: Anchors?, now: TimeInterval) -> (pending: Pending?, answer: Anchors?) {
+        guard let seen else { return (nil, nil) }
+        if seen.ok { return (nil, seen) }
+        var p = pending ?? Pending(since: now, looks: 0)
+        p.looks += 1
+        if p.looks >= looks, now - p.since >= settle { return (nil, seen) }
+        return (p, nil)
+    }
+
+    // The log's line (the log adds "app: ").
+    static func line(_ a: Anchors) -> String {
+        func w(_ b: Bool) -> String { b ? "ok" : "missing" }
+        return "Teams check: box \(w(a.box)), list \(w(a.list)), title \(w(a.title))"
+    }
+
+    static func value(_ a: Anchors) -> String { a.ok ? "ok" : "changed" }
 }
 
 // Where Teams' main window is (top-left origin, as Accessibility and the window list give
@@ -151,11 +215,35 @@ struct TeamsContext: Equatable {
 struct TeamsWindow: Equatable {
     var frame: CGRect
     var onScreen: Bool
+    var id: CGWindowID? = nil // its number in the window list, so the strip can be ordered just above it
 }
 
 enum Teams {
     static func running() -> NSRunningApplication? {
         NSRunningApplication.runningApplications(withBundleIdentifier: TeamsShape.bundleID).first { !$0.isTerminated }
+    }
+
+    // The Teams bundle's short version, read from its Info.plist on disk each time (Bundle caches by
+    // path, so an update in place would read as the old version). nil when it can't be read.
+    static func version(of teams: NSRunningApplication) -> String? {
+        guard let url = teams.bundleURL?.appendingPathComponent("Contents/Info.plist") else { return nil }
+        return NSDictionary(contentsOf: url)?["CFBundleShortVersionString"] as? String
+    }
+
+    // The log's "app: Teams <version>" line: when the shell first finds Teams, and again when a new
+    // Teams process has another version; nil when it's the version already logged. A version that
+    // can't be read is "unknown"; one with anything but letters, digits, dots, dashes and spaces, or
+    // longer than 40 characters, is cut to what fits.
+    static func versionShown(_ version: String?) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".- "))
+        let clean = String(String.UnicodeScalarView((version ?? "").unicodeScalars.filter { allowed.contains($0) && $0.isASCII }))
+            .trimmingCharacters(in: .whitespaces)
+        return clean.isEmpty ? "unknown" : String(clean.prefix(40))
+    }
+
+    static func versionLine(_ version: String?, logged: String?) -> String? {
+        let shown = versionShown(version)
+        return shown == logged ? nil : "Teams \(shown)" // the log adds "app: "
     }
 
     // The largest normal window that isn't minimized, with its frame.
@@ -214,14 +302,15 @@ enum Teams {
     // there; without it (first run), the largest window in the window list stands in.
     // nil: no window (minimized, or none open).
     static func window(of teams: NSRunningApplication, app: AXUIElement?) -> TeamsWindow? {
-        let shown = listedWindows(pid: teams.processIdentifier, onScreenOnly: true).map(\.frame)
+        let shown = listedWindows(pid: teams.processIdentifier, onScreenOnly: true)
         if let app, AXIsProcessTrusted() {
             guard let main = mainWindow(app) else { return nil }
-            let visible = !teams.isHidden && shown.contains { sameFrame($0, main.frame) }
-            return TeamsWindow(frame: main.frame, onScreen: visible)
+            let match = shown.first { sameFrame($0.frame, main.frame) }
+            return TeamsWindow(frame: main.frame, onScreen: !teams.isHidden && match != nil, id: match?.id)
         }
-        guard let largest = shown.filter({ $0.width > 400 && $0.height > 300 }).max(by: { $0.width * $0.height < $1.width * $1.height }) else { return nil }
-        return TeamsWindow(frame: largest, onScreen: !teams.isHidden)
+        guard let largest = shown.filter({ $0.frame.width > 400 && $0.frame.height > 300 })
+            .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else { return nil }
+        return TeamsWindow(frame: largest.frame, onScreen: !teams.isHidden, id: largest.id)
     }
 
     // "Chat | <chat name> | <org> | <account>": the chat's name. Any other title (another view,
@@ -335,6 +424,7 @@ enum TeamsScan {
         var list: E?
         var nodes = 0
         var boxes = 0 // message boxes in the window (a channel with a reply open has two)
+        var domIDs = 0 // elements that answered with a DOM id: 0 while Teams' page tree isn't up
         var several: Bool { boxes > 1 && box == nil } // more than one and none has the cursor
     }
 
@@ -353,6 +443,7 @@ enum TeamsScan {
             let v = r.attrs(e, [kAXRoleAttribute, TeamsShape.domID, kAXDescriptionAttribute, kAXChildrenAttribute, kAXFocusedAttribute])
             let role = v[0] as? String ?? ""
             let id = v[1] as? String ?? ""
+            if !id.isEmpty { found.domIDs += 1 }
             if role == TeamsShape.boxRole, id.hasPrefix(TeamsShape.boxIDPrefix) {
                 found.boxes += 1
                 let one = (box: e, placeholder: (v[2] as? String).flatMap { $0.isEmpty ? nil : $0 })
@@ -477,12 +568,18 @@ final class TeamsReader: @unchecked Sendable {
     private(set) var readMs = 0.0 // how long the last read took
     private(set) var walkMs = 0.0 // how long the last search for the box and the list took
     private(set) var nodes = 0 // elements the last search looked at
+    private(set) var domIDs = 0 // elements the last search found with a DOM id
+    // The update check (TeamsCheck), once per Teams process: its answer, and the wait before one.
+    private(set) var checked: TeamsCheck.Anchors?
+    private var checkPending: TeamsCheck.Pending?
+    private var nextCheckWalk = Date.distantPast
 
     var isSelfChat: Bool { Teams.isSelfChat(title) }
 
     func reset() {
         pid = 0; app = nil
         unknownLogged = []
+        checked = nil; checkPending = nil; nextCheckWalk = .distantPast
         forget()
     }
 
@@ -515,7 +612,17 @@ final class TeamsReader: @unchecked Sendable {
         composer.flatMap { TeamsScan.boxValue($0, live) }.map { Teams.boxText($0, placeholder: placeholder) }
     }
 
+    // What the page is told, with the update check's answer once there is one.
     func read() -> TeamsContext {
+        var context = readNow()
+        if let a = checked {
+            context.check = TeamsCheck.value(a)
+            context.missing = a.missing
+        }
+        return context
+    }
+
+    private func readNow() -> TeamsContext {
         let start = DispatchTime.now()
         defer { readMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6 }
         guard AXIsProcessTrusted() else { return Teams.running() == nil ? .closed : .noChat }
@@ -550,7 +657,28 @@ final class TeamsReader: @unchecked Sendable {
                 log("teams: no message box in Teams' window after \(nodes) elements (Teams' shape changed?)")
             }
         }
+        checkAnchors(main.element)
         return context
+    }
+
+    // One look for the update check, until this Teams process has its answer. The reader's own last walk
+    // counts when it shows all three or can't count; when it shows something missing, it may be old (the
+    // reader walks again only while the box is missing or there are several), so the check walks the
+    // window itself, every few seconds, and only those walks count. Nothing the reader holds changes.
+    private func checkAnchors(_ window: AXUIElement) {
+        guard checked == nil, pid != 0 else { return }
+        var seen = TeamsCheck.anchors(title: title, boxes: boxes, hasList: messages != nil, domIDs: domIDs)
+        if let s = seen, !s.ok {
+            guard Date() >= nextCheckWalk else { return }
+            nextCheckWalk = Date().addingTimeInterval(TeamsCheck.walkEvery)
+            seen = TeamsCheck.anchors(title: title, found: TeamsScan.find(in: window, live))
+        }
+        let (pending, answer) = TeamsCheck.step(checkPending, seen, now: ProcessInfo.processInfo.systemUptime)
+        checkPending = pending
+        if let answer {
+            checked = answer
+            log(TeamsCheck.line(answer))
+        }
     }
 
     // One walk of the window for the message box and the message list.
@@ -564,6 +692,7 @@ final class TeamsReader: @unchecked Sendable {
         several = found.several
         lastKey = nil
         nodes = found.nodes
+        domIDs = found.domIDs
         walkMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6
     }
 
@@ -625,7 +754,7 @@ final class TeamsFollower: @unchecked Sendable {
         let stale = observer == nil && Date().timeIntervalSince(lastAX) > Self.refreshWithoutObserver
         if !ax, !stale, let id = windowID {
             if let w = Teams.listedWindow(id, pid: pid) {
-                return TeamsWindow(frame: w.frame, onScreen: w.onScreen && !teams.isHidden)
+                return TeamsWindow(frame: w.frame, onScreen: w.onScreen && !teams.isHidden, id: id)
             }
             windowID = nil // closed: ask Accessibility
         }
@@ -633,14 +762,14 @@ final class TeamsFollower: @unchecked Sendable {
         lastAX = Date()
         guard let main = Teams.mainWindow(app) else {
             // Minimized or on its way out: keep following it while the window list still has it.
-            if let id = windowID, let w = Teams.listedWindow(id, pid: pid) { return TeamsWindow(frame: w.frame, onScreen: false) }
+            if let id = windowID, let w = Teams.listedWindow(id, pid: pid) { return TeamsWindow(frame: w.frame, onScreen: false, id: id) }
             windowID = nil
             return nil
         }
         let all = Teams.listedWindows(pid: pid, onScreenOnly: false)
         let match = all.first { Teams.sameFrame($0.frame, main.frame) && $0.onScreen } ?? all.first { Teams.sameFrame($0.frame, main.frame) }
         windowID = match?.id // nil: ambiguous, so Accessibility again next time
-        return TeamsWindow(frame: main.frame, onScreen: !teams.isHidden && (match?.onScreen ?? false))
+        return TeamsWindow(frame: main.frame, onScreen: !teams.isHidden && (match?.onScreen ?? false), id: match?.id)
     }
 
     // An Accessibility observer on Teams: its windows moving, resizing, minimizing and coming

@@ -50,7 +50,9 @@
   .status.tag { height: 20px; }
   .btn.adjust-btn, .actions .btn, #chip { height: 24px; font-size: var(--csm-text-body); }
   .adjust-btn { flex: none; }
-  #adjustBtn { margin-right: 16px; } /* 24 px to "To <chat>": Adjust edits, the name goes with Send */
+  /* Adjust works on the text, so it opens the footer at the left, like Normal and Formal below it; the
+     notice follows it, and the language, To <chat>, Send and the gear stay together at the right. */
+  #adjustBtn { margin-right: 4px; }
   #pencil { display: inline-flex; }
   .btn kbd { font: inherit; }
   .adjust-btn svg.i { width: 12px; height: 12px; }
@@ -163,6 +165,10 @@
   .menu .posrow button { width: auto; min-width: 28px; height: 24px; padding: 0 8px; justify-content: center; color: var(--color-text-secondary); }
   .menu .posrow button:hover { color: var(--obsidian-text-hover); }
   .menu .posrow button[aria-checked="true"] { background: var(--color-overlay-pressed); color: var(--color-text-primary); }
+  /* The commands take the settings' 26 px rows, so three fit the strip's height beside them; a shortcut
+     sits at the row's right end, in secondary text, as in a Mac menu. */
+  .menu .cmds button { height: 26px; padding: 0 8px; }
+  .menu .cmds kbd { font: inherit; margin-left: auto; padding-left: 16px; color: var(--color-text-secondary); }
   .menu hr { border: 0; width: 1px; background: var(--obsidian-veil-selected); margin: 4px 0; align-self: stretch; }
   /* Four settings in a 2 x 2 grid of rows (On ⌘⏎, Model / Reply in, Position), so the menu keeps the strip's height. */
   .menu .col.prefs { display: grid; grid-template-columns: auto auto; grid-auto-rows: 26px; column-gap: 20px; align-content: start; align-self: start; }
@@ -173,11 +179,23 @@
   .menu .col.prefs, .menu .prow, .menu .reply { min-width: 0; }
   .menu .reply { overflow-x: auto; scrollbar-width: none; }
   .menu .reply::-webkit-scrollbar { display: none; }
+  /* Recent (0.12.0): the last messages, one button each, in a row across the settings' two columns, only while
+     there are some. Many long ones scroll sideways, as Reply in does, rather than push the menu out of the window. */
+  .menu .prow[hidden] { display: none; }
+  .menu .prow.recentrow { grid-column: 1 / -1; }
+  .menu .recent { flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .menu .prow .posrow.recent { flex-wrap: nowrap; }   /* one line in every shape, the column too: five wrapped would outgrow its menu */
+  .menu .recent::-webkit-scrollbar { display: none; }
+  .menu .recent button { flex: none; color: var(--color-text-primary); }   /* commands, like the menu's others: primary text, never squeezed */
+  .menu .col.cmds { flex: none; }   /* the commands stay whole; the settings' rows give way (Reply in and Recent scroll) */
   /* A narrow strip: Position leaves the menu (it's in Settings and the app menu's Layout), and the three
      rows left stack in one column, beside the commands. */
   @media (orientation: landscape) and (max-width: 719px) {
     .menu .col.prefs { grid-template-columns: minmax(0, auto); flex: 0 1 auto; }
     .menu .prow.position { display: none; }
+    /* With Recent the rows are four, taller than the room above the footer: the menu opens left of the gear,
+       down to the strip's edge, as in a short strip. */
+    .menu.has-recent { bottom: 8px; right: 48px; max-width: calc(100% - 56px); gap: 4px; }
   }
 
   /* A short strip (dragged below 140 pt): there's no room above the footer, so the menu opens to the
@@ -185,6 +203,8 @@
   @media (orientation: landscape) and (max-height: 139px) {
     .menu { bottom: 8px; right: 48px; max-width: calc(100% - 56px); gap: 4px; }
   }
+  /* Whatever the shape, the menu never leaves the strip: past its height, it scrolls. */
+  @media (orientation: landscape) { .menu { max-height: calc(100% - 16px); overflow-y: auto; } }
 
   /* First run: one sentence and one button on a single veil the size of the two boxes. */
   .cover { display: none; position: absolute; inset: 8px; border-radius: var(--radius-container); background: var(--obsidian-veil-selected); z-index: 10;
@@ -212,8 +232,8 @@
     .f.en .foot::before { content: ""; order: 0; flex: none; width: 0; height: 24px; margin: 0 -8px 4px 0; }
     .f.en .foot::after { content: ""; order: 3; flex: 0 0 100%; height: 0; }
     [data-adjust="open"] .f.en .foot::before { display: none; }
-    #tagrow { order: 1; flex: 1 1 0; min-width: 0; margin-bottom: 4px; }
-    #adjustBtn { order: 2; margin: 0 0 4px auto; }
+    #adjustBtn { order: 1; margin: 0 4px 4px 0; }
+    #tagrow { order: 2; flex: 1 1 0; min-width: 0; margin-bottom: 4px; }
     .to { order: 4; flex: 1 1 0; }
     #send { order: 5; margin-left: auto; }   /* with no chat name, Send and the gear stay at the right */
     #more { order: 6; }
@@ -265,15 +285,15 @@
         <button class="btn small chip" id="chip" data-quick="más corto">Shorter</button>
       </div>
       <div class="foot">
+        <button class="btn ghost small adjust-btn" id="adjustBtn" aria-label="Adjust" title="Adjust ⌘K"><span id="pencil"></span><span class="lbl">Adjust</span> <kbd>⌘K</kbd></button>
         <div class="tagrow" id="tagrow">
           <span class="status" id="status" role="status" aria-live="polite"></span><span class="actions" id="actions"></span>
         </div>
         <span class="grow"></span>
-        <button class="btn ghost small adjust-btn" id="adjustBtn" aria-label="Adjust" title="Adjust ⌘K"><span id="pencil"></span><span class="lbl">Adjust</span> <kbd>⌘K</kbd></button>
         <button class="lang" id="lang" type="button" aria-disabled="true" hidden><span class="auto">Auto · </span><b id="langName"></b></button>
         <span class="to" id="to">To <b id="chat"></b></span>
         <button class="btn primary send" id="send" disabled>Send <kbd>⌘⏎</kbd></button>
-        <button class="icon-btn more-btn" id="more" aria-label="Settings" title="Settings" aria-haspopup="menu" aria-expanded="false"></button>
+        <button class="icon-btn more-btn" id="more" aria-label="Options" title="Options" aria-haspopup="menu" aria-expanded="false"></button>
       </div>
     </div>
   </div>
@@ -299,11 +319,13 @@
         <button role="menuitemradio" data-layout="left" aria-checked="false" title="Left of Teams" aria-label="Left of Teams">←</button>
         <button role="menuitemradio" data-layout="right" aria-checked="false" title="Right of Teams" aria-label="Right of Teams">→</button>
       </div></div>
+      <div class="prow recentrow" id="recentRow" hidden><span class="pl" id="recentLabel">Recent</span><div class="posrow recent" id="recentBtns" role="group" aria-labelledby="recentLabel"></div></div>
     </div>
     <hr>
-    <div class="col">
+    <div class="col cmds">
       <button role="menuitem" data-do="guide">Open voice guide</button>
       <button role="menuitem" data-do="restart">Restart translator</button>
+      <button role="menuitem" data-do="settings" aria-keyshortcuts="Meta+Comma">Settings… <kbd>⌘,</kbd></button>
     </div>
   </div>
   <div class="cover"><span>Allow Accessibility to send messages in Teams.</span><button class="btn primary" id="accessBtn">Open System Settings</button></div>
@@ -348,11 +370,17 @@ function post(msg) {
 // The stand-in bridge, for a browser with no shell: a made-up chat and a made-up last message, and a
 // send that succeeds after a moment without sending anything. The query string picks a case to
 // try: ?teams=closed|nochat  ?chat=pt|new  ?shape=unknown|several  ?draft=1  ?access=0  ?mic=denied  ?dict=prep|unavailable
-// ?send=draft|no-teams|no-chat|not-front|mismatch|not-sent|chat-changed|no-paste|not-own-server|no-access
+// ?send=draft|no-teams|no-chat|not-front|mismatch|not-sent|not-posted|unconfirmed|chat-changed|no-paste|not-own-server|no-access
+// ?check=changed (Teams moved its message box: the update check's tag)
 const qp = new URLSearchParams(location.search);
 const PREVIEW_DICTATION = "¿Puedes revisar el presupuesto antes del jueves? Si hace falta, lo vemos en la llamada.".split(" ");
 let previewTimer;
 function previewTeams() {
+  const m = previewTeamsOf();
+  if (qp.get("check") === "changed" && m.open) Object.assign(m, { check: "changed", missing: ["box"] });
+  return m;
+}
+function previewTeamsOf() {
   const t = qp.get("teams");
   if (t === "closed") return { open: false, chat: null, from: null, last: null, draft: false, shape: "ok" };
   const shape = ["unknown", "several"].includes(qp.get("shape")) ? qp.get("shape") : "ok";
@@ -493,7 +521,8 @@ async function ask(path, body, id) {
 // fewest that make each fit. The chat's name shortens first, down to its 96 px (that's its flex
 // shrink). Then the shortcut hints leave the buttons (the keys still work, and the titles say
 // them), then Adjust keeps only its pencil, then the language button drops its "Auto · " (the name
-// stays, and its title says how it was chosen), then the notice's words end in an ellipsis (its title
+// stays, and its title says how it was chosen), then a language button that does nothing leaves (no
+// Auto, the reply in the target: it only names the target), then the notice's words end in an ellipsis (its title
 // holds them, and its buttons stay whole), then the chat's name goes below 96 px, then it leaves
 // the row, then the language button leaves, and last the notice's words leave too. (Flex shrink alone takes a fraction of a pixel
 // from the notice, which is enough to cut its last letters: so the notice can't shrink until then.)
@@ -533,12 +562,14 @@ function fitSteps() {
   // The English footer, in its order. Every step is undone on the next paint or resize.
   if (over(en)) step("pencil");
   if (over(en) && !$("lang").hidden && !$("lang").querySelector(".auto").hidden) step("lang");   // "Auto · " leaves; the title still says it
+  // A language button that does nothing (no Auto, the reply in the target) leaves before the notice's words shorten.
+  if (over(en) && !$("lang").hidden && SS.langInert(st, settings().target)) step("nolang");
   // "Sent · time" stays whole: the chat's name gives way first (its title keeps it). Other notices shorten first.
   const keepTag = $("status").classList.contains("s-done");
   if (over(en) && !keepTag) notice(true);          // the notice shortens down to its dot; its buttons stay whole
   if (over(en)) step("name");
   if (over(en)) step("noname");
-  if (over(en) && !$("lang").hidden) step("nolang");   // a notice with its buttons wins over the language, for now
+  if (over(en) && !$("lang").hidden && !fit.includes("nolang")) step("nolang");   // a notice with its buttons wins over the language
   if (over(en) && !keepTag) { step("nonotice"); notice(false); }   // the box's color and the buttons still say it
   // The Spanish footer: Normal and Formal step aside last, only while a dictation label needs the room.
   if (over(es) && !$("detected").hidden) step("detectword");   // "Detected · " leaves first; the title still says it
@@ -567,6 +598,24 @@ function paintReplyIn() {
     b.setAttribute("aria-checked", String(b.dataset.target === s.target));
     if (b.dataset.target === s.target) b.title = "Your target language"; else b.removeAttribute("title");
   }
+}
+
+// The menu's Recent row: one button per recent message, newest first, its words the reply's first ones and its
+// title when it went; the row isn't there while the list is empty. Rebuilt only when the list changes.
+let recentDrawn = "";
+function paintRecent() {
+  const list = st.recent || [], sig = list.map((r) => r.id).join(",");
+  menu.classList.toggle("has-recent", list.length > 0);
+  $("recentRow").hidden = !list.length;
+  if (sig === recentDrawn) return;
+  recentDrawn = sig;
+  $("recentBtns").replaceChildren(...list.map((r) => {
+    const b = document.createElement("button");
+    b.setAttribute("role", "menuitem");
+    b.dataset.recent = String(r.id); b.textContent = SS.recentLabel(r); b.title = SS.recentTitle(r);
+    b.lang = LANG_CODES[r.language] || "";
+    return b;
+  }));
 }
 
 let drawn = "";
@@ -600,10 +649,11 @@ function paint() {
   for (const b of menu.querySelectorAll("[data-model]")) b.setAttribute("aria-checked", b.dataset.model === settings().model);
   for (const b of menu.querySelectorAll("[data-layout]")) b.setAttribute("aria-checked", b.dataset.layout === st.layout);
   paintReplyIn();
+  paintRecent();
 
   // The translation box waits for the target; the language button names what the translation is in.
   const target = settings().target, lv = SS.langView(st, target), lb = $("lang");
-  enOut.placeholder = target;
+  enOut.placeholder = SS.enPlaceholder(target);
   enOut.lang = LANG_CODES[(lv && lv.name) || target] || "";
   lb.hidden = !lv;
   if (lv) {
@@ -799,10 +849,19 @@ esIn.addEventListener("input", onSpanishInput);
 enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value, fields(), settings().target)); paint(); });
 
 function clearAll() {
-  const r = SS.clearAll(st);
+  const r = SS.clearAll(st, fields(), SS.clock(new Date()));
   if (r.stopDictation) post(stopMsg);
   commit(r.st);
   paint(); esIn.focus();
+}
+
+// A recent message back in the boxes (⌘Z, or a click in the menu's Recent row): the keyboard goes back to the
+// box you write in, as after an adjust, and ⌘⏎ sends it.
+function restored(n) {
+  if (!n) return false;
+  commit(n); paint();
+  esIn.focus();
+  return true;
 }
 
 function closeMenu() { menu.classList.remove("open"); moreBtn.setAttribute("aria-expanded", "false"); }
@@ -815,6 +874,8 @@ document.addEventListener("keydown", e => {
     if (l === "k") { e.preventDefault(); openAdjust(); }
     else if (l === "d") { e.preventDefault(); toggleDictation(); }
     else if (k === "Enter") { e.preventDefault(); if (st.dict === "on") stopDictation(() => send(false)); else send(false); }
+    // ⌘Z with both boxes empty and nothing running brings back the newest recent message; anywhere else it's the boxes' own undo.
+    else if (l === "z" && !e.shiftKey && SS.canRestore(st, fields())) { e.preventDefault(); restored(SS.restoreRecent(st, fields())); }
     return;
   }
   if (k === "Escape") {
@@ -852,7 +913,11 @@ box.addEventListener("click", e => {
   if (!a) return;
   switch (a.dataset.act) {
     case "retry": translate(); break;
+    // This Mac stood in: the same text again, as a normal request, so Claude can answer it this time.
+    case "retry-claude": translate(); break;
     case "retry-adjust": commit(SS.clearNotice(st)); adjust(st.lastNote); break;
+    // A voice finding: an adjust that changes only what the findings name, the note the server's own fix uses.
+    case "fix-voice": adjust(`The user's voice guide rules this out, so change only it and keep everything else as it is: ${st.lint.map(f => f.message).join(" / ")}`); break;
     case "undo": undo(); esIn.focus(); break;
     case "add": send(true); break;
     case "cancel": commit(SS.cancelDraft(st)); paint(); esIn.focus(); break;
@@ -862,7 +927,7 @@ box.addEventListener("click", e => {
   }
 });
 
-// ------------------------------------------------------------------------------ the settings menu (the gear)
+// ------------------------------------------------------------------------------ the options menu (the gear)
 moreBtn.onclick = e => {
   e.stopPropagation();
   const open = menu.classList.toggle("open");
@@ -890,6 +955,10 @@ menu.addEventListener("click", e => {
   else if (b.dataset.layout) { post({ type: "layout", value: b.dataset.layout }); commit(SS.shellLayout(st, { value: b.dataset.layout })); paint(); }
   else if (b.dataset.do === "guide") { post({ type: "open", what: "guide" }); closeMenu(); }
   else if (b.dataset.do === "restart") { api("/api/translator/restart", {}); closeMenu(); }
+  // The shell opens the Settings window, as ⌘, does; in a browser the stand-in bridge does nothing.
+  else if (b.dataset.do === "settings") { closeMenu(); post({ type: "open", what: "settings" }); }
+  // A recent message: back the same way as ⌘Z, and the menu closes.
+  else if (b.dataset.recent) { const n = SS.pickRecent(st, fields(), Number(b.dataset.recent), SS.clock(new Date())); if (n) { closeMenu(); restored(n); } }
 });
 
 // ------------------------------------------------------------------------------ go

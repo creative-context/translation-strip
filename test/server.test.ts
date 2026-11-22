@@ -11,10 +11,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { classify, errorFor, stderrWord } from "../src/errors";
 import { DICTATION, LANGUAGES } from "../src/languages";
-import { dropAddedBlankLines, emojiFor, fixMacText, hintFor, outcomeOf } from "../src/mac";
+import { dropAddedBlankLines, emojiFor, fixMacText, hintFor, macWaitMs, outcomeOf } from "../src/mac";
 import { answerFor, parseReply, requestTurn, systemPrompt } from "../src/protocol";
+import { addUsage, charsBucket, charsOf, claudeQuestionLine, claudeReplyLine, macReplyLine, usageOf } from "../src/reply-log";
 import { checkChange, loadSettings } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/state";
+import { HIDDEN_FLAGS, helpNames, missingFlags, translatorArgs, translatorFlags } from "../src/translator";
 
 const ROOT = resolve(import.meta.dir, "..");
 // A shared build machine, like GitHub's Mac, can take many seconds to start each new translator
@@ -92,6 +94,24 @@ function collect(p: Subprocess<any, "pipe", "pipe">) {
   return { text: () => text, done };
 }
 let currentLog = () => "";
+// The server's `reply: …` lines (a time stamp, then "reply: "), without their time stamps.
+const replyLines = () => currentLog().split("\n").filter((l) => /^\S+ reply: /.test(l)).map((l) => l.slice(l.indexOf(" ") + 1));
+// Runs a request and returns the one reply line it added (and checks it added only one).
+async function replyLineOf<T>(fn: () => Promise<T>): Promise<{ line: string; result: T }> {
+  const n = replyLines().length;
+  const result = await fn();
+  const line = await until("the request's reply line", async () => replyLines()[n]);
+  await Bun.sleep(150);
+  expect(replyLines().length).toBe(n + 1);
+  return { line, result };
+}
+// The stand-in's made-up counts (test/fake-claude.ts), once and twice (a fix turn or a second try that answered).
+const USAGE_ONE = "in 12, out 23, cache read 6789, cache written 345";
+const USAGE_TWO = "in 24, out 46, cache read 13578, cache written 690";
+// A Claude reply line, with its time left open.
+const claudeLine = (rest: string, model = "haiku") => new RegExp(`^reply: claude ${model} \\d+ ms · ${rest.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+// Every reply line: these shapes and nothing else, so no text and no chat name can be in one.
+const REPLY_SHAPE = /^reply: (claude [a-z]+ \d+ ms( · question| · (in \d+(, )?)?(out \d+(, )?)?(cache read \d+(, )?)?(cache written \d+)?( · )?lint \d+ errors · fix (kept|dropped|none) · tries [12]( · answered by [a-z]+)?)|mac \d+ ms · (under 100|100 to 499|500 to 1,999|2,000 or more) chars · lint \d+ errors( · stand-in for [a-z]+)?)$/;
 const statusIs = (s: string) => until(`status ${s}`, async () => ((await state()).translator.status === s ? await state() : false));
 
 beforeAll(async () => {
@@ -118,6 +138,26 @@ afterAll(() => {
 });
 
 describe("pure parts", () => {
+  test("the reply line: numbers and fixed words, each count left out when not given", () => {
+    expect(usageOf({ usage: { input_tokens: 12, cache_creation_input_tokens: 345, cache_read_input_tokens: 6789, output_tokens: 23, service_tier: "standard" } })).toEqual({ in: 12, out: 23, cacheRead: 6789, cacheWritten: 345 });
+    expect(usageOf({ usage: { input_tokens: 5, output_tokens: "7", cache_read_input_tokens: -1 } })).toEqual({ in: 5 });
+    expect(usageOf({ usage: {} })).toBeNull();
+    expect(usageOf({ type: "result" })).toBeNull();
+    expect(addUsage({ in: 1, out: 2 }, { in: 10, cacheRead: 5 })).toEqual({ in: 11, out: 2, cacheRead: 5 });
+    expect(addUsage(null, { out: 3 })).toEqual({ out: 3 });
+    expect(addUsage(undefined, null)).toBeNull();
+    expect([0, 99, 100, 499, 500, 1999, 2000, 9000].map(charsBucket)).toEqual(["under 100", "under 100", "100 to 499", "100 to 499", "500 to 1,999", "500 to 1,999", "2,000 or more", "2,000 or more"]);
+    expect(charsOf("¿ok? 🙂")).toBe(6);
+    expect(claudeReplyLine({ model: "sonnet", ms: 1234.4, usage: { in: 12, out: 23, cacheRead: 6789, cacheWritten: 345 }, lintErrors: 0, fix: "none", tries: 1 })).toBe("reply: claude sonnet 1234 ms · in 12, out 23, cache read 6789, cache written 345 · lint 0 errors · fix none · tries 1");
+    expect(claudeReplyLine({ model: "opus", ms: 900, usage: { in: 4, cacheWritten: 2 }, lintErrors: 1, fix: "dropped", tries: 2 })).toBe("reply: claude opus 900 ms · in 4, cache written 2 · lint 1 errors · fix dropped · tries 2");
+    expect(claudeReplyLine({ model: "haiku", ms: 10, usage: null, lintErrors: 0, fix: "kept", tries: 1 })).toBe("reply: claude haiku 10 ms · lint 0 errors · fix kept · tries 1");
+    expect(claudeReplyLine({ model: "opus", ms: 1500, usage: { out: 9 }, lintErrors: 0, fix: "none", tries: 1, answeredBy: "sonnet" })).toBe("reply: claude opus 1500 ms · out 9 · lint 0 errors · fix none · tries 1 · answered by sonnet");
+    expect(claudeQuestionLine({ model: "haiku", ms: 812.6 })).toBe("reply: claude haiku 813 ms · question");
+    expect(macReplyLine({ ms: 640, chars: 42, lintErrors: 0 })).toBe("reply: mac 640 ms · under 100 chars · lint 0 errors");
+    expect(macReplyLine({ ms: 640, chars: 2400, lintErrors: 2, standIn: "offline" })).toBe("reply: mac 640 ms · 2,000 or more chars · lint 2 errors · stand-in for offline");
+    for (const l of [claudeReplyLine({ model: "sonnet", ms: 1, usage: { out: 1 }, lintErrors: 0, fix: "none", tries: 1 }), claudeQuestionLine({ model: "opus", ms: 1 }), macReplyLine({ ms: 1, chars: 600, lintErrors: 0, standIn: "limit" })]) expect(l).toMatch(REPLY_SHAPE);
+  });
+
   test("stderr says one word: login, update, offline, limit or unknown", () => {
     expect(stderrWord("Invalid API key · Please run /login")).toBe("login");
     expect(stderrWord("Not logged in. Run claude to log in.")).toBe("login");
@@ -128,6 +168,11 @@ describe("pure parts", () => {
     expect(stderrWord("fetch failed: ECONNREFUSED")).toBe("offline");
     expect(stderrWord("Claude usage limit reached|1893456000")).toBe("limit");
     expect(stderrWord("You've hit your limit · resets 3pm")).toBe("limit");
+    // Usage credits' words (Claude Code 2.1.323 and 2.1.328) and an API key's empty balance.
+    expect(stderrWord("Your usage credits ran out")).toBe("limit");
+    expect(stderrWord("This model needs usage credits, which are turned off")).toBe("limit");
+    expect(stderrWord("Credit balance is too low")).toBe("limit");
+    expect(classify("Usage credits are used up for this month", null)).toEqual({ error: "limit", until: null });
     expect(stderrWord("Segmentation fault")).toBe("unknown");
     expect(stderrWord("")).toBe("unknown");
     expect(errorFor("login")).toBe("login");
@@ -229,6 +274,10 @@ describe("pure parts", () => {
     expect(dropAddedBlankLines("una línea", "One line.\n \n\n\nAnother.")).toBe("One line.\nAnother.");
     expect(dropAddedBlankLines("a\r\nb", "A\r\n\r\nB")).toBe("A\nB");
     expect(dropAddedBlankLines("hola", "Hello")).toBe("Hello");
+    // The wait for a reply grows with the text: Translation takes a few seconds per thousand characters.
+    expect(macWaitMs(0)).toBe(15_000);
+    expect(macWaitMs(4000)).toBe(55_000);
+    expect(macWaitMs(8000)).toBe(95_000); // the longest text the server takes
   });
 
   test("the helper's text: each emoticon standing alone becomes Teams' emoji, none inside a link or a word", () => {
@@ -255,6 +304,27 @@ describe("pure parts", () => {
     expect(outcomeOf({ id: "a", error: "language", source: "Español" }, ask)).toEqual({ ok: false, error: "failed" }); // never a made-up name
     expect(outcomeOf({ id: "a", error: "failed" }, ask)).toEqual({ ok: false, error: "failed" });
     expect(outcomeOf({ id: "a", text: "  " }, ask)).toEqual({ ok: false, error: "failed" });
+  });
+
+  test("the update check's flags: every flag translatorArgs passes, on any Claude model", () => {
+    const flags = translatorFlags();
+    for (const m of ["haiku", "sonnet", "opus"] as const) for (const a of translatorArgs(m).slice(1)) if (a.startsWith("-")) expect(flags).toContain(a);
+    expect(flags).toContain("--fallback-model"); // Opus only, and still checked
+    expect(flags).toContain("--effort");
+    expect(flags).toContain("-p");
+    expect(new Set(flags).size).toBe(flags.length);
+    expect(flags.every((f) => /^--?[a-z]/.test(f))).toBe(true); // no values: not "", "stream-json" or "/dev/fd/3"
+  });
+
+  test("the update check reads a help: the names it shows, the hidden flags aside", () => {
+    const help = "Usage: claude [options]\n\nOptions:\n  -p, --print                 Print response and exit\n  --model <model>             Model for the session\n  --tools <tools...>          Tools (\"\" for none)\n";
+    expect([...helpNames(help)].sort()).toEqual(["--model", "--print", "--tools", "-p"]);
+    expect(missingFlags(help, ["-p", "--model", "--tools"])).toEqual([]);
+    expect(missingFlags(help, ["-p", "--model", "--effort", "--fallback-model"])).toEqual(["--effort", "--fallback-model"]);
+    expect(HIDDEN_FLAGS.has("--system-prompt-file")).toBe(true); // hidden from Claude Code's help, so never counted missing
+    expect(missingFlags(help, ["--system-prompt-file"])).toEqual([]);
+    expect(missingFlags("", ["-p"])).toEqual(["-p"]);
+    expect(missingFlags("--model-x and x--model", ["--model"])).toEqual(["--model"]); // only whole names count
   });
 
   test("opened from Finder (a short PATH), the server still finds claude where its installer puts it", async () => {
@@ -308,7 +378,8 @@ describe("Translation Strip server", () => {
   });
 
   test("polishes a message", async () => {
-    const r = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: { chat: "Design review", from: "Sam Lee", last: "I'll share the deck later." } });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal", context: { chat: "Design review", from: "Sam Lee", last: "I'll share the deck later." } }));
+    expect(line).toMatch(claudeLine(`${USAGE_ONE} · lint 0 errors · fix none · tries 1`));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" });
     const f = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "formal" });
@@ -347,7 +418,8 @@ describe("Translation Strip server", () => {
   });
 
   test("a reply with another request's id, once: the fresh session's answer goes through", async () => {
-    const r = await post("/api/translate", { text: "WRONGID-ONCE ¿me mandas las slides?", register: "normal" });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "WRONGID-ONCE ¿me mandas las slides?", register: "normal" }));
+    expect(line).toMatch(claudeLine(`${USAGE_TWO} · lint 0 errors · fix none · tries 2`)); // the slip's turn counted too
     expect(r).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" } });
     await statusIs("ready");
   });
@@ -359,7 +431,8 @@ describe("Translation Strip server", () => {
 
   test("a linter error gets one fix before the page sees it: an adjust whose note names the error", async () => {
     const before = turns().length;
-    const r = await post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" }));
+    expect(line).toMatch(claudeLine(`${USAGE_TWO} · lint 0 errors · fix kept · tries 1`)); // the reply and its fix
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ text: "Could you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" });
     const t = turns().slice(before);
@@ -369,7 +442,8 @@ describe("Translation Strip server", () => {
 
   test("a fix that doesn't help: the first English goes back with the linter's findings", async () => {
     const before = turns().length;
-    const r = await post("/api/translate", { text: "KINDLY STUBBORN ¿me mandas las slides?", register: "normal" });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "KINDLY STUBBORN ¿me mandas las slides?", register: "normal" }));
+    expect(line).toMatch(claudeLine(`${USAGE_TWO} · lint 1 errors · fix dropped · tries 1`));
     expect(r.status).toBe(200);
     expect(r.body.text).toBe("Could you kindly send me the slides before lunch?");
     expect(r.body.lint).toEqual([{ level: "error", message: "Sounds stiff: «kindly»" }]);
@@ -377,13 +451,15 @@ describe("Translation Strip server", () => {
   });
 
   test("asks a question when something important is unclear", async () => {
-    const r = await post("/api/translate", { text: "UNCLEAR mándame el reporte", register: "normal" });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "UNCLEAR mándame el reporte", register: "normal" }));
+    expect(line).toMatch(/^reply: claude haiku \d+ ms · question$/);
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ question: "Which report do you mean, the weekly one or the budget one?" });
   });
 
   test("adjusts the current text with a note", async () => {
-    const r = await post("/api/adjust", { text: "¿me mandas las slides?", current: "Can you send me the slides before lunch?", note: "add thanks", register: "normal", language: "English" });
+    const { line, result: r } = await replyLineOf(() => post("/api/adjust", { text: "¿me mandas las slides?", current: "Can you send me the slides before lunch?", note: "add thanks", register: "normal", language: "English" }));
+    expect(line).toMatch(claudeLine(`${USAGE_ONE} · lint 0 errors · fix none · tries 1`));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [], engine: "claude" });
     expect(turns().at(-1)).toMatchObject({ task: "adjust", target: "English", auto: false });
@@ -395,6 +471,21 @@ describe("Translation Strip server", () => {
     expect((await post("/api/adjust", { text: "hola", current: "Hi" })).status).toBe(400);
     expect((await post("/api/adjust", { text: "hola", english: "Hi", note: "shorter" })).status).toBe(400); // the old field name
     for (const target of ["Klingon", "english", 3, null, ""]) expect(await post("/api/translate", { text: "hola", target })).toEqual({ status: 400, body: { error: "target" } });
+  });
+
+  test("a result with no usage, or part of it: the reply line leaves out what Claude Code didn't give", async () => {
+    const none = await replyLineOf(() => post("/api/translate", { text: "NOUSAGE ¿me mandas las slides?", register: "normal" }));
+    expect(none.result.status).toBe(200);
+    expect(none.line).toMatch(claudeLine("lint 0 errors · fix none · tries 1"));
+    const part = await replyLineOf(() => post("/api/translate", { text: "PARTUSAGE ¿me mandas las slides?", register: "normal" }));
+    expect(part.line).toMatch(claudeLine("in 12, out 23 · lint 0 errors · fix none · tries 1"));
+    // An error answer and a rejected request add no reply line.
+    const n = replyLines().length;
+    expect((await post("/api/translate", { text: "  " })).status).toBe(400);
+    expect((await post("/api/translate", { text: "LIMIT ¿me mandas las slides?", register: "normal" })).status).toBe(503);
+    expect((await post("/api/translate", { text: "¿me mandas las slides?" })).status).toBe(200); // clears the limit
+    await until("the next reply line", async () => replyLines().length === n + 1);
+    expect(replyLines().at(-1)).toMatch(claudeLine(`${USAGE_ONE} · lint 0 errors · fix none · tries 1`));
   });
 
   test("one request at a time: a second one gets 409 busy", async () => {
@@ -428,7 +519,8 @@ describe("Translation Strip server", () => {
   test("a session that can't read its system prompt gets one more try on a fresh session, and the request goes through", async () => {
     await statusIs("ready");
     const before = (await settle(starts)).length;
-    const r = await post("/api/translate", { text: "PROMPT-ONCE ¿me mandas las slides?", register: "normal" });
+    const { line, result: r } = await replyLineOf(() => post("/api/translate", { text: "PROMPT-ONCE ¿me mandas las slides?", register: "normal" }));
+    expect(line).toMatch(claudeLine(`${USAGE_ONE} · lint 0 errors · fix none · tries 2`)); // the first session ended with no result
     expect(r.status).toBe(200);
     expect(r.body.text).toBeTruthy();
     await until("the second try's session and the next spare", async () => starts().length === before + 2);
@@ -609,12 +701,20 @@ describe("Translation Strip server", () => {
     expect(s.translator.model).toBe("sonnet");
     expect(s.settings).toMatchObject({ model: "sonnet", mode: "leave" });
     expect(starts().at(-1).args).not.toContain("--effort"); // Sonnet keeps Claude Code's default effort
+    expect(starts().at(-1).args).not.toContain("--fallback-model"); // only Opus falls back
 
     // Opus runs at low effort.
     expect((await post("/api/settings", { model: "opus" })).body.settings).toMatchObject({ model: "opus", mode: "leave" });
     await until("an opus start", async () => starts().at(-1)?.model === "opus");
     const args = starts().at(-1).args;
     expect(args[args.indexOf("--effort") + 1]).toBe("low");
+    // Opus busy: Claude Code answers on Sonnet, and the reply line says so.
+    expect(args[args.indexOf("--fallback-model") + 1]).toBe("sonnet");
+    await statusIs("ready");
+    const busy = await replyLineOf(() => post("/api/translate", { text: "BUSY slides", register: "normal" }));
+    expect(busy.result.body.engine).toBe("claude");
+    expect(busy.line).toMatch(/^reply: claude opus \d+ ms · .* · tries 1 · answered by sonnet$/);
+    expect(busy.line).toMatch(REPLY_SHAPE);
     await statusIs("ready");
     expect((await post("/api/settings", { model: "sonnet" })).status).toBe(200);
     await until("a sonnet start again", async () => starts().at(-1)?.model === "sonnet");
@@ -627,6 +727,79 @@ describe("Translation Strip server", () => {
     const before = starts().length;
     expect(await post("/api/translator/restart")).toEqual({ status: 200, body: {} });
     await until("a new start", async () => starts().length === before + 1);
+    await statusIs("ready");
+  });
+
+  // The update check (0.12.0): `claude --help` once per Claude Code version this server learns.
+  const helps = () => lines(join(DIR, "fake-helps.jsonl"));
+  const checkLine = (version: string, rest: string) => `translator: claude ${version} (Claude Code stand-in) check: ${rest}`;
+  const checkIs = (c: string | null) => until(`check ${c}`, async () => ((await state()).translator.check === c ? await state() : false));
+  const translates = async () => {
+    const r = await post("/api/translate", { text: "¿me mandas las slides antes de comer?", register: "normal" });
+    expect(r.status).toBe(200);
+    expect(r.body.text).toBe("Can you send me the slides before lunch?");
+  };
+
+  test("the update check: claude --help names every flag, check ok, once per version, in the state's shape", async () => {
+    const s = await checkIs("ok");
+    expect(Object.keys(s.translator).sort()).toEqual(["check", "error", "guide", "linter", "missing", "model", "status", "until"]);
+    expect(s.translator.missing).toEqual([]);
+    expect(currentLog()).toContain(checkLine("2.1.0", "ok"));
+    const n = (await settle(helps)).length;
+    expect(n).toBe(1); // once since the server started, through every request and restart so far
+    await post("/api/translator/restart"); // asks the version again: the same one, so no new help
+    await statusIs("ready");
+    await Bun.sleep(500);
+    expect(helps().length).toBe(n);
+    expect((await state()).translator.check).toBe("ok");
+    expect(currentLog().split(checkLine("2.1.0", "")).length - 1).toBe(1);
+  });
+
+  test("the update check: a new version whose help lacks flags is changed, with them, and translating goes on", async () => {
+    writeFileSync(join(DIR, "fake-version"), "2.1.1 (Claude Code stand-in)");
+    writeFileSync(join(DIR, "fake-help-drop"), "--fallback-model\n--strict-mcp-config\n");
+    try {
+      const n = helps().length;
+      await post("/api/translator/restart");
+      const s = await checkIs("changed");
+      expect(s.translator.missing).toEqual(["--strict-mcp-config", "--fallback-model"]); // translatorArgs' order
+      expect(currentLog()).toContain(checkLine("2.1.1", "lacks --strict-mcp-config, --fallback-model"));
+      expect(helps().length).toBe(n + 1);
+      await statusIs("ready"); // the check blocks nothing
+      await translates();
+      expect((await state()).translator).toMatchObject({ status: "ready", error: null, check: "changed", missing: ["--strict-mcp-config", "--fallback-model"] });
+    } finally {
+      rmSync(join(DIR, "fake-help-drop"), { force: true });
+    }
+  });
+
+  test("the update check: a help that fails leaves the check unknown and blocks nothing; a version checked before keeps its result", async () => {
+    writeFileSync(join(DIR, "fake-version"), "2.1.2 (Claude Code stand-in)");
+    writeFileSync(join(DIR, "fake-help-fail"), "");
+    try {
+      const n = helps().length;
+      await post("/api/translator/restart");
+      await until("the help's failure in the log", async () => currentLog().includes(checkLine("2.1.2", "couldn't read its help")));
+      const s = await checkIs(null);
+      expect(s.translator.missing).toEqual([]);
+      expect(helps().length).toBe(n + 1);
+      await statusIs("ready");
+      await translates();
+      // Restarted on the same version, a help that failed is asked again.
+      await post("/api/translator/restart");
+      await until("a second help for 2.1.2", async () => helps().length === n + 2);
+      await statusIs("ready");
+    } finally {
+      rmSync(join(DIR, "fake-help-fail"), { force: true });
+      rmSync(join(DIR, "fake-version"), { force: true });
+    }
+    // Back on 2.1.0, checked earlier in this server's life: its result comes back with no new help.
+    const n = (await settle(helps)).length;
+    await post("/api/translator/restart");
+    const s = await checkIs("ok");
+    expect(s.translator.missing).toEqual([]);
+    await Bun.sleep(300);
+    expect(helps().length).toBe(n);
     await statusIs("ready");
   });
 
@@ -664,6 +837,10 @@ describe("Translation Strip server", () => {
     expect(log).toContain("session exited (code 1, login; claude 2.1.0 (Claude Code stand-in))");
     expect(log).toContain("update;");
     for (const never of [SECRET, "Invalid API key", "unknown option", "slides", "MEMORY", "Ops sync", "Kim Park"]) expect(log).not.toContain(never);
+    // Every reply line has one of the shapes, numbers and fixed words only.
+    const replies = log.split("\n").filter((l) => /^\S+ reply: /.test(l)).map((l) => l.slice(l.indexOf(" ") + 1));
+    expect(replies.length).toBeGreaterThan(10);
+    for (const l of replies) expect(l).toMatch(REPLY_SHAPE);
   }, 30000);
 });
 
@@ -894,8 +1071,9 @@ describe("Translation Strip server: translating on this Mac", () => {
     for (const [word, error] of [["EXIT-OFFLINE", "offline"], ["EXIT-LOGIN", "login"], ["EXIT-UPDATE", "update"], ["CRASH", "failed"]]) {
       await settled();
       const claudeTurns = turns3().length;
-      const r = await ask(`${word} ¿me mandas las slides?`, { context: CHAT });
+      const { line, result: r } = await replyLineOf(() => ask(`${word} ¿me mandas las slides?`, { context: CHAT }));
       expect(r).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: error } });
+      expect(line).toMatch(new RegExp(`^reply: mac \\d+ ms · under 100 chars · lint 0 errors · stand-in for ${error}$`));
       expect(turns3().length - claudeTurns).toBe(error === "failed" ? 2 : 1); // failed only after Claude's second try
       expect(macAsks().at(-1)).toMatchObject({ keys: ["id", "text", "target", "auto", "last", "hint"], target: "English", auto: false, last: "Any news?", hint: "es" });
     }
@@ -954,8 +1132,9 @@ describe("Translation Strip server: translating on this Mac", () => {
   test("the plan's limit falls back with until, and while until is ahead Claude is skipped", async () => {
     await post("/api/translator/restart");
     await statusIs("ready");
-    const r = await ask("LIMIT ¿me mandas las slides?");
+    const { line, result: r } = await replyLineOf(() => ask("LIMIT ¿me mandas las slides?"));
     expect(r).toEqual({ status: 200, body: { text: SLIDES, language: "English", from: "target", lint: [], engine: "mac", fallback: "limit", until: LIMIT_UNTIL } });
+    expect(line).toMatch(/^reply: mac \d+ ms · under 100 chars · lint 0 errors · stand-in for limit$/);
     expect((await state()).translator).toMatchObject({ error: "limit", until: LIMIT_UNTIL });
     const claudeTurns = turns3().length;
     const asked = macAsks().length;
@@ -1004,7 +1183,8 @@ describe("Translation Strip server: translating on this Mac", () => {
   test("the mac model: the linter runs with no fix turn, and the two fixes apply", async () => {
     const claudeTurns = turns3().length;
     const asked = macAsks().length;
-    const k = await ask("MAC-KINDLY ¿me mandas las slides?");
+    const { line, result: k } = await replyLineOf(() => ask("MAC-KINDLY ¿me mandas las slides?"));
+    expect(line).toMatch(/^reply: mac \d+ ms · under 100 chars · lint 1 errors$/); // the Mac chosen: no stand-in
     expect(k).toEqual({ status: 200, body: { text: "Could you kindly send me the slides before lunch?", language: "English", from: "target", lint: [{ level: "error", message: "Sounds stiff: «kindly»" }], engine: "mac" } });
     expect(macAsks().length).toBe(asked + 1);
     expect(turns3().length).toBe(claudeTurns);
@@ -1091,6 +1271,11 @@ describe("Translation Strip server: translating on this Mac", () => {
     expect(log).toContain("helper exited again (code 1); not starting it until a request");
     expect(log).toContain("the helper says this Mac can't translate");
     expect(log).toContain("spare stopped (translating on this Mac");
-    for (const never of [SECRET, "slides", "To do tomorrow", "Pode mandar", "kindly", "Any news", "Kim Park", "Polski"]) expect(log).not.toContain(never);
+    for (const never of [SECRET, "slides", "To do tomorrow", "Pode mandar", "kindly", "Any news", "Kim Park", "Polski", "Ops sync", "Field trip"]) expect(log).not.toContain(never);
+    const replies = log.split("\n").filter((l) => /^\S+ reply: /.test(l)).map((l) => l.slice(l.indexOf(" ") + 1));
+    expect(replies.some((l) => l.startsWith("reply: mac ") && !l.includes("stand-in"))).toBe(true);
+    expect(replies.some((l) => l.includes("stand-in for "))).toBe(true);
+    expect(replies.some((l) => l.startsWith("reply: claude "))).toBe(true);
+    for (const l of replies) expect(l).toMatch(REPLY_SHAPE);
   }, 30000);
 });

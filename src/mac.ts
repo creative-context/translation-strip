@@ -12,7 +12,7 @@
 // list's single line breaks into blank lines, and a paste skips the emoji Teams makes of a typed
 // emoticon.
 import type { Subprocess } from "bun";
-import { MAC_START_MS, MAC_TIMEOUT_MS, macCommand } from "./config";
+import { MAC_MS_PER_CHAR, MAC_START_MS, MAC_TIMEOUT_MS, macCommand } from "./config";
 import { languageNamed } from "./languages";
 import { fileThere } from "./settings";
 import type { Status } from "./state";
@@ -24,6 +24,12 @@ export type MacOutcome =
   | { ok: false; error: "mac" | "failed" };
 
 const log = (words: string) => console.error(`${new Date().toISOString()} mac: ${words}`);
+
+// How long a reply may take: Translation's time grows with the text (a few seconds per thousand
+// characters), so the wait does too.
+export function macWaitMs(chars: number): number {
+  return MAC_TIMEOUT_MS + MAC_MS_PER_CHAR * chars;
+}
 
 // A blank line: a line break, nothing but spaces, another line break.
 const BLANK = /\n[^\S\n]*\n/;
@@ -114,7 +120,7 @@ export class MacHelper {
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
     const line = JSON.stringify({ id, text: ask.text, target: ask.target, auto: ask.auto, ...(ask.last ? { last: ask.last } : {}), ...(ask.hint ? { hint: ask.hint } : {}) }) + "\n";
     return new Promise<MacOutcome>((resolve) => {
-      const timer = setTimeout(() => this.timedOut(id), MAC_TIMEOUT_MS);
+      const timer = setTimeout(() => this.timedOut(id, ask.text.length), macWaitMs(ask.text.length));
       this.pending.set(id, { id, line, ask, resolve, timer });
       if (this.ready) this.write(line);
       this.changed();
@@ -211,7 +217,7 @@ export class MacHelper {
     this.restartedOnce = false;
     this.failed = false;
     const o = outcomeOf(m, p.ask);
-    if (!o.ok) log(`reply: ${o.error}`);
+    if (!o.ok) log(`answered ${o.error}`);
     p.resolve(o);
     this.changed();
   }
@@ -225,9 +231,9 @@ export class MacHelper {
     }
   }
 
-  private timedOut(id: string) {
+  private timedOut(id: string, chars: number) {
     if (!this.pending.has(id)) return;
-    log(`no reply in ${Math.round(MAC_TIMEOUT_MS / 1000)} s; stopped`);
+    log(`no reply in ${Math.round(macWaitMs(chars) / 1000)} s (a text of ${chars} characters); stopped`);
     // Stuck: it goes, and the next request starts a fresh one.
     this.stopProc();
     this.fail("failed");

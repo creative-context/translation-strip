@@ -21,6 +21,9 @@
 // ?fallback=<error> as the Mac standing in for Claude after that error (offline, limit, login, update, missing, failed).
 // Choosing Mac in the menu does the same for every page. On the Mac, the text can say:
 //   NOMAC     error "mac" (this Mac can't translate)    NOTONMAC   error "language" (Español to 日本語 isn't on this Mac)
+// The update check (0.12.0): ?claude=changed answers as a server whose Claude Code check found flags missing
+// (translator.check "changed", with made-up flags in translator.missing); the state says check null otherwise, as
+// before the check has run. The page's ?check=changed is the stand-in Teams' side of it.
 // The page's own preview flags (in the URL, for the stand-in Teams): ?shape=unknown (Teams' message box can't be found), ?shape=several (two boxes, none with the cursor),
 // ?send=no-paste or ?send=not-own-server (and the other send reasons), ?teams=closed|nochat, ?draft=1, ?access=0, ?mic=denied.
 import { join } from "node:path";
@@ -47,21 +50,23 @@ const busyCount = new Map<string, number>();
 const fullSettings = () => ({ ...settings, files: { voiceGuide: "voice-guide.md", linter: "voice-lint.mjs" } });
 
 // The page's ?model=mac and ?fallback=<error>, from the Referer of its requests (the page's own address).
-type Flags = { model: string | null; fallback: string | null };
+type Flags = { model: string | null; fallback: string | null; claude?: string | null };
 function flagsOf(req: Request): Flags {
   try {
     const u = new URL(req.headers.get("referer") ?? "");
-    return { model: u.searchParams.get("model"), fallback: u.searchParams.get("fallback") };
+    return { model: u.searchParams.get("model"), fallback: u.searchParams.get("fallback"), claude: u.searchParams.get("claude") };
   } catch { return { model: null, fallback: null }; }
 }
 const NO_FLAGS: Flags = { model: null, fallback: null };
+// The Claude Code check, as the page's URL asks for it.
+const checkFor = (f: Flags) => (f.claude === "changed" ? { check: "changed", missing: ["--input-format", "--strict-mcp-config"] } : { check: null });
 const modelFor = (f: Flags) => (f.model === "mac" ? "mac" : settings.model);
 
 function state(f: Flags = NO_FLAGS) {
   return JSON.stringify({
     now: Date.now(),
     server: { version: "mock", pid: process.pid },
-    translator: { ...translator, model: modelFor(f) },
+    translator: { ...translator, ...checkFor(f), model: modelFor(f) },
     settings: { ...fullSettings(), model: modelFor(f) },
     options: { languages: LANGUAGES, dictation: DICTATION },
   });

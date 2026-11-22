@@ -33,6 +33,10 @@ export const state = {
     model: "sonnet" as Model,
     guide: "missing" as "ok" | "missing",
     linter: "missing" as "ok" | "missing",
+    // Whether `claude --help` names every flag the translator passes (src/translator.ts): null before
+    // the check ran (or when the help couldn't be read); missing: the flags it lacks, empty unless "changed".
+    check: null as "ok" | "changed" | null,
+    missing: [] as string[],
   },
   settings: { ...DEFAULT_SETTINGS } as Settings,
   version: 0,
@@ -72,7 +76,7 @@ const OPTIONS = { languages: [...LANGUAGES], dictation: DICTATION.map((d) => ({ 
 export function snapshot() {
   return {
     now: Date.now(),
-    translator: { ...state.translator },
+    translator: { ...state.translator, missing: [...state.translator.missing] },
     settings: publicSettings(),
     options: OPTIONS,
   };

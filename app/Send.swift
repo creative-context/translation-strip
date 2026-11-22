@@ -14,8 +14,88 @@ import ApplicationServices
 
 struct SendOutcome {
     var ok: Bool
-    var reason: String? = nil // the contract's reasons: "not-sent", "chat-changed", "no-paste" and "which-box" included
+    var reason: String? = nil // the contract's reasons: "not-sent", "chat-changed", "no-paste", "which-box" and "unconfirmed" included
     var sent = false // Return was pressed, the box emptied and the message showed in the chat
+    var pastes: Int? = nil // ⌘V presses (1 or 2); nil when the send stopped before the paste
+    var boxMs: Int? = nil // from the first ⌘V until the box changed; nil when it didn't
+    var raiseMs: Int? = nil // from asking Teams to come forward until it was front; nil when it already was, or never came
+}
+
+// What one send measured while it ran, across its two attempts. Numbers only, never text.
+final class SendMeter {
+    var pastes = 0
+    var firstPaste: TimeInterval? // systemUptime at the first ⌘V
+    var boxMs: Int?
+    var hadList = false // the chat's message list could be read before Return
+    var raiseMs: Int? // the first attempt's: from asking Teams forward until it was front, when it wasn't already
+}
+
+// The send's outcome line (the log): its start ("send: sent", "send: not sent (<reason>)", "send: left in
+// the message box") and, after " · ", what was measured. A field not measured is left out. Never text,
+// never a chat's name.
+enum SendLog {
+    struct Measured: Equatable {
+        var pastes: Int? = nil
+        var boxMs: Int? = nil
+        var totalMs: Int? = nil
+        var chars: Int? = nil
+        var link: Bool? = nil
+        var mode: String? = nil // "send" or "leave"
+        var front: Bool? = nil // Teams was the front app when the send message came
+        var raiseMs: Int? = nil // from asking Teams forward until it was front; left out when it already was
+    }
+
+    static func bucket(_ chars: Int) -> String {
+        switch chars {
+        case ..<100: return "under 100"
+        case ..<500: return "100 to 499"
+        case ..<2000: return "500 to 1,999"
+        default: return "2,000 or more"
+        }
+    }
+
+    static func hasLink(_ text: String) -> Bool {
+        TeamsShape.link.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    static func suffix(_ m: Measured) -> String {
+        var f: [String] = []
+        if let n = m.pastes { f.append("pastes \(n)") }
+        if let ms = m.boxMs { f.append("box \(ms) ms") }
+        if let ms = m.totalMs { f.append("total \(ms) ms") }
+        if let n = m.chars { f.append("\(bucket(n)) chars") }
+        if let l = m.link { f.append("link \(l ? "yes" : "no")") }
+        if let mode = m.mode { f.append(mode) }
+        if let front = m.front { f.append("front \(front ? "yes" : "no")") }
+        if let ms = m.raiseMs { f.append("raise \(ms) ms") }
+        return f.isEmpty ? "" : " · " + f.joined(separator: ", ")
+    }
+
+    static func line(_ start: String, _ m: Measured) -> String { start + suffix(m) }
+
+    // The line before the second paste, with how long after the first ⌘V the box was seen empty
+    // (left out when it wasn't measured).
+    static func pastingAgain(afterMs: Int?) -> String {
+        "send: Teams emptied its box after the paste; pasting again" + (afterMs.map { " · after \($0) ms" } ?? "")
+    }
+
+    static func ms(since start: TimeInterval, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Int {
+        max(0, Int(((now - start) * 1000).rounded()))
+    }
+}
+
+// After Return, with the box empty: what the empty box is worth. A chat with no message list before
+// (a new chat) has nothing more to check, so it's sent, as before. A list that could be read before and
+// can't be now can't confirm anything: "unconfirmed". A list there before and after: the message must
+// show in it (Teams.postedAs).
+enum SendConfirm {
+    enum Step: Equatable { case ok, unconfirmed, check }
+    static let listWait: TimeInterval = 1 // how long the list has to answer again after Return
+
+    static func afterReturn(listBefore: Bool, listNow: Bool) -> Step {
+        guard listBefore else { return .ok }
+        return listNow ? .check : .unconfirmed
+    }
 }
 
 // The user's clipboard, every item and every type, to put back exactly.
@@ -99,8 +179,18 @@ enum OwnServer {
 
 extension TeamsReader {
     // Runs on the Teams queue and blocks it for a few seconds at most. `log` never gets text.
+    // The outcome carries what the send measured: its ⌘V presses and how long Teams took the first paste.
+    func send(_ text: String, to chat: String?, leave: Bool, afterDraft: Bool, log: @escaping (String) -> Void) -> SendOutcome {
+        let meter = SendMeter()
+        var out = send(text, to: chat, leave: leave, afterDraft: afterDraft, log: log, meter: meter, attempt: 1)
+        out.pastes = meter.pastes > 0 ? meter.pastes : nil
+        out.boxMs = meter.boxMs
+        out.raiseMs = meter.raiseMs
+        return out
+    }
+
     // attempt 2: Teams emptied its box after the first paste, before Return, and nothing was posted.
-    func send(_ text: String, to chat: String?, leave: Bool, afterDraft: Bool, log: @escaping (String) -> Void, attempt: Int = 1) -> SendOutcome {
+    private func send(_ text: String, to chat: String?, leave: Bool, afterDraft: Bool, log: @escaping (String) -> Void, meter: SendMeter, attempt: Int) -> SendOutcome {
         guard AXIsProcessTrusted() else { return SendOutcome(ok: false, reason: "no-access") }
         guard Teams.running() != nil else { return SendOutcome(ok: false, reason: "no-teams") }
         let context = read() // a fresh look at the window, the box and the draft
@@ -113,6 +203,7 @@ extension TeamsReader {
         guard context.open, let app, let window, var box = composer else {
             return SendOutcome(ok: false, reason: context.open ? "no-chat" : "no-teams")
         }
+        if messages != nil { meter.hadList = true }
         // Still the chat the strip showed? Asked again right before the paste.
         let sameChat = { chat == nil || Teams.chatName(AX.str(window, kAXTitleAttribute)) == chat }
         guard sameChat() else {
@@ -128,12 +219,15 @@ extension TeamsReader {
 
         // Teams forward, confirmed through Accessibility.
         let isFront = { (AX.attr(app, kAXFrontmostAttribute) as? Bool) == true }
+        let wasFront = attempt == 1 && isFront() // only measured: Teams is asked forward either way
+        let asked = ProcessInfo.processInfo.systemUptime
         AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         guard wait(2, isFront) else {
             log("send: Teams didn't come forward")
             return SendOutcome(ok: false, reason: "not-front")
         }
+        if attempt == 1, !wasFront { meter.raiseMs = SendLog.ms(since: asked) }
         // A key, only while Teams is the front app.
         func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) -> Bool {
             guard isFront() else { return false }
@@ -173,6 +267,10 @@ extension TeamsReader {
         let saved = DispatchQueue.main.sync { Clipboard.save() }
         let own = DispatchQueue.main.sync { Clipboard.put(text) }
         let posted = key(9, .maskCommand) // ⌘V
+        if posted {
+            meter.pastes += 1
+            if meter.firstPaste == nil { meter.firstPaste = ProcessInfo.processInfo.systemUptime }
+        }
         var decision = PasteWatch.Decision(pasted: false, restore: true)
         let start = Date()
         let until = start.addingTimeInterval(posted ? PasteWatch.limit : 0)
@@ -184,6 +282,9 @@ extension TeamsReader {
             let after = value()
             unreadable = after == nil
             decision = PasteWatch.decide(before: beforePaste, after: after, own: own, now: now)
+            if posted, decision.pasted, meter.boxMs == nil, let first = meter.firstPaste {
+                meter.boxMs = SendLog.ms(since: first)
+            }
             // Still unchanged: Teams may have built its box anew. Look for it again, in the same
             // chat, and follow the new one when there's no doubt which it is.
             if posted, !decision.pasted, Date() >= nextLook {
@@ -240,11 +341,13 @@ extension TeamsReader {
 
         // The newest message of the user's own before Return, to tell the new one from it.
         let ownBefore = lastOwn()
+        if messages != nil { meter.hadList = true }
         // A moment for Teams to take the paste in: Return right as the text shows has emptied the
         // box without posting it. Teams may touch up the text meanwhile (its autocorrect, a link's
         // preview), so the same check again.
         Thread.sleep(forTimeInterval: TeamsShape.pasteSettle)
         let settled = value()
+        let seenAt = ProcessInfo.processInfo.systemUptime // when the box was seen as it is now (empty, for a second paste)
         guard settled.map({ Teams.holds($0, expected, placeholder: ph) }) == true else {
             // Teams has emptied its box on its own, right after a paste, without posting anything.
             // Unless the message is in the chat after all, paste once more; a second time, say so.
@@ -253,8 +356,8 @@ extension TeamsReader {
                     return SendOutcome(ok: true, sent: true)
                 }
                 if attempt == 1, !leave {
-                    log("send: Teams emptied its box after the paste; pasting again")
-                    return send(text, to: chat, leave: leave, afterDraft: afterDraft, log: log, attempt: 2)
+                    log(SendLog.pastingAgain(afterMs: meter.firstPaste.map { SendLog.ms(since: $0, now: seenAt) }))
+                    return send(text, to: chat, leave: leave, afterDraft: afterDraft, log: log, meter: meter, attempt: 2)
                 }
                 log("send: Teams emptied its box after the paste again; nothing pressed")
                 return SendOutcome(ok: false, reason: "cleared")
@@ -271,8 +374,16 @@ extension TeamsReader {
             return SendOutcome(ok: false, reason: "not-sent")
         }
         // An empty box isn't proof: Teams has emptied it without posting. The message must show in
-        // the chat as the user's newest. With no message list to read, the empty box is all there is.
-        guard messages != nil else { return SendOutcome(ok: true, sent: true) }
+        // the chat as the user's newest. With no message list before (a new chat), the empty box is all
+        // there is; a list that could be read before and can't be now confirms nothing (SendConfirm).
+        let listNow = meter.hadList && wait(SendConfirm.listWait) { listReadable() }
+        switch SendConfirm.afterReturn(listBefore: meter.hadList, listNow: listNow) {
+        case .ok: return SendOutcome(ok: true, sent: true)
+        case .unconfirmed:
+            log("send: the box emptied but the chat's messages couldn't be read to check")
+            return SendOutcome(ok: false, reason: "unconfirmed")
+        case .check: break
+        }
         let shown = wait(TeamsShape.postedWait) {
             guard let now = lastOwn() else { return false }
             if let b = ownBefore, CFEqual(b.item, now.item), b.text == now.text { return false }
@@ -295,6 +406,15 @@ extension TeamsReader {
             if let m = TeamsScan.message(in: item, live), m.mine { return (item, m.text) }
         }
         return nil
+    }
+
+    // Whether the open chat's message list can be read now: the one held, while it has items, or one
+    // found again in the window (then held).
+    private func listReadable() -> Bool {
+        if let list = messages, !AX.children(list).isEmpty { return true }
+        guard let window, let list = TeamsScan.find(in: window, live).list else { return false }
+        messages = list
+        return true
     }
 
     private func wait(_ seconds: Double, _ done: () -> Bool) -> Bool {

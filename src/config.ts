@@ -56,7 +56,9 @@ export const LINT_TIMEOUT_MS = 10_000;
 // Contents/MacOS/translate-on-mac, two folders up from the bundled server's (Contents/Resources/server).
 // Run by hand from the repo, it isn't there unless STRIP_MAC names it.
 export const macCommand = () => process.env.STRIP_MAC || resolve(import.meta.dir, "../../MacOS/translate-on-mac");
-// The helper's first line ({ "ready": … }) within this long, and each reply within this long: both
-// well above what a translation takes.
+// The helper's first line ({ "ready": … }) within this long. A reply gets MAC_TIMEOUT_MS plus
+// MAC_MS_PER_CHAR for each character: Translation's time grows with the text, so a long text gets
+// longer, with room to spare on a slower Mac.
 export const MAC_START_MS = Number(process.env.STRIP_MAC_START_MS) || 10_000;
 export const MAC_TIMEOUT_MS = Number(process.env.STRIP_MAC_TIMEOUT_MS) || 15_000;
+export const MAC_MS_PER_CHAR = 10;

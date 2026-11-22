@@ -16,6 +16,10 @@
 //   09-auto-portuguese  10-menu-narrow
 // and this Mac's Translation (0.9.0), each at a typical strip's size (1200 x 145) and narrow (640 x 145):
 //   11-menu-mac  12-mac-reply  13-fallback  14-error-mac  15-error-language   (named <frame>-1200 and <frame>-640)
+// and the six quick fixes (0.10.0), at the same two sizes:
+//   16-menu-settings  17-fallback-retry  18-unconfirmed  19-idle-placeholder   (named <frame>-1200 and <frame>-640)
+// and the recent messages and the update checks (0.12.0), at the same two sizes:
+//   20-menu-recent  21-restored  22-teams-changed  23-claude-changed   (named <frame>-1200 and <frame>-640)
 // and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
 //   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run  v08-menu-mac
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
@@ -173,6 +177,8 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
         if (el.classList.contains("to")) info.push(`the chat's name is shortened with an ellipsis, to ${(el as HTMLElement).clientWidth}px`);
         else if (el.parentElement?.classList.contains("status")) info.push(`the notice's words end in an ellipsis (${(el as HTMLElement).clientWidth} of ${el.scrollWidth}px; its title holds them whole)`);
         else if (el.classList.contains("who") && (el as HTMLElement).title) info.push(`the sent message's name ends in an ellipsis (its title holds it)`);
+        // The menu's Recent row scrolls sideways when its buttons are more than the menu's width, as Reply in does.
+        else if (el.id === "recentBtns") info.push(`the Recent row scrolls sideways (${(el as HTMLElement).clientWidth} of ${el.scrollWidth}px)`);
         else if ((el.classList.contains("dw") || el.classList.contains("preview")) && (el.closest("[title]") as HTMLElement | null)?.title)
           info.push(`the ${el.classList.contains("dw") ? "dictation label" : "preview note"} ends in an ellipsis (${(el as HTMLElement).clientWidth} of ${el.scrollWidth}px; its title holds the words)`);
         else issues.push(`${name(el)} is cut: its content is ${el.scrollWidth}px in a ${(el as HTMLElement).clientWidth}px box`);
@@ -200,7 +206,7 @@ async function layout(p: any): Promise<{ issues: string[]; info: string[] }> {
       if (to && send && Math.abs(to.top + to.height / 2 - (send.top + send.height / 2)) > 1) issues.push("the chat's name isn't on Send's row");
       for (const top of [adj, tagrow]) if (top && send && top.bottom > send.top + 0.5) issues.push("the notice or Adjust isn't above Send's row");
       if (adj && tagrow && Math.abs(adj.top + adj.height / 2 - (tagrow.top + tagrow.height / 2)) > 3) issues.push("the notice and Adjust aren't on one row");
-      if (more && adj && Math.abs(adj.right - more.right) > 0.5) issues.push("Adjust doesn't end at the right edge, where the gear ends");
+      if (adj && Math.abs(adj.left - fe.left) > 0.5) issues.push("Adjust doesn't open the footer at its left edge");
     }
     // A shortcut glyph is never translucent, itself or through a parent.
     for (const k of strip.querySelectorAll("kbd")) {
@@ -261,7 +267,7 @@ const colCheck = (group: string, name: string, fn: () => Promise<string | void>)
 const narrowCheck = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "narrow" });
 // The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
 // about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
-const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language", "This Mac"]);
+const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language", "This Mac", "Recent", "Update check"]);
 const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are four labeled rows/, /^a long message scrolls inside its box/, /^a short strip/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
@@ -620,7 +626,7 @@ check("Settings menu", "the button opens the menu with its two columns; outside 
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "menu visible");
   eq(await t.p.locator("#more").getAttribute("aria-expanded"), "true", "aria-expanded");
-  eq(await t.p.locator("#menu button").count(), 16, "menu items (2 + 4 + Auto and 2 languages + 5 + 2 commands)");
+  eq(await t.p.locator("#menu button").count(), 17, "menu items (2 + 4 + Auto and 2 languages + 5 + 3 commands)");
   await t.p.click("#es", { position: { x: 100, y: 20 } });
   ok(!(await vis(t.p, "#menu")), "outside click should close the menu");
   await t.p.fill("#es", "texto");
@@ -636,8 +642,10 @@ check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On 
   const t = await open();
   await ready(t);
   await t.p.click("#more");
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the rows' labels");
-  const g = await t.p.evaluate(() => [...document.querySelectorAll("#menu .prow")].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
+  // (Recent, the fifth row, is there only with recent messages: see "Recent" below.)
+  eq((await t.p.locator("#menu .prow:not(.recentrow) .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the rows' labels");
+  ok(!(await vis(t.p, "#recentRow")), "no Recent row with no recent messages");
+  const g = await t.p.evaluate(() => [...document.querySelectorAll("#menu .prow:not(.recentrow)")].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
   ok(g[0][1] === g[1][1] && g[2][1] === g[3][1] && g[2][1] > g[0][1], `two rows of two: ${JSON.stringify(g)}`);
   ok(g[0][0] === g[2][0] && g[1][0] === g[3][0] && g[1][0] > g[0][0], `two columns: ${JSON.stringify(g)}`);
   eq(await t.p.locator("#menu .mh").count(), 0, "title rows");
@@ -650,7 +658,7 @@ check("Settings menu", "the settings are four labeled rows in a 2 × 2 grid (On 
     const want = b.option && !b.chosen ? sec : prim;
     ok(b.c === want && !b.off, `"${b.t}" should be in ${want === prim ? "primary" : "secondary"} text (${b.c}, off=${b.off}, wanted ${want})`);
   }
-  const chosenPerRow = await t.p.evaluate(() => [...document.querySelectorAll("#menu .posrow")].map((r) => r.querySelectorAll('button[aria-checked="true"]').length));
+  const chosenPerRow = await t.p.evaluate(() => [...document.querySelectorAll("#menu .posrow:not(.recent)")].map((r) => r.querySelectorAll('button[aria-checked="true"]').length));
   ok(chosenPerRow.length === 4 && chosenPerRow.every((n) => n >= 1), `a chosen option in each row (${chosenPerRow.join(", ")})`);
   const r = await t.p.evaluate(() => { const g = (id: string) => document.getElementById(id)!.getBoundingClientRect(); const m = g("more"), s = g("send"), me = g("menu"); return { more: [m.width, m.height, m.left, m.right], sendRight: s.right, sendTop: s.top, menuBottom: me.bottom, W: window.innerWidth }; });
   eq(r.more[0], 28, "gear width"); eq(r.more[1], 28, "gear height");
@@ -1190,7 +1198,7 @@ async function failedSend(reason: string) {
   const t = await open(`send=${reason}`);
   await translateFlow(t);
   await t.p.click("#send");
-  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "not-posted", "cleared", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
+  const want = reason === "draft" ? "draft" : ["not-front", "mismatch", "not-sent", "not-posted", "unconfirmed", "cleared", "no-paste", "not-own-server", "something-else"].includes(reason) ? "error" : "ready";
   await waitState(t.p, want, 4000).catch(() => {});
   await t.p.waitForTimeout(1100);
   return t;
@@ -1859,16 +1867,17 @@ check("Design", "the caret is the accent, and the ready English box takes a focu
   await t.p.click("#es"); await settle(t.p, 400);
   eq(await bg(), off, "English surface after focus leaves");
 });
-check("Design", "the chat's name keeps 16 px from Send, the language button 16 px from 'To', and Adjust 24 px from the language, with a long chat too", async () => {
+check("Design", "the chat's name keeps 16 px from Send and the language button 16 px from 'To'; Adjust opens the reply's footer at the left, as Normal and Formal open the other one, with the notice after it; with a long chat too", async () => {
   for (const chat of ["Priya Raman", LONG_CHAT]) {
     const t = await open();
     await setTeams(t.p, { ...PRIYA_TEAMS, chat });
     await ready(t);
     await settle(t.p, 150);
-    const g = await t.p.evaluate(() => { const r = (id: string) => document.getElementById(id)!.getBoundingClientRect(); return { toSend: r("send").left - r("to").right, langTo: r("to").left - r("lang").right, adjLang: r("lang").left - r("adjustBtn").right }; });
+    const g = await t.p.evaluate(() => { const r = (id: string) => document.getElementById(id)!.getBoundingClientRect(); return { toSend: r("send").left - r("to").right, langTo: r("to").left - r("lang").right, adjIn: r("adjustBtn").left - (document.querySelector(".f.en") as HTMLElement).getBoundingClientRect().left, segIn: (document.querySelector(".f.es .pseg") as HTMLElement).getBoundingClientRect().left - (document.querySelector(".f.es") as HTMLElement).getBoundingClientRect().left, adjLang: r("lang").left - r("adjustBtn").right }; });
     ok(Math.abs(g.toSend - 16) <= 0.5, `${chat}: the name is ${g.toSend} px from Send, not 16`);
     ok(Math.abs(g.langTo - 16) <= 0.5, `${chat}: the language is ${g.langTo} px from 'To', not 16`);
-    ok(Math.abs(g.adjLang - 24) <= 0.5, `${chat}: Adjust is ${g.adjLang} px from the language, not 24`);
+    ok(Math.abs(g.adjIn - g.segIn) <= 0.5, `${chat}: Adjust is ${g.adjIn} px into its module, Normal and Formal ${g.segIn}`);
+    ok(g.adjLang > 24, `${chat}: Adjust should sit apart from the language, at the left (${g.adjLang} px between them)`);
   }
 });
 check("Design", "the English footer: notice and Adjust buttons 24 px at 12 px, Send 28, the gear last and 28 × 28", async () => {
@@ -1978,9 +1987,16 @@ const layoutCases: [string, () => Promise<T>][] = [
   ["a Mac reply + long chat (Adjust off)", async () => { const t = await open("model=mac"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); return t; }],
   ["a stand-in reply + long chat", async () => { const t = await open("fallback=offline"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); return t; }],
   ["a stand-in reply, Auto in Portuguese + long chat", async () => { await putSettings({ auto: true }); const t = await open("fallback=limit&chat=pt"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, last: "Você consegue revisar o orçamento até quinta?" }); await ready(t, LONG_EN); return t; }],
+  ["an unconfirmed send + long chat", async () => { const t = await open("send=unconfirmed"); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); await t.p.click("#send"); await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not confirmed"), null, { timeout: 3000 }); return t; }],
+  ["menu open, Auto in Portuguese, a stand-in", async () => { await putSettings({ auto: true }); const t = await open("fallback=offline&chat=pt"); await ready(t, LONG_EN); await t.p.click("#more"); return t; }],
   ["a stand-in reply with a voice finding", async () => { const t = await open("fallback=login"); await translateFlow(t, "kindly revisa"); return t; }],
   ["can't translate on this Mac", async () => { const t = await open("model=mac"); await t.p.fill("#es", "NOMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "mac"); return t; }],
   ["the language isn't on this Mac", async () => { const t = await open("model=mac"); await t.p.fill("#es", "NOTONMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "language"); return t; }],
+  // Recent messages and the update checks (0.12.0).
+  ["menu open, five recent", async () => { const t = await open(); await keepRecent(t, RECENT_EN); await t.p.click("#more"); return t; }],
+  ["a recent message brought back + long chat", async () => { const t = await open(); await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await keepRecent(t, [LONG_EN]); await t.p.keyboard.press("Meta+z"); await waitState(t.p, "ready"); return t; }],
+  ["Teams changed, idle + long chat", async () => { const t = await open(); await setTeams(t.p, { ...TEAMS_CHANGED, chat: LONG_CHAT }); return t; }],
+  ["Claude Code changed, idle, with written text", async () => { const t = await open(); await setClaudeCheck(t.p, CLAUDE_MISSING); await t.p.fill("#es", ES); return t; }],
 ];
 const LAYOUT_CASES = new Set(layoutCases.map(([n]) => n));
 for (const [name, mk] of layoutCases) {
@@ -2007,6 +2023,9 @@ for (const [name, mk] of layoutCases) {
         return getComputedStyle(en).visibility === "visible" && r.width > 0 && en.value.trim().length > 0;
       });
       if (!shown) return "no translation shown in this state";
+      // An open menu covers the English's first line since it has three commands (0.10.0): it closes first, as a click outside it would.
+      let closed = "";
+      if (await vis(t.p, "#menu")) { await t.p.keyboard.press("Escape"); closed = "the menu closed first"; }
       const box = (await t.p.locator("#en").boundingBox())!;
       const picked = () => t.p.evaluate(() => { const en = document.getElementById("en") as HTMLTextAreaElement; return en.value.slice(en.selectionStart, en.selectionEnd); });
       // A few points along the first line, so one lands on a word rather than a space.
@@ -2026,6 +2045,7 @@ for (const [name, mk] of layoutCases) {
       await t.p.evaluate(() => { (window as any).__copied = null; document.addEventListener("copy", () => { const en = document.getElementById("en") as HTMLTextAreaElement; (window as any).__copied = en.value.slice(en.selectionStart, en.selectionEnd); }, { once: true }); });
       await t.p.keyboard.press("Meta+c");
       eq(await t.p.evaluate(() => (window as any).__copied), dragged, "⌘C copies the selection");
+      return closed || undefined;
     } finally { await resetSettings(); }
   });
 }
@@ -2233,6 +2253,7 @@ for (const [why, title] of FALLBACKS) {
     const c = await tagContrast(t.p);
     ok(c >= 4.5, `the tag's words reach ${c.toFixed(2)}:1, under 4.5:1`);
     eq(await state(t.p), "ready", "data-state");
+    eq((await actionLabels(t.p)).join(","), why === "limit" ? "" : "Try Claude again", "the tag's buttons (none while the plan limit lasts)");
     eq(await t.p.locator("#adjustBtn").getAttribute("aria-disabled"), "true", "Adjust off");
     ok(await t.p.locator("#send").isEnabled(), "Send on");
     eq(await t.p.locator("#tone [data-register=formal]").getAttribute("aria-disabled"), null, "Normal and Formal stay on: the model is still Claude's");
@@ -2281,6 +2302,395 @@ check("This Mac", "a Claude error in the server's state doesn't keep Translate o
   await waitState(t.p, "ready");
 });
 
+// ===================================================================================== six quick fixes (0.10.0)
+// Text against what's behind it, every surface composited down to the page: the contrast ratio of `sel`.
+const contrastOf = (p: any, sel: string, placeholder = false) => p.evaluate(([sel, ph]: [string, boolean]) => {
+  const rgba = (c: string) => { const m = c.match(/[\d.]+/g)!.map(Number); return { r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1 }; };
+  const el = document.querySelector(sel) as HTMLElement;
+  const layers: any[] = [];
+  for (let e: HTMLElement | null = el; e; e = e.parentElement) { const c = rgba(getComputedStyle(e).backgroundColor); if (c.a > 0) layers.push(c); }
+  let bg = { r: 0, g: 0, b: 0 };
+  for (const l of layers.reverse()) bg = { r: l.r * l.a + bg.r * (1 - l.a), g: l.g * l.a + bg.g * (1 - l.a), b: l.b * l.a + bg.b * (1 - l.a) };
+  const fg0 = rgba(getComputedStyle(el, ph ? "::placeholder" : null).color), fg = { r: fg0.r * fg0.a + bg.r * (1 - fg0.a), g: fg0.g * fg0.a + bg.g * (1 - fg0.a), b: fg0.b * fg0.a + bg.b * (1 - fg0.a) };
+  const lum = (c: any) => { const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const a = lum(fg), b = lum(bg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}, [sel, placeholder]);
+const notConfirmedTitle = "Teams emptied its box, but the strip couldn't see the chat to check the message is there.";
+
+check("Settings menu", "the gear is named 'Options'; its third command, 'Settings…' with ⌘, at its right in secondary text, posts open settings and closes the menu", async () => {
+  const t = await open();
+  eq(await t.p.locator("#more").getAttribute("aria-label"), "Options", "the gear's label");
+  eq(await t.p.locator("#more").getAttribute("title"), "Options", "the gear's title");
+  await t.p.click("#more");
+  eq((await t.p.locator("#menu [data-do]").evaluateAll((bs: any[]) => bs.map((b) => b.dataset.do))).join(","), "guide,restart,settings", "the commands, in order");
+  const item = t.p.locator("#menu [data-do=settings]");
+  eq(await item.getAttribute("role"), "menuitem", "its role");
+  eq((await item.innerText()).replace(/\s+/g, " ").trim(), "Settings… ⌘,", "its words");
+  eq(await item.locator("kbd").innerText(), "⌘,", "the shortcut beside it");
+  const r = await t.p.evaluate(() => {
+    const b = document.querySelector("#menu [data-do=settings]") as HTMLElement, k = b.querySelector("kbd")!;
+    const br = b.getBoundingClientRect(), kr = k.getBoundingClientRect(), d = document.createElement("i");
+    d.style.color = "var(--color-text-secondary)"; document.body.append(d); const sec = getComputedStyle(d).color; d.remove();
+    return { right: br.right - kr.right, color: getComputedStyle(k).color, sec, cut: b.scrollWidth > b.clientWidth + 1, h: br.height };
+  });
+  ok(r.right <= 9, `⌘, should sit at the item's right end (${r.right} px from it)`);
+  eq(r.color, r.sec, "⌘, in secondary text");
+  ok(!r.cut, "the item shouldn't be cut");
+  const c = await contrastOf(t.p, "#menu [data-do=settings] kbd");
+  ok(c >= 4.5, `⌘, reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  await expectLayout(t.p);
+  await item.click();
+  eq((await opens(t, "settings")).length, 1, "open settings messages");
+  ok(!(await vis(t.p, "#menu")), "the menu should close");
+  eq(await t.p.locator("#more").getAttribute("aria-expanded"), "false", "aria-expanded after");
+  // From the keyboard too: the menu's items are buttons, so Return on it does the same.
+  await t.p.click("#more");
+  await t.p.focus("#menu [data-do=settings]");
+  await t.p.keyboard.press("Enter");
+  eq((await opens(t, "settings")).length, 2, "open settings messages after Return");
+  ok(!(await vis(t.p, "#menu")), "the menu should close again");
+  return `⌘, at ${c.toFixed(2)}:1`;
+});
+check("Send reasons", "unconfirmed: 'Not confirmed. Check the chat' with its title, no button, red box; both texts stay and Send works again", async () => {
+  const t = await failedSend("unconfirmed");
+  eq(await tagText(t.p), "Not confirmed. Check the chat", "tag");
+  eq(await t.p.locator("#status").getAttribute("title"), notConfirmedTitle, "its title");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  eq(await state(t.p), "error", "state");
+  ok(await t.p.evaluate(() => !!document.querySelector("#status .ico svg")), "an error tag has its icon");
+  eq(await val(t.p, "es"), ES, "the Spanish stays");
+  ok((await val(t.p, "en")).length > 0, "the English stays");
+  const c = await contrastOf(t.p, "#status > span:last-child");
+  ok(c >= 4.5, `the notice reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  await expectLayout(t.p);
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  eq((await sends(t)).length, 2, "send messages");
+  return `contrast ${c.toFixed(2)}:1`;
+});
+check("This Mac", "Try Claude again on a stand-in: the same request again; while Claude still can't, the Mac stands in again; once it can, Claude's reply drops the tag and Adjust is back", async () => {
+  const t = await open("fallback=offline");
+  await translateFlow(t);
+  eq(await tagText(t.p), "Translated on this Mac", "the tag");
+  eq((await actionLabels(t.p)).join(","), "Try Claude again", "the tag's button");
+  ok(await t.p.evaluate(() => { const b = document.querySelector("#actions [data-act=retry-claude]") as HTMLElement; return b.classList.contains("btn") && b.classList.contains("small"); }), "the design system's small button");
+  await t.p.click("#actions [data-act=retry-claude]");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.state === "translating" || document.querySelectorAll("#actions button").length === 1, null, { timeout: 3000 }).catch(() => {});
+  await waitState(t.p, "ready");
+  await settle(t.p, 200);
+  let rs = reqsTo(t, "/api/translate");
+  eq(rs.length, 2, "translate requests after the first click");
+  eq(JSON.stringify(rs[1].body), JSON.stringify(rs[0].body), "the same request again (no target, no flag)");
+  eq(await tagText(t.p), "Translated on this Mac", "the Mac stood in again");
+  eq((await actionLabels(t.p)).join(","), "Try Claude again", "the button stays");
+  // Claude is back: the next answer is Claude's (the mock would stand in again for this page's ?fallback).
+  const CLAUDE_EN = "Could you look over the budget before Thursday? We can go through it on the call.";
+  await t.p.route("**/api/translate", (r: any) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: CLAUDE_EN, language: "English", from: "target", lint: [], engine: "claude" }) }));
+  await t.p.click("#actions [data-act=retry-claude]");
+  await t.p.waitForFunction((x: string) => (document.getElementById("en") as HTMLTextAreaElement).value === x, CLAUDE_EN, { timeout: 4000 }).catch(() => { throw new Fail("Claude's reply never showed"); });
+  rs = reqsTo(t, "/api/translate");
+  eq(rs.length, 3, "translate requests");
+  eq(JSON.stringify(rs[2].body), JSON.stringify(rs[0].body), "the same request a third time");
+  eq(await state(t.p), "ready", "state");
+  eq(await tagText(t.p), "", "no stand-in tag");
+  eq((await actionLabels(t.p)).length, 0, "no button");
+  eq(await t.p.locator("#adjustBtn").getAttribute("aria-disabled"), "false", "Adjust on");
+});
+check("This Mac", "no Try Claude again after the plan limit, nor once Mac is the model chosen", async () => {
+  const t = await open("fallback=limit");
+  await translateFlow(t);
+  eq(await tagText(t.p), "Translated on this Mac", "the tag after the limit");
+  eq((await actionLabels(t.p)).length, 0, "no button while the limit lasts");
+  const t2 = await open("fallback=offline");
+  await translateFlow(t2);
+  eq((await actionLabels(t2.p)).join(","), "Try Claude again", "the button");
+  await t2.p.evaluate(() => { (0, eval)(`srv = Object.assign({}, srv, { settings: Object.assign({}, srv.settings, { model: "mac" }) }); paint();`); });
+  eq((await actionLabels(t2.p)).length, 0, "no button once Mac is chosen");
+});
+narrowCheck("This Mac", "a stand-in at 640: Try Claude again stays whole beside the language, To, Send and the gear; the notice's words give way", async () => {
+  const t = await open("fallback=offline");
+  await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT });
+  await ready(t, LONG_EN);
+  await settle(t.p, 150);
+  const cut = await t.p.evaluate(() => [...document.querySelectorAll("#actions .btn, #send, #more")].filter((b) => b.scrollWidth > (b as HTMLElement).clientWidth + 1 || b.getBoundingClientRect().right > window.innerWidth).map((b) => b.textContent));
+  eq(cut.length, 0, `cut or outside: ${cut.join(", ")}`);
+  ok(await vis(t.p, "#actions [data-act=retry-claude]"), "Try Claude again should show");
+  eq(await t.p.locator("#status").getAttribute("title"), "Claude couldn't be reached, so this Mac translated it, without your voice guide.", "the tag's title keeps its words");
+  await expectLayout(t.p);
+  return `steps: ${await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit)}`;
+});
+narrowCheck("Language", "a language button that does nothing (Auto off, the reply in the target) leaves before the notice's words shorten", async () => {
+  const t = await open("send=not-front");
+  await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT });
+  await ready(t, LONG_EN);
+  eq((await langOf(t.p)).disabled, "true", "the button does nothing");
+  await t.p.click("#send");
+  await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("forward"), null, { timeout: 4000 });
+  await settle(t.p, 150);
+  const fit: string = await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit);
+  const steps = fit.split(" ");
+  ok(steps.includes("nolang"), `the language button should leave (steps: ${fit})`);
+  ok(!(await langOf(t.p)).shown, "the language button is gone");
+  for (const later of ["name", "noname", "nonotice"]) if (steps.includes(later)) ok(steps.indexOf("nolang") < steps.indexOf(later), `it should leave before ${later} (steps: ${fit})`);
+  const words = await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return { whole: w.scrollWidth <= w.clientWidth + 1, shown: w.getBoundingClientRect().width > 0 }; });
+  ok(words.shown, "the notice's words show");
+  await expectLayout(t.p);
+  return `steps: ${fit}; the notice's words ${words.whole ? "whole" : "end in an ellipsis"}`;
+});
+narrowCheck("Language", "a language button that can be clicked keeps today's steps: it stays while the notice's words shorten", async () => {
+  await putSettings({ target: "Português" });
+  try {
+    const t = await open();
+    await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT });
+    await ready(t);
+    await putSettings({ target: "English" });
+    await t.p.waitForFunction(() => document.getElementById("lang")!.getAttribute("aria-disabled") === "false", null, { timeout: 3000 }).catch(() => { throw new Fail("the Portuguese reply's button never turned clickable"); });
+    await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT, shape: "several" });   // a notice: "Click the box in Teams first"
+    await settle(t.p, 150);
+    eq(await tagText(t.p), "Click the box in Teams first", "the notice");
+    const fit: string = await t.p.evaluate(() => document.getElementById("strip")!.dataset.fit);
+    const steps = fit.split(" ");
+    if (steps.includes("nolang")) ok(steps.includes("noname") && steps.indexOf("nolang") > steps.indexOf("noname"), `a clickable button should leave only after the name (steps: ${fit})`);
+    else ok((await langOf(t.p)).shown, "the button stays");
+    await expectLayout(t.p);
+    return `steps: ${fit}`;
+  } finally { await resetSettings(); }
+});
+check("Replies", "a voice finding's tag has Fix it, which asks for an adjust naming the finding and changing only it", async () => {
+  const t = await open();
+  await translateFlow(t, "kindly revisa");
+  const fix = t.p.locator('#actions [data-act="fix-voice"]');
+  eq(await fix.innerText(), "Fix it", "the button");
+  const before = reqsTo(t, "/api/adjust").length;
+  await fix.click();
+  await settle(t.p, 600);
+  const asked = reqsTo(t, "/api/adjust").slice(before);
+  eq(asked.length, 1, "one adjust asked");
+  ok(String(asked[0]?.body?.note).includes("\"Kindly\" sounds stiff") && String(asked[0]?.body?.note).startsWith("The user's voice guide rules this out"), `the note names the finding (${asked[0]?.body?.note})`);
+  await expectLayout(t.p);
+});
+check("Replies", "the empty reply box shows the target's name, in secondary text at 4.5:1, on one line; its name stays 'Translation'", async () => {
+  const t = await open();
+  eq(await t.p.locator("#en").getAttribute("placeholder"), "English", "placeholder");
+  eq(await t.p.locator("#en").getAttribute("aria-label"), "Translation", "accessible name");
+  const c = await contrastOf(t.p, "#en", true);
+  ok(c >= 4.5, `the placeholder reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  const fits = await t.p.evaluate(() => {
+    const e = document.getElementById("en") as HTMLTextAreaElement, cs = getComputedStyle(e), m = document.createElement("span");
+    m.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${cs.font}`; m.textContent = e.placeholder; document.body.append(m);
+    const w = m.getBoundingClientRect().width; m.remove();
+    return { w, box: e.clientWidth };
+  });
+  ok(fits.w <= fits.box, `the placeholder should fit one line (${Math.round(fits.w)} in ${fits.box} px)`);
+  // What you type there is the message: Send turns on.
+  await t.p.fill("#en", "See you on the call.");
+  ok(await t.p.locator("#send").isEnabled(), "Send on with typed text");
+  return `contrast ${c.toFixed(2)}:1; ${Math.round(fits.w)} of ${fits.box} px`;
+});
+
+// ===================================================================================== recent messages and the update checks (0.12.0)
+// Replies left in the strip's memory: five made-up ones, the oldest first.
+const RECENT_EN = ["The numbers look right to me now, thanks for checking.", "Sure", "Thanks, that works for me.", "Can we move the call to Friday afternoon?", LONG_EN];
+// Their buttons' words, newest first: the reply's first words, about 24 characters, then "…".
+const RECENT_LABELS = ["I went through the…", "Can we move the call to…", "Thanks, that works for…", "Sure", "The numbers look right…"];
+// Each reply translated, set in the reply box, then cleared with Esc (the last one sent instead, with sendLast).
+async function keepRecent(t: T, replies: string[], sendLast = false) {
+  for (let i = 0; i < replies.length; i++) {
+    await translateFlow(t, `${ES} ${i + 1}`);
+    await t.p.fill("#en", replies[i]);
+    if (sendLast && i === replies.length - 1) { await t.p.click("#send"); await waitState(t.p, "sent"); }
+    else { await t.p.keyboard.press("Escape"); await waitState(t.p, "idle"); }
+  }
+}
+// What the page keeps (st is its own top-level binding) and the Recent row's buttons.
+const recentList = (p: any): Promise<string[]> => p.evaluate("st.recent.map((r) => r.en)");
+const recentButtons = (p: any) => p.locator("#recentBtns button").evaluateAll((bs: any[]) => bs.map((b) => ({ text: b.textContent, title: b.title, role: b.getAttribute("role") })));
+const TEAMS_CHANGED = { ...PRIYA_TEAMS, check: "changed", missing: ["box"] };
+const CLAUDE_MISSING = ["--input-format", "--strict-mcp-config"];
+// The server's Claude Code check, as /api/state would carry it (the page mock on 4813 may predate its ?claude=changed).
+const setClaudeCheck = (p: any, missing: string[]) =>
+  p.evaluate(`(() => { srv = Object.assign({}, srv, { translator: Object.assign({}, srv.translator, { check: "changed", missing: ${JSON.stringify(missing)} }) }); paint(); })()`);
+const CLOCK = /^\d{1,2}:\d{2}\s[AP]M$/;
+
+check("Recent", "Esc with a reply keeps it; ⌘Z with both boxes empty brings it back in its boxes, ready for its chat, and it leaves the list", async () => {
+  const t = await open();
+  await keepRecent(t, ["See you on the call."]);
+  eq(await val(t.p, "en"), "", "Esc emptied the reply box");
+  eq((await recentList(t.p)).join("|"), "See you on the call.", "kept");
+  await t.p.keyboard.press("Meta+z");
+  await waitState(t.p, "ready");
+  eq(await val(t.p, "es"), `${ES} 1`, "the written text is back");
+  eq(await val(t.p, "en"), "See you on the call.", "the reply is back");
+  eq(await t.p.locator("#chat").innerText(), "Priya Raman", "To");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  eq(await focused(t.p), "es", "focus");
+  eq((await recentList(t.p)).length, 0, "it left the list");
+  eq(reqsTo(t, "/api/translate").length, 1, "nothing asked of the server again");
+  await t.p.keyboard.press("Meta+Enter");
+  await waitState(t.p, "sent");
+  eq((await sends(t)).map((m) => m.text).join("|"), "See you on the call.", "⌘⏎ sends what came back");
+  eq((await recentList(t.p)).join("|"), "See you on the call.", "the send keeps it again");
+});
+check("Recent", "⌘Z with text in a box is the box's own undo: nothing comes back, and the list keeps it", async () => {
+  const t = await open();
+  await keepRecent(t, ["See you on the call."]);
+  await t.p.click("#es");
+  await t.p.keyboard.type("Hola");
+  await t.p.keyboard.press("Meta+z");
+  await settle(t.p, 200);
+  // (What WebKit's own undo does to the boxes is its business: the recent message didn't come back, so it stays listed.)
+  ok((await val(t.p, "en")) !== "See you on the call.", "the recent reply doesn't come back");
+  eq((await recentList(t.p)).length, 1, "the list keeps it");
+});
+check("Recent", "the Options menu: no Recent row with an empty list; after a confirmed send, one button with the reply's first words, 'Sent to <chat> at <time>' its title; a click brings it back and closes the menu", async () => {
+  const t = await open();
+  await t.p.click("#more");
+  ok(!(await vis(t.p, "#recentRow")), "no Recent row with an empty list");
+  eq(await t.p.locator("#menu button").count(), 17, "menu items");
+  await t.p.keyboard.press("Escape");
+  await keepRecent(t, [LONG_EN], true);
+  await t.p.click("#more");
+  ok(await vis(t.p, "#recentRow"), "the Recent row");
+  eq(await t.p.locator("#recentLabel").innerText(), "Recent", "its label");
+  const b = await recentButtons(t.p);
+  eq(b.length, 1, "buttons");
+  eq(b[0].text, "I went through the…", "its words");
+  eq(b[0].role, "menuitem", "its role");
+  ok(/^Sent to Priya Raman at /.test(b[0].title) && CLOCK.test(b[0].title.replace(/^Sent to Priya Raman at /, "")), `its title: ${b[0].title}`);
+  const c = await contrastOf(t.p, "#recentBtns button");
+  ok(c >= 4.5, `the button reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  await expectLayout(t.p);
+  await t.p.click("#recentBtns button");
+  ok(!(await vis(t.p, "#menu")), "the menu closes");
+  await waitState(t.p, "ready");
+  eq(await val(t.p, "en"), LONG_EN, "the reply is back");
+  eq(await val(t.p, "es"), `${ES} 1`, "the written text is back");
+  await t.p.click("#more");
+  ok(!(await vis(t.p, "#recentRow")), "it left the list, so the row is gone");
+  eq((await sends(t)).length, 1, "one send, nothing more");
+  return `contrast ${c.toFixed(2)}:1`;
+});
+check("Recent", "five at most, newest first: a sixth drops the oldest; the row fits the menu and every button can be reached; nothing goes to the server or the shell", async () => {
+  const t = await open();
+  await keepRecent(t, ["The first one, gone by the end.", ...RECENT_EN]);
+  await t.p.click("#more");
+  const b = await recentButtons(t.p);
+  eq(b.map((x: any) => x.text).join(" | "), RECENT_LABELS.join(" | "), "the buttons, newest first");
+  ok(b.every((x: any) => /^Cleared at /.test(x.title)), `their titles: ${b.map((x: any) => x.title).join(", ")}`);
+  await expectLayout(t.p);
+  await t.p.locator("#recentBtns button").last().click();
+  ok(!(await vis(t.p, "#menu")), "the menu closes");
+  await waitState(t.p, "ready");
+  eq(await val(t.p, "en"), RECENT_EN[0], "the oldest of the five came back");
+  eq(reqsTo(t, "/api/translate").length, 6, "the six translations are all the server heard");
+  eq(t.reqs.filter((r) => r.path !== "/api/translate").length, 0, "no other request");
+  eq((await t.msgs()).filter((m) => !["detect"].includes(m.type)).length, 0, "nothing told to the shell but the language checks");
+});
+check("Recent", "a click with a reply on show keeps that one first, as Esc would", async () => {
+  const t = await open();
+  await keepRecent(t, ["See you on the call."]);
+  await translateFlow(t, "Otro mensaje");
+  await t.p.fill("#en", "A different reply.");
+  await t.p.click("#more");
+  await t.p.click("#recentBtns button");
+  await waitState(t.p, "ready");
+  eq(await val(t.p, "en"), "See you on the call.", "the picked one is back");
+  eq((await recentList(t.p)).join("|"), "A different reply.", "the one on show was kept");
+});
+check("Recent", "one written for another chat comes back as Written for it, with Send off", async () => {
+  const t = await open();
+  await keepRecent(t, ["See you on the call."]);
+  await setTeams(t.p, DANIEL_TEAMS);
+  await t.p.keyboard.press("Meta+z");
+  await waitState(t.p, "written");
+  eq(await tagText(t.p), "Written for Priya Raman", "tag");
+  ok(await t.p.locator("#send").isDisabled(), "Send should be off");
+  await expectLayout(t.p);
+});
+check("Recent", "a reload forgets them", async () => {
+  const t = await open();
+  await keepRecent(t, ["See you on the call."]);
+  await t.p.reload();
+  await t.p.waitForFunction("(() => { try { return !!srv && st.teams !== null; } catch (e) { return false; } })()", null, { timeout: 8000 });
+  await t.p.keyboard.press("Meta+z");
+  await settle(t.p, 200);
+  eq(await val(t.p, "en"), "", "nothing comes back");
+  await t.p.click("#more");
+  ok(!(await vis(t.p, "#recentRow")), "no Recent row");
+});
+narrowCheck("Recent", "under 720 wide, with Recent the menu opens left of the gear, whole and inside the window, and every recent button can be reached; at 110 tall it scrolls inside the window", async () => {
+  const t = await open();
+  await keepRecent(t, RECENT_EN);
+  for (const h of [145, 110]) {
+    await t.p.setViewportSize({ width: 640, height: h });
+    await t.p.click("#more");
+    await settle(t.p, 150);
+    const m = await rect(t.p, "#menu"), gear = await rect(t.p, "#more");
+    ok(m.l >= 0 && m.t >= 0 && m.r <= 640 && m.b <= h, `640 × ${h}: the menu leaves the window (${JSON.stringify(m)})`);
+    ok(m.r <= gear.l || m.b <= gear.t, `640 × ${h}: the menu covers the gear`);
+    const cut = await t.p.evaluate(() => [...document.querySelectorAll("#menu button, #menu .pl")].filter((e) => e.getBoundingClientRect().width > 0 && e.scrollWidth > (e as HTMLElement).clientWidth + 1).map((e) => e.textContent!.trim()));
+    eq(cut.length, 0, `640 × ${h}: cut in the menu: ${cut.join(", ")}`);
+    if (h === 145) await expectLayout(t.p);
+    const oldest = (await recentList(t.p)).pop();
+    await t.p.locator("#recentBtns button").last().click();
+    await waitState(t.p, "ready");
+    eq(await val(t.p, "en"), oldest, `640 × ${h}: the last button brought back the oldest`);
+    await t.p.keyboard.press("Escape");
+    await waitState(t.p, "idle");
+  }
+});
+
+colCheck("Recent", "in the column, Recent is the settings' last row, its label in line with the others and the commands, the menu whole over the English module", async () => {
+  const t = await open();
+  await keepRecent(t, RECENT_EN);
+  await t.p.click("#more");
+  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position, Recent", "the settings' rows");
+  const lefts = await t.p.evaluate(() => [...document.querySelectorAll("#menu .pl, #menu [data-do]")].map((e) => { const rg = document.createRange(); rg.selectNodeContents(e); return Math.round(rg.getBoundingClientRect().left); }));
+  ok(new Set(lefts).size === 1, `the labels and the commands should start in one line: ${lefts.join(", ")}`);
+  const row = await rect(t.p, "#recentRow"), pos = await rect(t.p, "#menu .prow.position"), cmd = await rect(t.p, "#menu [data-do=guide]");
+  ok(row.t >= pos.b && row.b <= cmd.t, `Recent should sit after Position, before the commands (${JSON.stringify([pos, row, cmd])})`);
+  await expectLayout(t.p);
+});
+check("Update check", "Teams changed: while idle, an orange tag 'Teams changed. Sending may fail' with what moved in its title, at 4.5:1; gone once there's a reply, and Send still works", async () => {
+  const t = await open();
+  await setTeams(t.p, { ...PRIYA_TEAMS, check: "changed", missing: ["box", "list"] });
+  eq(await tagText(t.p), "Teams changed. Sending may fail", "tag");
+  eq(await t.p.locator("#status").getAttribute("title"), "This version of Teams moved something the strip reads: the message box and the message list. Sends may stop; the strip needs an update.", "its title");
+  ok(await t.p.evaluate(() => document.getElementById("status")!.classList.contains("s-needs")), "orange (s-needs)");
+  eq((await actionLabels(t.p)).length, 0, "buttons");
+  const c = await contrastOf(t.p, "#status > span:last-child");
+  ok(c >= 4.5, `the tag reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  await expectLayout(t.p);
+  await translateFlow(t);
+  eq(await tagText(t.p), "", "no tag over a reply");
+  ok(await t.p.locator("#send").isEnabled(), "Send should be on");
+  await setTeams(t.p, { ...PRIYA_TEAMS, check: "ok" });
+  await t.p.keyboard.press("Escape");
+  eq(await tagText(t.p), "", "checked ok: no tag");
+  // The browser preview's flag shows it too.
+  const t2 = await open("check=changed");
+  eq(await tagText(t2.p), "Teams changed. Sending may fail", "?check=changed");
+  return `contrast ${c.toFixed(2)}:1`;
+});
+check("Update check", "Claude Code changed: while idle, the orange tag 'Claude Code changed. The strip may fail', the missing flags in its title; none with this Mac's model", async () => {
+  const t = await open();
+  await setClaudeCheck(t.p, CLAUDE_MISSING);
+  eq(await tagText(t.p), "Claude Code changed. The strip may fail", "tag");
+  eq(await t.p.locator("#status").getAttribute("title"), "This version of Claude Code lacks --input-format and --strict-mcp-config, which the strip passes. Translations may fail; the strip needs an update.", "its title");
+  ok(await t.p.evaluate(() => document.getElementById("status")!.classList.contains("s-needs")), "orange (s-needs)");
+  const c = await contrastOf(t.p, "#status > span:last-child");
+  ok(c >= 4.5, `the tag reaches ${c.toFixed(2)}:1, under 4.5:1`);
+  await expectLayout(t.p);
+  await translateFlow(t);
+  eq(await tagText(t.p), "", "no tag over a reply");
+  const t2 = await open("model=mac");
+  await setClaudeCheck(t2.p, CLAUDE_MISSING);
+  eq(await tagText(t2.p), "", "no tag with this Mac's model");
+  return `contrast ${c.toFixed(2)}:1`;
+});
+
 // ===================================================================================== frames
 type Frame = { file: string; query?: string; size?: { w: number; h: number }; before?: () => Promise<unknown>; make: (t: T) => Promise<void> };
 const frames: Frame[] = [
@@ -2311,14 +2721,33 @@ const macFrames: Frame[] = [
   { file: "14-error-mac", query: "model=mac", make: async (t) => { await t.p.fill("#es", "NOMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "mac"); } },
   { file: "15-error-language", query: "model=mac", make: async (t) => { await t.p.fill("#es", "NOTONMAC"); await t.p.press("#es", "Enter"); await waitState(t.p, "language"); } },
 ];
-for (const f of macFrames) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
+// The six quick fixes (0.10.0), at the same two sizes.
+const quickFrames: Frame[] = [
+  { file: "16-menu-settings", make: async (t) => { await ready(t, LONG_EN); await t.p.click("#more"); await t.p.hover("#menu [data-do=settings]"); } },
+  { file: "17-fallback-retry", query: "fallback=offline", make: async (t) => { await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); await t.p.click("#es"); } },
+  { file: "18-unconfirmed", query: "send=unconfirmed", make: async (t) => {
+      await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT });
+      await ready(t, LONG_EN);
+      await t.p.click("#send");
+      await t.p.waitForFunction(() => document.getElementById("status")!.textContent!.includes("Not confirmed"), null, { timeout: 4000 });
+  } },
+  { file: "19-idle-placeholder", make: async (t) => { await t.p.click("#es"); } },
+];
+// The recent messages and the update checks (0.12.0), at the same two sizes.
+const nextFrames: Frame[] = [
+  { file: "20-menu-recent", make: async (t) => { await keepRecent(t, RECENT_EN); await t.p.click("#more"); } },
+  { file: "21-restored", make: async (t) => { await keepRecent(t, [LONG_EN]); await t.p.keyboard.press("Meta+z"); await waitState(t.p, "ready"); } },
+  { file: "22-teams-changed", make: async (t) => { await setTeams(t.p, TEAMS_CHANGED); await t.p.click("#es"); } },
+  { file: "23-claude-changed", make: async (t) => { await setClaudeCheck(t.p, CLAUDE_MISSING); await t.p.click("#es"); } },
+];
+for (const f of [...macFrames, ...quickFrames, ...nextFrames]) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
     if (f.before) await f.before();
     if (f.size) ({ w: W, h: H } = f.size);
     const t = await open(f.query ?? "");
     await f.make(t);
-    await t.p.mouse.move(W / 2, 0);
+    if (!f.file.startsWith("16")) await t.p.mouse.move(W / 2, 0);   // (16 keeps the pointer on Settings…)
     await settle(t.p, f.file.startsWith("07") ? 300 : 500);
     await t.p.screenshot({ path: join(OUT, `${f.file}.png`) });
     const r = await layout(t.p);
@@ -2376,7 +2805,7 @@ colCheck("Column", "the English footer has two rows: the notice and Adjust, then
   ok(to.r <= send.l && send.r <= more.l, "the second row runs To, Send, the gear");
   eq(Math.round(send.cy), Math.round(more.cy), "Send and the gear on one line");
   eq(Math.round(to.cy), Math.round(send.cy), "the name on Send's line");
-  ok(Math.abs(a.r - more.r) <= 4.5, `Adjust ends at the right edge (${a.r} against ${more.r})`);
+  ok(Math.abs(a.l - foot.l) <= 0.5, `Adjust opens the footer at its left (${a.l} against ${foot.l})`);
   eq(foot.h, 56, "the footer's height (28 + 28)");
   eq(mod.b - foot.b, 8, "the footer's distance from the module's bottom");
   eq(await t.p.locator("#adjustBtn").evaluate((e: any) => getComputedStyle(e).fontSize), "12px", "Adjust font");
@@ -2454,12 +2883,12 @@ colCheck("Column", "the settings menu stacks its two groups in one column over t
   const cols = await t.p.evaluate(() => [...document.querySelectorAll("#menu .col")].map((c) => { const r = c.getBoundingClientRect(); return [r.left, r.top, r.bottom]; }));
   eq(cols.length, 2, "groups");
   ok(cols.every((c, i) => c[0] === cols[0][0] && (i === 0 || c[1] >= cols[i - 1][2])), `the groups aren't stacked: ${JSON.stringify(cols)}`);
-  eq((await t.p.locator("#menu .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the settings' rows");
-  const lefts = await t.p.evaluate(() => [...document.querySelectorAll("#menu .pl, #menu [data-do]")].map((e) => { const rg = document.createRange(); rg.selectNodeContents(e); return Math.round(rg.getBoundingClientRect().left); }));
+  eq((await t.p.locator("#menu .prow:not(.recentrow) .pl").allInnerTexts()).join(", "), "On ⌘⏎, Model, Reply in, Position", "the settings' rows");
+  const lefts = await t.p.evaluate(() => [...document.querySelectorAll("#menu .prow:not([hidden]) .pl, #menu [data-do]")].map((e) => { const rg = document.createRange(); rg.selectNodeContents(e); return Math.round(rg.getBoundingClientRect().left); }));
   ok(new Set(lefts).size === 1, `the labels and the commands should start in one line: ${lefts.join(", ")}`);
   const dividers = await t.p.evaluate(() => [...document.querySelectorAll("#menu hr")].map((h) => { const r = h.getBoundingClientRect(); return [r.width, r.height]; }));
   ok(dividers.length === 1 && dividers.every(([w, h]) => w > 100 && h === 1), `the divider should run across: ${JSON.stringify(dividers)}`);
-  eq(await t.p.locator("#menu button").count(), 16, "items (2 + 4 + Auto and 2 languages + 5 + 2 commands)");
+  eq(await t.p.locator("#menu button").count(), 17, "items (2 + 4 + Auto and 2 languages + 5 + 3 commands)");
   await expectLayout(t.p);
   await t.p.click("#menu [data-mode=leave]");
   await settle(t.p, 250);

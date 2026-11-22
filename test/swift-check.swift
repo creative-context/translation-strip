@@ -1,7 +1,7 @@
 // Checks of the shell's pure parts, with made-up screens, frames, titles and trees: where the strip
 // docks (Dock.swift), how Teams' titles, headings and message box are read and how its window is
 // walked for the box and the last message, on a made-up tree (Teams.swift), and the send's
-// decisions: the paste watch and the own server (Send.swift), and which locales a dictation tries
+// decisions: the paste watch, the outcome line, what an empty box after Return is worth and the own server (Send.swift), and which locales a dictation tries
 // (DictationLocales, in Dictation.swift), and the Mac translator's plan: language codes, names, source and target
 // (MacPlan.swift). Built and run by test/swift-check.sh. Prints one line per case; exits 1 when one fails. A case marked known is a
 // behavior the check expects to change: it prints KNOWN while it's wrong and PASS once it's fixed.
@@ -29,14 +29,36 @@ func rect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect { CG
 enum SwiftCheck {
     static func main() {
         docking()
+        stripOrder()
         teams()
         tree()
         paste()
+        sendLog()
+        sendConfirm()
+        teamsVersion()
+        teamsCheck()
         ownServer()
         dictationLocales()
         macPlan()
         print("\(failures == 0 ? "ok" : "FAILED"): \(failures) failed, \(known) known")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    // Where the strip goes in the window stack: in front only with Teams or the strip in front;
+    // with another app in front, just above Teams' window, so a Teams toast never brings it over that app.
+    static func stripOrder() {
+        func o(raise: Bool = false, moved: Bool = false, visible: Bool = true, front: Bool, id: CGWindowID? = 42) -> StripOrder {
+            StripOrder.decide(raise: raise, moved: moved, visible: visible, front: front, teamsID: id)
+        }
+        check("order: nothing changed stays put", o(front: true), .keep)
+        check("order: nothing changed stays put with Teams behind", o(front: false), .keep)
+        check("order: Teams comes forward, the strip comes in front", o(raise: true, front: true), .front)
+        check("order: a Teams notice with another app in front goes just above Teams", o(raise: true, front: false), .aboveTeams(42))
+        check("order: Teams moved behind another app, above Teams only", o(moved: true, front: false), .aboveTeams(42))
+        check("order: out of sight with Teams behind comes back above Teams", o(visible: false, front: false), .aboveTeams(42))
+        check("order: out of sight with Teams in front comes in front", o(visible: false, front: true), .front)
+        check("order: no window number and Teams behind, never over the other app", o(raise: true, front: false, id: nil), .keep)
+        check("order: no window number and Teams in front still comes in front", o(raise: true, front: true, id: nil), .front)
     }
 
     // The Mac's own translator (translate-on-mac): the strip's names and codes, then which language a
@@ -485,6 +507,122 @@ enum SwiftCheck {
         check("paste: restores only on the shell's own changeCount", [PasteWatch.restores(own: 5, now: 5), PasteWatch.restores(own: 5, now: 6)], [true, false])
         check("paste: watched every 50 ms for up to 5 s", [PasteWatch.every, PasteWatch.limit], [0.05, 5])
         check("paste: the box looked for again after 0.5 s, then every second", [PasteWatch.lookAfter, PasteWatch.lookEvery], [0.5, 1])
+    }
+
+    // The send's outcome line: its start, then what was measured, numbers only; a field not measured is left out.
+    static func sendLog() {
+        check("send log: under 100 chars", [SendLog.bucket(0), SendLog.bucket(1), SendLog.bucket(99)], ["under 100", "under 100", "under 100"])
+        check("send log: 100 to 499 chars", [SendLog.bucket(100), SendLog.bucket(499)], ["100 to 499", "100 to 499"])
+        check("send log: 500 to 1,999 chars", [SendLog.bucket(500), SendLog.bucket(1999)], ["500 to 1,999", "500 to 1,999"])
+        check("send log: 2,000 or more chars", [SendLog.bucket(2000), SendLog.bucket(12000)], ["2,000 or more", "2,000 or more"])
+        check("send log: the contract's example",
+              SendLog.line("send: sent", SendLog.Measured(pastes: 1, boxMs: 85, totalMs: 1240, chars: 230, link: false, mode: "send")),
+              "send: sent · pastes 1, box 85 ms, total 1240 ms, 100 to 499 chars, link no, send")
+        check("send log: two pastes, a link, left in the box",
+              SendLog.line("send: left in the message box", SendLog.Measured(pastes: 2, boxMs: 140, totalMs: 2310, chars: 40, link: true, mode: "leave")),
+              "send: left in the message box · pastes 2, box 140 ms, total 2310 ms, under 100 chars, link yes, leave")
+        check("send log: stopped before the paste, no pastes and no box",
+              SendLog.line("send: not sent (chat-changed)", SendLog.Measured(totalMs: 310, chars: 650, link: false, mode: "send")),
+              "send: not sent (chat-changed) · total 310 ms, 500 to 1,999 chars, link no, send")
+        check("send log: pasted but the box never changed, no box",
+              SendLog.line("send: not sent (no-paste)", SendLog.Measured(pastes: 1, totalMs: 5600, chars: 2400, link: false, mode: "send")),
+              "send: not sent (no-paste) · pastes 1, total 5600 ms, 2,000 or more chars, link no, send")
+        check("send log: nothing measured, the start alone", SendLog.line("send: sent", SendLog.Measured()), "send: sent")
+        check("send log: a link", [SendLog.hasLink("The notes are at https://example.com/notes"), SendLog.hasLink("See www.example.org"), SendLog.hasLink("No link here.")], [true, true, false])
+        check("send log: milliseconds, rounded, never below zero", [SendLog.ms(since: 10, now: 10.0854), SendLog.ms(since: 10, now: 9)], [85, 0])
+        // Front and raise come after the mode; raise is left out when Teams already was front.
+        check("send log: Teams not front, raised in 120 ms",
+              SendLog.line("send: sent", SendLog.Measured(pastes: 1, boxMs: 85, totalMs: 1240, chars: 230, link: false, mode: "send", front: false, raiseMs: 120)),
+              "send: sent · pastes 1, box 85 ms, total 1240 ms, 100 to 499 chars, link no, send, front no, raise 120 ms")
+        check("send log: Teams already front, no raise",
+              SendLog.line("send: left in the message box", SendLog.Measured(pastes: 1, boxMs: 60, totalMs: 900, chars: 40, link: false, mode: "leave", front: true)),
+              "send: left in the message box · pastes 1, box 60 ms, total 900 ms, under 100 chars, link no, leave, front yes")
+        check("send log: refused before Teams was asked, front only",
+              SendLog.line("send: not sent (not-own-server)", SendLog.Measured(totalMs: 15, chars: 12, link: false, mode: "send", front: false)),
+              "send: not sent (not-own-server) · total 15 ms, under 100 chars, link no, send, front no")
+        check("send log: pasting again, after 430 ms", SendLog.pastingAgain(afterMs: 430),
+              "send: Teams emptied its box after the paste; pasting again · after 430 ms")
+        check("send log: pasting again, not measured", SendLog.pastingAgain(afterMs: nil),
+              "send: Teams emptied its box after the paste; pasting again")
+    }
+
+    // After Return with the box empty: a new chat stays sent; a list that vanished is unconfirmed; a list
+    // there before and after is checked for the message.
+    static func sendConfirm() {
+        check("confirm: a new chat (no list before) is sent", SendConfirm.afterReturn(listBefore: false, listNow: false), .ok)
+        check("confirm: no list before, one now: still sent, as before", SendConfirm.afterReturn(listBefore: false, listNow: true), .ok)
+        check("confirm: a list that vanished is unconfirmed", SendConfirm.afterReturn(listBefore: true, listNow: false), .unconfirmed)
+        check("confirm: a list before and after is checked for the message", SendConfirm.afterReturn(listBefore: true, listNow: true), .check)
+        check("confirm: the list has 1 s to answer again", SendConfirm.listWait, 1)
+    }
+
+    // The update check: the three anchors the send relies on, looked for on made-up trees, and when a look
+    // gives the answer (at once when all are there; after a wait when one is missing).
+    static func teamsCheck() {
+        let chatTitle = "Chat | Project sync | Acme Org | Microsoft Teams"
+        func look(_ title: String, _ window: Node) -> TeamsCheck.Anchors? { TeamsCheck.anchors(title: title, found: TeamsScan.find(in: window, FakeAX())) }
+        let all = TeamsCheck.Anchors(box: true, list: true, title: true)
+        check("teams check: a chat window today has all three", look(chatTitle, chatWindow().window), all)
+        check("teams check: a renamed box is missing",
+              look(chatTitle, chatWindow(box: Node("AXTextArea", id: "composer-7", desc: "Type a message", value: "")).window),
+              TeamsCheck.Anchors(box: false, list: true, title: true))
+        let renamedList = Node("AXWindow", kids: [Node("AXGroup", id: "message-pane-layout-a1", kids: [
+            Node("AXList", id: "chat-pane-items", kids: [message("1", mine: false, text: "See you at three")]),
+            Node("AXGroup", kids: [Node("AXTextArea", id: "new-message-0a1b", desc: "Type a message", value: "Type a message\n")]),
+        ])])
+        check("teams check: a renamed list is missing", look(chatTitle, renamedList), TeamsCheck.Anchors(box: true, list: false, title: true))
+        check("teams check: a title it can't read is missing", look("Project sync | Acme Org | Microsoft Teams", chatWindow().window),
+              TeamsCheck.Anchors(box: true, list: true, title: false))
+        check("teams check: a box in another language still counts",
+              look(chatTitle, chatWindow(box: Node("AXTextArea", id: "new-message-9z", desc: "Escribe un mensaje", value: "Escribe un mensaje\n")).window), all)
+        let twoBoxes = Node("AXWindow", kids: [Node("AXGroup", id: "pane", kids: [
+            Node("AXList", id: "chat-pane-list"),
+            Node("AXTextArea", id: "new-message-p1", desc: "Type a message", value: "Type a message\n"),
+            Node("AXTextArea", id: "new-message-r2", desc: "Reply", value: "Reply\n"),
+        ])])
+        check("teams check: two boxes and no cursor still have the box", look(chatTitle, twoBoxes), all)
+        let noTree = Node("AXWindow", kids: [Node("AXGroup", kids: [Node("AXGroup")])])
+        check("teams check: a chat title with the tree not up yet can't count", look(chatTitle, noTree), TeamsCheck.Anchors?.none)
+        let calendar = Node("AXWindow", kids: [Node("AXGroup", id: "calendar-grid", kids: [Node("AXButton", id: "new-event")])])
+        check("teams check: another view can't count", look("Calendar | Acme Org | Microsoft Teams", calendar), TeamsCheck.Anchors?.none)
+        let allGone = Node("AXWindow", kids: [Node("AXGroup", id: "message-pane-v2", kids: [Node("AXTextArea", id: "composer-1")])])
+        check("teams check: nothing it knows and no chat title can't count", look("Project sync | Acme Org | Microsoft Teams", allGone), TeamsCheck.Anchors?.none)
+        check("teams check: the missing ones in words", TeamsCheck.Anchors(box: false, list: true, title: false).missing, ["message box", "chat title"])
+
+        check("teams check: the log line, all there", TeamsCheck.line(all), "Teams check: box ok, list ok, title ok")
+        check("teams check: the log line, one missing", TeamsCheck.line(TeamsCheck.Anchors(box: true, list: false, title: true)),
+              "Teams check: box ok, list missing, title ok")
+        check("teams check: ok and changed", [TeamsCheck.value(all), TeamsCheck.value(TeamsCheck.Anchors(box: false, list: true, title: true))], ["ok", "changed"])
+
+        // When a look answers.
+        let noList = TeamsCheck.Anchors(box: true, list: false, title: true)
+        func answer(_ r: (pending: TeamsCheck.Pending?, answer: TeamsCheck.Anchors?)) -> TeamsCheck.Anchors? { r.answer }
+        check("teams check: all three answer at once", answer(TeamsCheck.step(nil, all, now: 100)), all)
+        check("teams check: a look that can't count answers nothing", TeamsCheck.step(nil, nil, now: 100).answer, TeamsCheck.Anchors?.none)
+        check("teams check: a look that can't count ends a wait", TeamsCheck.step(TeamsCheck.Pending(since: 90, looks: 2), nil, now: 100).pending, TeamsCheck.Pending?.none)
+        check("teams check: one missing waits", TeamsCheck.step(nil, noList, now: 100).pending, TeamsCheck.Pending(since: 100, looks: 1))
+        check("teams check: still missing after 2 s, waits", TeamsCheck.step(TeamsCheck.Pending(since: 100, looks: 1), noList, now: 102).answer, TeamsCheck.Anchors?.none)
+        check("teams check: three looks but under 10 s, waits", TeamsCheck.step(TeamsCheck.Pending(since: 100, looks: 2), noList, now: 109).answer, TeamsCheck.Anchors?.none)
+        check("teams check: 10 s but two looks, waits", TeamsCheck.step(TeamsCheck.Pending(since: 100, looks: 1), noList, now: 130).answer, TeamsCheck.Anchors?.none)
+        check("teams check: three looks over 10 s, changed", TeamsCheck.step(TeamsCheck.Pending(since: 100, looks: 2), noList, now: 110).answer, noList)
+        check("teams check: built meanwhile, ok", TeamsCheck.step(TeamsCheck.Pending(since: 100, looks: 2), all, now: 104).answer, all)
+
+        // What the page gets.
+        var c = TeamsContext(open: true, chat: "Project sync", from: nil, last: nil, draft: false)
+        check("teams check: before the check, null and no missing", [c.page["check"] is NSNull, c.page["missing"] == nil], [true, true])
+        c.check = "changed"; c.missing = ["message list"]
+        check("teams check: changed, with what's missing", [c.page["check"] as? String == "changed", (c.page["missing"] as? [String]) == ["message list"]], [true, true])
+    }
+
+    // "app: Teams <version>": at the first Teams found, then only when a new process has another version.
+    static func teamsVersion() {
+        check("teams version: the first one found is logged", Teams.versionLine("10.2.3", logged: nil), "Teams 10.2.3")
+        check("teams version: the same version again isn't", Teams.versionLine("10.2.3", logged: "10.2.3"), String?.none)
+        check("teams version: another version is", Teams.versionLine("10.4.0", logged: "10.2.3"), "Teams 10.4.0")
+        check("teams version: unreadable is unknown", Teams.versionLine(nil, logged: nil), "Teams unknown")
+        check("teams version: unknown twice is logged once", Teams.versionLine(nil, logged: "unknown"), String?.none)
+        check("teams version: only letters, digits, dots, dashes and spaces", Teams.versionShown("1.2\n3; rm -rf"), "1.23 rm -rf")
+        check("teams version: at most 40 characters", Teams.versionShown(String(repeating: "9", count: 60)).count, 40)
     }
 
     // The server answering on the port must be the app's own, and the message from its page's main frame.

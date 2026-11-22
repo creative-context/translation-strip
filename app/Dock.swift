@@ -170,3 +170,20 @@ enum Dock {
         return i.isNull ? 0 : i.width * i.height
     }
 }
+
+// Where the strip goes in the stack of windows when it's placed. It rides with Teams: in front of
+// everything only while Teams or the strip itself is the front app; with another app in front, just
+// above Teams' own window, so whatever covers Teams covers the strip too. Teams' notices (a toast,
+// a pop-up, a window moved) come while it sits behind other apps, and must not bring the strip over them.
+enum StripOrder: Equatable {
+    case keep // stays where it is in the stack
+    case front // orderFrontRegardless
+    case aboveTeams(CGWindowID) // order(.above, relativeTo:)
+
+    static func decide(raise: Bool, moved: Bool, visible: Bool, front: Bool, teamsID: CGWindowID?) -> StripOrder {
+        guard raise || moved || !visible else { return .keep }
+        if front { return .front }
+        if let teamsID { return .aboveTeams(teamsID) }
+        return .keep // no window number to go above: it comes out with Teams instead of over another app
+    }
+}

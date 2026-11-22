@@ -319,6 +319,7 @@ describe("what a send leaves behind", () => {
     ["mismatch", "ready", "error: Teams changed it. Not sent", []],
     ["not-sent", "ready", "error: In Teams' box, not sent", []],
     ["not-posted", "ready", "error: Not in the chat. Check it", []],
+    ["unconfirmed", "ready", "error: Not confirmed. Check the chat", []],
     ["cleared", "ready", "error: Teams cleared it. Not sent", []],
     ["no-paste", "ready", "error: Teams didn't take it. Not sent", []],
     ["not-own-server", "ready", "error: Not the app's own page. Not sent", []],
@@ -646,7 +647,7 @@ describe("the notices and their buttons", () => {
     ["ready, with no chat", () => withTeams(ready(), NOCHAT), null, "idle: No chat open in Teams", []],
     ["ready, the box not found", () => withTeams(ready(), UNKNOWN), null, "error: Can't find Teams' message box", []],
     ["ready, two boxes and none with the cursor", () => withTeams(ready(), SEVERAL), null, "needs: Click the box in Teams first", []],
-    ["ready with a voice finding", () => ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }, { level: "warning", message: "Long" }]), null, "needs: Stiff", []],
+    ["ready with a voice finding", () => ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }, { level: "warning", message: "Long" }]), null, "needs: Stiff", ["Fix it"]],
     ["ready, the box not found, beats a voice finding", () => withTeams(ready(ES, EN, PRIYA, [{ level: "warning", message: "Stiff" }]), UNKNOWN), null, "error: Can't find Teams' message box", []],
     ["question", () => { const s = ready(); return applied(s, SS.translateDone({ ...s.st, phase: "translating" }, s.f, { question: "Which one?" })); }, null, "asks: Asks you", [], "question"],
     ["error: offline", () => errorState("offline"), null, "error: Can't reach Claude", ["Try again"], "error"],
@@ -1115,7 +1116,7 @@ describe("translating on this Mac", () => {
       expect(v.tag.kind).toBe("info");
       expect(v.tag.text).toBe("Translated on this Mac");
       if (typeof title === "string") expect(v.tag.title).toBe(title); else expect(v.tag.title).toMatch(title);
-      expect(v.actions).toEqual([]);
+      expect(v.actions).toEqual(kind === "limit" ? [] : [{ act: "retry-claude", label: "Try Claude again" }]);
     });
   }
 
@@ -1239,4 +1240,294 @@ describe("translating on this Mac", () => {
       expect(n.fallback).toBeNull();
     });
   }
+});
+
+// ---------------------------------------------------------------------------------------- 0.10.0
+describe("six quick fixes (0.10.0)", () => {
+  function replied(d: any, teams: any = PRIYA): S {
+    let s = type(start(teams), ES);
+    s = applied(s, SS.translateStart(s.st, s.f).st);
+    return applied(s, SS.translateDone(s.st, s.f, { text: EN, language: "English", from: "target", lint: [], ...d }));
+  }
+  const srvOf = (model: string) => ({ translator: { status: "ready", model }, settings: { model } });
+
+  test("an unconfirmed send keeps the English, with no button and a title that says why", () => {
+    const s = sendAnd(ready(), { ok: false, reason: "unconfirmed" });
+    const v = view(s);
+    expect(v.state).toBe("error");
+    expect(v.tag).toEqual({ kind: "error", text: "Not confirmed. Check the chat", title: "Teams emptied its box, but the strip couldn't see the chat to check the message is there." });
+    expect(v.actions).toEqual([]);
+    expect(s.st.leftover).toBeNull();   // like not-posted: the box was emptied, so nothing of ours sits in it
+    expect(canSend(s)).toBe(true);
+  });
+  test("a send's notice without a title has none", () => {
+    expect(view(sendAnd(ready(), { ok: false, reason: "not-posted" })).tag).toEqual({ kind: "error", text: "Not in the chat. Check it" });
+  });
+
+  // Try Claude again: [name, state, model, actions]
+  const RETRY = [{ act: "retry-claude", label: "Try Claude again" }];
+  type Retry = [string, () => S, string, any[]];
+  const retries: Retry[] = [
+    ["a stand-in after offline, Sonnet", () => replied({ engine: "mac", fallback: "offline" }), "sonnet", RETRY],
+    ["a stand-in after login, Haiku", () => replied({ engine: "mac", fallback: "login" }), "haiku", RETRY],
+    ["a stand-in after update, Opus", () => replied({ engine: "mac", fallback: "update" }), "opus", RETRY],
+    ["a stand-in after missing", () => replied({ engine: "mac", fallback: "missing" }), "sonnet", RETRY],
+    ["a stand-in after failed", () => replied({ engine: "mac", fallback: "failed" }), "sonnet", RETRY],
+    ["a stand-in with a voice finding", () => replied({ engine: "mac", fallback: "offline", lint: [{ level: "warning", message: "Stiff" }] }), "sonnet", RETRY],
+    ["a stand-in after the plan limit: no button", () => replied({ engine: "mac", fallback: "limit", until: "2030-01-01T15:00:00Z" }), "sonnet", []],
+    ["a stand-in, then Mac chosen: no button", () => replied({ engine: "mac", fallback: "offline" }), "mac", []],
+    ["a plain Mac reply: no button", () => replied({ engine: "mac" }), "mac", []],
+    ["a Claude reply: no button", () => replied({ engine: "claude" }), "sonnet", []],
+    ["a stand-in out of date: no button", () => type(replied({ engine: "mac", fallback: "offline" }), ES + "!"), "sonnet", []],
+    ["a stand-in with Teams closed: Open Teams only", () => withTeams(replied({ engine: "mac", fallback: "offline" }), CLOSED), "sonnet", [{ act: "open-teams", label: "Open Teams" }]],
+  ];
+  for (const [name, mk, model, actions] of retries) test(`Try Claude again: ${name}`, () => expect(view(mk(), srvOf(model)).actions).toEqual(actions));
+
+  // Fix it on a voice finding: [name, state, model, actions]
+  const FIX = [{ act: "fix-voice", label: "Fix it" }];
+  const fixes: Retry[] = [
+    ["a Claude reply with a warning", () => replied({ engine: "claude", lint: [{ level: "warning", message: "Stiff" }] }), "opus", FIX],
+    ["a Claude reply with two findings", () => replied({ engine: "claude", lint: [{ level: "warning", message: "Stiff" }, { level: "error", message: "Ruled out" }] }), "sonnet", FIX],
+    ["a Mac reply with a finding: no button", () => replied({ engine: "mac", lint: [{ level: "warning", message: "Stiff" }] }), "mac", []],
+    ["a Claude reply with no finding: no button", () => replied({ engine: "claude" }), "opus", []],
+  ];
+  for (const [name, mk, model, actions] of fixes) test(`Fix it: ${name}`, () => expect(view(mk(), srvOf(model)).actions).toEqual(actions));
+
+  test("Try Claude again asks for the same text as a normal request, and a Claude answer drops the stand-in", () => {
+    const s = replied({ engine: "mac", fallback: "offline" });
+    const go = SS.translateStart(s.st, s.f, { auto: false });
+    expect(go).not.toBeNull();
+    expect(go.body).toEqual({ text: ES, register: "normal", context: { chat: "Priya Raman", from: "Priya Raman", last: PRIYA.last } });
+    expect(go.st.fallback).toBeNull();
+    const t = applied(applied(s, go.st), SS.translateDone(go.st, s.f, { text: EN, language: "English", from: "target", lint: [], engine: "claude" }));
+    expect(t.st.engine).toBe("claude");
+    expect(tagOf(t, srvOf("sonnet"))).toBeNull();
+    expect(view(t, srvOf("sonnet")).actions).toEqual([]);
+  });
+  test("Try Claude again keeps a one-time target for the same text", () => {
+    let s = type(start(PRIYA), ES);
+    const go = SS.translateStart(s.st, s.f, { target: "Português" });
+    s = applied(applied(s, go.st), SS.translateDone(go.st, s.f, { text: EN, language: "Português", from: "target", lint: [], engine: "mac", fallback: "offline" }));
+    expect(SS.translateStart(s.st, s.f, { auto: true }).body.target).toBe("Português");
+  });
+
+  // The language button that does nothing: [name, state, target, inert]
+  type Inert = [string, () => S, string, boolean];
+  const inerts: Inert[] = [
+    ["a reply in the target, Auto off", () => replied({}), "English", true],
+    ["a reply in the target with a draft in Teams", () => sendAnd(ready(), { ok: false, reason: "draft" }), "English", true],
+    ["a reply in another language (a click writes it in the target)", () => replied({ language: "Português" }), "English", false],
+    ["a reply Auto took from the chat, in the target", () => replied({ from: "chat" }), "English", false],
+    ["a reply Auto took from the chat, in another language", () => replied({ language: "Português", from: "chat" }), "English", false],
+    ["no translation: no button", () => start(), "English", false],
+    ["sent: no button", () => sendAnd(ready(), { ok: true }), "English", false],
+  ];
+  for (const [name, mk, target, want] of inerts) test(`the language button does nothing: ${name}`, () => expect(SS.langInert(mk().st, target)).toBe(want));
+  test("Auto on for the request, with no clear chat language: the button shows Auto, so it keeps today's steps", () => {
+    let s = type(start(PRIYA), ES);
+    const go = SS.translateStart(s.st, s.f, { auto: true });
+    s = applied(applied(s, go.st), SS.translateDone(go.st, s.f, { text: EN, language: "English", from: "target", lint: [] }));
+    expect(SS.langView(s.st, "English").auto).toBe(true);
+    expect(SS.langInert(s.st, "English")).toBe(false);
+  });
+
+  const placeholders: [any, string][] = [
+    ["English", "English"],
+    ["Português", "Português"],
+    ["日本語", "日本語"],
+    ["", "English"],
+    [undefined, "English"],
+  ];
+  for (const [target, want] of placeholders) test(`the reply box's placeholder for ${JSON.stringify(target)}`, () => expect(SS.enPlaceholder(target)).toBe(want));
+});
+
+// ---------------------------------------------------------------------------------------- 0.12.0
+describe("recent messages (0.12.0)", () => {
+  const T = "9:41 AM";
+  // Esc, as the page presses it: with the boxes it shows and the time.
+  const esc = (s: S): S => applied(s, SS.clearAll(s.st, s.f, T).st);
+  const send = (s: S, mode = "send"): S => {
+    const go = SS.sendStart(s.st, s.f, false, mode);
+    if (!go) throw new Error("Send was off");
+    return applied(s, SS.sendDone(go.st, { ok: true }, T));
+  };
+  // A reply, sent or cleared: n messages, each with its own words.
+  const words = (i: number) => `Reply number ${i}, for the budget review.`;
+  // A new strip that carries the recent messages of another (the page keeps one state; the helpers start fresh ones).
+  const carry = (from: S, to: S): S => ({ ...to, st: { ...to.st, recent: from.st.recent, recentId: from.st.recentId } });
+  function kept(n: number, how: (s: S) => S = esc): S {
+    let s = start();
+    for (let i = 1; i <= n; i++) s = how(carry(s, ready(`${ES} ${i}`, words(i))));
+    return s;
+  }
+  const ens = (s: S) => s.st.recent.map((r: any) => r.en);
+
+  // What each way of leaving a message keeps: [name, the strip after it, the replies kept newest first, how the newest ended]
+  type Keep = [string, () => S, string[], string | null];
+  const keeps: Keep[] = [
+    ["a confirmed send keeps it", () => send(ready()), [EN], "sent"],
+    ["Put in Teams keeps it", () => send(ready(), "leave"), [EN], "leave"],
+    ["a failed send keeps nothing (the English stays)", () => sendAnd(ready(), { ok: false, reason: "not-front" }), [], null],
+    ["Esc with a reply keeps it, as the boxes show it", () => esc({ ...ready(), f: { es: ES, en: EN + " Edited." } }), [EN + " Edited."], "cleared"],
+    ["Esc with a reply out of date keeps both boxes as they are", () => esc(type(ready(), ES + " Y mañana.")), [EN], "cleared"],
+    ["Esc with a draft in Teams keeps it", () => esc(sendAnd(ready(), { ok: false, reason: "draft" })), [EN], "cleared"],
+    ["Esc with written text only keeps nothing", () => esc(type(start(), ES)), [], null],
+    ["Esc on an empty strip keeps nothing", () => esc(start()), [], null],
+    ["Esc while translating keeps nothing", () => { const s = type(start(), ES); return esc(applied(s, SS.translateStart(s.st, s.f).st)); }, [], null],
+    ["Esc on a question keeps nothing", () => { const s = type(start(), ES); const go = SS.translateStart(s.st, s.f); return esc(applied(applied(s, go.st), SS.translateDone(go.st, s.f, { question: "This Thursday?" }))); }, [], null],
+    ["six messages keep the newest five, newest first", () => kept(6), [6, 5, 4, 3, 2].map(words), "cleared"],
+    ["the same message twice shows once, at the front", () => esc(carry(send(carry(kept(2), ready())), ready())), [EN, words(2), words(1)], "cleared"],
+  ];
+  for (const [name, mk, want, how] of keeps) test(name, () => {
+    const s = mk();
+    expect(ens(s)).toEqual(want);
+    expect(s.st.recent[0]?.how ?? null).toBe(how);
+    expect(s.st.recent.length).toBeLessThanOrEqual(SS.RECENT_MAX);
+  });
+
+  test("each one keeps what was written, the reply, its language, the chat and the time", () => {
+    let s = type(start(PRIYA), ES);
+    const go = SS.translateStart(s.st, s.f, { auto: true });
+    s = applied(applied(s, go.st), SS.translateDone(go.st, s.f, { text: "Você consegue revisar o orçamento?", language: "Português", from: "chat", lint: [] }));
+    const r = send(s).st.recent[0];
+    expect([r.es, r.en, r.language, r.from, r.chat, r.at, r.how]).toEqual([ES, "Você consegue revisar o orçamento?", "Português", "chat", "Priya Raman", T, "sent"]);
+  });
+
+  // When ⌘Z brings one back: [name, the strip, the boxes, can]
+  type Can = [string, () => S, boolean];
+  const withOne = () => esc(ready());
+  const cans: Can[] = [
+    ["both boxes empty, one kept", withOne, true],
+    ["right after a send, while Sent shows", () => send(ready()), true],
+    ["nothing kept", () => start(), false],
+    ["text in the box you write in", () => type(withOne(), "Hola"), false],
+    ["text typed in the reply box", () => { const s = withOne(); return { st: SS.editedEnglish(s.st, "Hi", s.f, "English"), f: { es: "", en: "Hi" } }; }, false],
+    ["while dictating", () => { const s = withOne(); return applied(s, SS.dictStart(s.st, s.f).st); }, false],
+    ["while the last words of a dictation come in", () => { let s = withOne(); s = applied(s, SS.dictStart(s.st, s.f).st); return applied(s, SS.dictStop(s.st).st); }, false],
+    ["while sending (the boxes as the state says)", () => { const s = esc(ready()); const r = ready(); return { st: { ...SS.sendStart(r.st, r.f, false, "send").st, recent: s.st.recent }, f: { es: "", en: "" } }; }, false],
+    ["while adjusting", () => { const s = esc(ready()); return { st: { ...s.st, phase: "adjusting" }, f: s.f }; }, false],
+  ];
+  for (const [name, mk, want] of cans) test(`⌘Z brings one back: ${name} → ${want}`, () => {
+    const s = mk();
+    expect(SS.canRestore(s.st, s.f)).toBe(want);
+    expect(!!SS.restoreRecent(s.st, s.f)).toBe(want);
+  });
+
+  test("⌘Z brings back the newest into the ready phase, for its chat, and it leaves the list; ⌘Z again brings the one before", () => {
+    let s = kept(2);
+    s = applied(s, SS.restoreRecent(s.st, s.f));
+    expect([s.st.phase, s.f.es, s.f.en, s.st.chatFor]).toEqual(["ready", `${ES} 2`, words(2), "Priya Raman"]);
+    expect(ens(s)).toEqual([words(1)]);
+    expect(SS.canSend(s.st, s.f, false)).toBe(true);
+    expect(SS.restoreRecent(s.st, s.f)).toBeNull();   // the boxes hold it now: ⌘Z is theirs
+    s = esc(s);
+    expect(ens(s)).toEqual([words(2), words(1)]);
+    s = applied(s, SS.restoreRecent(s.st, s.f));
+    expect(s.f.en).toBe(words(2));
+  });
+  test("one written for another chat comes back as Written for it, with Send off", () => {
+    let s = esc(ready());
+    s = withTeams(s, DANIEL);
+    s = applied(s, SS.restoreRecent(s.st, s.f));
+    expect(tagOf(s)).toBe("error: Written for Priya Raman");
+    expect(SS.canSend(s.st, s.f, false)).toBe(false);
+  });
+  test("its language comes back with how it was chosen", () => {
+    let s = type(start(PRIYA), ES);
+    const go = SS.translateStart(s.st, s.f, { auto: true });
+    s = applied(applied(s, go.st), SS.translateDone(go.st, s.f, { text: "Você consegue?", language: "Português", from: "chat", lint: [] }));
+    s = esc(s);
+    s = applied(s, SS.restoreRecent(s.st, s.f));
+    expect(SS.langView(s.st, "English")).toMatchObject({ auto: true, name: "Português", other: true });
+  });
+
+  test("a click in the menu brings back that one, even the oldest of five", () => {
+    let s = kept(5);
+    const oldest = s.st.recent[4];
+    s = applied(s, SS.pickRecent(s.st, s.f, oldest.id, T));
+    expect(s.f.en).toBe(words(1));
+    expect(ens(s)).toEqual([5, 4, 3, 2].map(words));
+  });
+  test("a click with a reply on show keeps that one first, as Esc would, and the list stays five", () => {
+    let s = kept(5);
+    const oldest = s.st.recent[4].id;
+    s = carry(s, ready(ES, "The one on show."));
+    s = applied(s, SS.pickRecent(s.st, s.f, oldest, T));
+    expect(s.f.en).toBe(words(1));
+    expect(ens(s)).toEqual(["The one on show.", ...[5, 4, 3, 2].map(words)]);
+  });
+  test("a click with written text and no reply keeps that text first, and bringing it back gives the text to translate", () => {
+    let s = kept(2);
+    const target = s.st.recent[1].id;
+    s = type(s, "Texto sin traducir todavía");
+    s = applied(s, SS.pickRecent(s.st, s.f, target, T));
+    expect(s.st.recent[0]).toMatchObject({ es: "Texto sin traducir todavía", en: "" });
+    s = applied(s, SS.pickRecent(s.st, s.f, s.st.recent[0].id, T));
+    expect(s.f.es).toBe("Texto sin traducir todavía");
+    expect(s.f.en).toBe("");
+    expect(s.st.phase).toBe("idle");
+  });
+  test("a click with the reply deleted by hand keeps the written text first", () => {
+    let s = kept(2);
+    const target = s.st.recent[1].id;
+    s = carry(s, ready("hola equipo", "Hello team."));
+    s = { ...s, f: { es: "hola equipo", en: "" } };
+    s = applied(s, SS.pickRecent(s.st, s.f, target, T));
+    expect(s.st.recent[0]).toMatchObject({ es: "hola equipo", en: "" });
+  });
+  test("a click does nothing while something runs, or for one no longer there", () => {
+    let s = esc(ready());
+    const id = s.st.recent[0].id;
+    expect(SS.pickRecent(applied(s, SS.dictStart(s.st, s.f).st).st, s.f, id, T)).toBeNull();
+    expect(SS.pickRecent(s.st, s.f, id + 99, T)).toBeNull();
+  });
+
+  // The menu button's words: [the reply, the words]
+  const cuts: [string, string][] = [
+    ["Sure", "Sure"],
+    ["Thanks, that works for me", "Thanks, that works for…"],
+    ["Exactly twenty-four ch.", "Exactly twenty-four ch."],
+    ["Can we move\nthe call   to Friday afternoon?", "Can we move the call to…"],
+    ["Supercalifragilisticexpialidocious", "Supercalifragilisticexpi…"],
+  ];
+  for (const [en, want] of cuts) test(`the button for ${JSON.stringify(en)} reads ${JSON.stringify(want)}`, () => expect(SS.recentLabel({ en, es: "x" })).toBe(want));
+  test("a message typed straight in the reply box has no written text; one with no reply shows the written text", () => {
+    expect(SS.recentLabel({ en: "", es: "Hola" })).toBe("Hola");
+  });
+  const titles: [any, string][] = [
+    [{ how: "sent", chat: "Priya Raman", at: T }, "Sent to Priya Raman at 9:41 AM"],
+    [{ how: "leave", chat: "Priya Raman", at: T }, "Left in Teams for Priya Raman at 9:41 AM"],
+    [{ how: "cleared", chat: "Priya Raman", at: T }, "Cleared at 9:41 AM"],
+    [{ how: "sent", chat: "", at: "" }, "Sent"],
+  ];
+  for (const [r, want] of titles) test(`the button's title: ${want}`, () => expect(SS.recentTitle(r)).toBe(want));
+});
+
+describe("the update checks' tags (0.12.0)", () => {
+  const srv = (translator: any = {}, model = "sonnet") => ({ translator: { status: "ready", guide: "ok", ...translator }, settings: { model } });
+  const CHANGED = { ...PRIYA, check: "changed", missing: ["box", "title"] };
+  const CLAUDE = { check: "changed", missing: ["--input-format", "--system-prompt-file"] };
+  // [name, the strip, the server's state, the tag]
+  type Tag = [string, () => S, any, string | null];
+  const tags: Tag[] = [
+    ["Teams changed, idle", () => start(CHANGED), srv(), "needs: Teams changed. Sending may fail"],
+    ["Teams changed, with written text (still idle)", () => type(start(CHANGED), ES), srv(), "needs: Teams changed. Sending may fail"],
+    ["Teams changed, a reply on show: not while it shows", () => ready(ES, EN, CHANGED), srv(), null],
+    ["Teams checked ok", () => start({ ...PRIYA, check: "ok" }), srv(), null],
+    ["Teams changed but closed: Teams isn't open", () => start({ ...CLOSED, check: "changed" }), srv(), "idle: Teams isn't open"],
+    ["Teams changed, no chat open: that says it first", () => start({ ...NOCHAT, check: "changed" }), srv(), "idle: No chat open in Teams"],
+    ["Claude Code changed, idle", () => start(), srv(CLAUDE), "needs: Claude Code changed. The strip may fail"],
+    ["Claude Code changed, but the model is this Mac's", () => start(), srv(CLAUDE, "mac"), null],
+    ["Claude Code not checked yet", () => start(), srv({ check: null }), null],
+    ["both changed: Teams first", () => start(CHANGED), srv(CLAUDE), "needs: Teams changed. Sending may fail"],
+    ["no voice guide wins over both", () => start(CHANGED), srv({ ...CLAUDE, guide: "missing" }), "idle: Voice guide not set"],
+  ];
+  for (const [name, mk, server, want] of tags) test(name, () => expect(tagOf(mk(), server)).toBe(want));
+  test("the titles say what moved and which flags are gone", () => {
+    expect(view(start(CHANGED), srv()).tag.title).toBe("This version of Teams moved something the strip reads: the message box and the chat title. Sends may stop; the strip needs an update.");
+    expect(view(start({ ...PRIYA, check: "changed" }), srv()).tag.title).toBe("This version of Teams moved something the strip reads. Sends may stop; the strip needs an update.");
+    expect(view(start(), srv(CLAUDE)).tag.title).toBe("This version of Claude Code lacks --input-format and --system-prompt-file, which the strip passes. Translations may fail; the strip needs an update.");
+    expect(SS.teamsChangedTitle(["box", "list", "title"])).toBe("This version of Teams moved something the strip reads: the message box, the message list and the chat title. Sends may stop; the strip needs an update.");
+    expect(view(start(CHANGED), srv()).actions).toEqual([]);
+  });
 });

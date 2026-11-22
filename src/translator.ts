@@ -22,12 +22,16 @@ import { join } from "node:path";
 import { claudeCommand, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TOOL_PATH, TRANSLATOR_DIR } from "./config";
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
 import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
+import { addUsage, usageOf, type Usage } from "./reply-log";
 import { fileThere } from "./settings";
 import { bump, state, type ClaudeModel, type Model, type Status, type TranslatorError } from "./state";
 
 // aborted: the session ended before it answered; stopped: on purpose (a restart, the server stopping);
 // unusable: it answered, but with no JSON reply or another request's id (a slip a fresh session doesn't repeat).
-export type Outcome = { ok: true; reply: Reply } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true; stopped?: true; unusable?: true };
+// usage: the token counts from the turns' result messages (summed over both tries), for the log;
+// tries: how many sessions the request took (1 or 2), set by request().
+// answeredBy: the model that wrote the reply, when it wasn't the session's own (the fallback answered).
+export type Outcome = ({ ok: true; reply: Reply; answeredBy?: ClaudeModel } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true; stopped?: true; unusable?: true }) & { usage?: Usage; tries?: number };
 
 // ms: how long this try waits; retry: a failure of this try is tried once more, so it doesn't restart the translator itself.
 type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null; ms: number; retry: boolean };
@@ -39,6 +43,7 @@ type Session = {
   turn: Turn | null;
   rateLimit: RateLimit;
   retried: boolean; // Claude Code said it was retrying the API during the turn
+  answered: ClaudeModel | null; // the model the turn's assistant messages came from
   retired: boolean; // stopped on purpose, or already ended: its exit means nothing more
   stderrDone: Promise<void>;
 };
@@ -68,14 +73,23 @@ export function translatorEnv(): Record<string, string> {
 
 // Opus runs at low effort. Tested on made-up messages (2026-11-15): the same English as at its
 // default effort and at high, and as fast or faster (high thinks more often and is slower in its
-// slowest replies). Haiku and Sonnet keep Claude Code's default.
+// slowest replies). Haiku and Sonnet keep Claude Code's default: Sonnet at low effort was no
+// faster than its default and gave the same English.
 const EFFORT: Partial<Record<ClaudeModel, string>> = { opus: "low" };
+
+// When Opus is busy or unavailable, Claude Code answers that turn on Sonnet (`--fallback-model`), still
+// with the voice guide, before the server would stand in with the Mac. The next turn tries Opus again.
+export const FALLBACK: Partial<Record<ClaudeModel, ClaudeModel>> = { opus: "sonnet" };
+
+// The alias in a model id such as "claude-sonnet-5-5", or null.
+export const aliasOf = (id: unknown): ClaudeModel | null => (typeof id === "string" ? ((id.match(/haiku|sonnet|opus/)?.[0] as ClaudeModel) ?? null) : null);
 
 export function translatorArgs(model: ClaudeModel): string[] {
   return [
     claudeCommand(), "-p",
     "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--model", model,
+    ...(FALLBACK[model] ? ["--fallback-model", FALLBACK[model]!] : []),
     ...(EFFORT[model] ? ["--effort", EFFORT[model]!] : []),
     "--system-prompt-file", "/dev/fd/3",
     "--tools", "", "--strict-mcp-config", "--setting-sources", "",
@@ -124,6 +138,33 @@ function feed(fd: number, text: string) {
 // `claude --version`'s first line, cut to something safe for the log.
 const versionWords = (out: string) => (out.split("\n")[0] ?? "").replace(/[^\w .()+-]/g, "").trim().slice(0, 40) || "unknown";
 
+// The update check (0.12.0): when the server learns a Claude Code version new to it, `claude --help`
+// runs once and every flag translatorArgs passes, for any Claude model, must be named there. Seen so
+// far: `--system-prompt-file` works but is hidden from the help, so the help can't vouch
+// for it; a Claude Code that drops it refuses the session at start, which the update error already says.
+export const HIDDEN_FLAGS: ReadonlySet<string> = new Set(["--system-prompt-file"]);
+const CLAUDE_MODELS: ClaudeModel[] = ["haiku", "sonnet", "opus"];
+
+// Every flag the translator passes, on any Claude model, in the order translatorArgs gives them.
+export function translatorFlags(): string[] {
+  const flags = new Set<string>();
+  for (const m of CLAUDE_MODELS) for (const a of translatorArgs(m).slice(1)) if (/^-/.test(a)) flags.add(a);
+  return [...flags];
+}
+
+// The option names a help text shows ("-p, --print", "--model <model>").
+export function helpNames(help: string): Set<string> {
+  return new Set(help.match(/(?<![\w-])--?[A-Za-z][\w-]*/g) ?? []);
+}
+
+// The flags the help doesn't name, the hidden ones aside.
+export function missingFlags(help: string, flags: string[] = translatorFlags()): string[] {
+  const names = helpNames(help);
+  return flags.filter((f) => !HIDDEN_FLAGS.has(f) && !names.has(f));
+}
+
+export type FlagCheck = { check: "ok" | "changed"; missing: string[] };
+
 // mac: the helper's status, which the state shows while the model is mac. working: a request is in
 // progress outside a Claude session (on the helper), so the state says busy.
 export type TranslatorOptions = { now?: () => number; mac?: () => { status: Status; error: TranslatorError | null }; working?: () => boolean };
@@ -139,6 +180,8 @@ export class Translator {
   private error: { error: TranslatorError; until: string | null } | null = null;
   private version: string | null = null;
   private versionAsked = false;
+  private checks = new Map<string, FlagCheck>(); // each version's check, once per version per server life
+  private checking = new Set<string>(); // versions whose `claude --help` is running
   private now: () => number;
   private opts: TranslatorOptions;
   model: Model = "sonnet";
@@ -204,7 +247,7 @@ export class Translator {
       log(`couldn't start claude (${e?.code ?? "error"})`);
       return;
     }
-    const session: Session = { proc, pid: proc.pid, model: this.model, err: "", turn: null, rateLimit: null, retried: false, retired: false, stderrDone: Promise.resolve() };
+    const session: Session = { proc, pid: proc.pid, model: this.model, err: "", turn: null, rateLimit: null, retried: false, answered: null, retired: false, stderrDone: Promise.resolve() };
     this.spare = session;
     // The server's own pipe; without one (mkfifo failed), the one Bun made, as before.
     const fd3 = pipe ? pipe.write : (proc as any).stdio?.[3];
@@ -230,11 +273,13 @@ export class Translator {
   }
 
   // A fresh start, asked for (the menu's Restart): stops everything, forgets past failures.
+  // It asks Claude Code's version again, so an update installed meanwhile gets its check.
   restart(reason: string) {
     this.kill();
     this.crashes = 0;
     this.restarts = [];
     this.error = null;
+    this.versionAsked = false;
     this.start(reason);
   }
 
@@ -255,9 +300,12 @@ export class Translator {
   // another request's id) gets one more, on a fresh session.
   async request(req: Request): Promise<Outcome> {
     const first = await this.attempt(req, Math.min(FIRST_TRY_MS, TIMEOUT_MS), true);
-    if (first.ok || !(first.aborted || first.unusable) || first.stopped || first.error !== "failed") return first;
+    if (first.ok || !(first.aborted || first.unusable) || first.stopped || first.error !== "failed") return { ...first, tries: 1 };
     log("no answer from that session; trying once more on a fresh one");
-    return this.attempt(req, TIMEOUT_MS, false);
+    const second = await this.attempt(req, TIMEOUT_MS, false);
+    const usage = addUsage(first.usage, second.usage);
+    const { usage: _, ...rest } = second;
+    return { ...rest, tries: 2, ...(usage ? { usage } : {}) } as Outcome;
   }
 
   private async attempt(req: Request, ms: number, retry: boolean): Promise<Outcome> {
@@ -398,6 +446,7 @@ export class Translator {
       return;
     }
     if (m.type === "assistant") {
+      s.answered = aliasOf(m.message?.model) ?? s.answered;
       for (const c of m.message?.content ?? []) if (c?.type === "text" && typeof c.text === "string") turn.text.push(c.text);
       return;
     }
@@ -406,12 +455,15 @@ export class Translator {
     const isError = m.is_error === true || (m.subtype && m.subtype !== "success");
     const rl = s.rateLimit;
     const reply = isError ? null : parseReply(text, turn.id);
-    if (reply) return this.end(s, { ok: true, reply });
+    const usage = usageOf(m); // counts only, for the log
+    const counted = usage ? { usage } : {};
+    const by = s.answered && s.answered !== s.model ? { answeredBy: s.answered } : {};
+    if (reply) return this.end(s, { ok: true, reply, ...by, ...counted });
     const errText = [text, ...(Array.isArray(m.errors) ? m.errors.map(String) : [])].join(" ");
     const c = isError || rl?.status === "rejected" ? classify(errText, rl) : { error: "failed" as const, until: null };
     const why = isError ? "" : parseReply(text) ? " (a reply with another id)" : " (no JSON reply)";
     log(`turn failed: ${c.error}${why}`);
-    this.end(s, { ok: false, error: c.error, until: c.until, ...(isError ? {} : { unusable: true as const }) });
+    this.end(s, { ok: false, error: c.error, until: c.until, ...(isError ? {} : { unusable: true as const }), ...counted });
   }
 
   // A session ended without being asked to: names why in one word from its stderr (read to its
@@ -451,7 +503,8 @@ export class Translator {
     } catch {}
   }
 
-  // `claude --version`, once, for the log lines that say why a session ended.
+  // `claude --version`, once (and again after the menu's Restart), for the log lines that say why a
+  // session ended; a version new to this server gets the flag check.
   private askVersion() {
     if (this.versionAsked) return;
     this.versionAsked = true;
@@ -461,14 +514,70 @@ export class Translator {
       new Response(p.stdout).text().then(
         (out) => {
           clearTimeout(timer);
-          this.version = versionWords(out);
-          log(`claude ${this.version}`);
+          const v = versionWords(out);
+          if (v !== this.version) log(`claude ${v}`);
+          this.version = v;
+          this.checkFlags(v);
         },
         () => clearTimeout(timer),
       );
     } catch {
+      // No claude to start: asked again at the next start, so a Claude Code installed meanwhile gets its check.
       this.version = "unknown";
+      this.versionAsked = false;
     }
+  }
+
+  // `claude --help`, once per version: every flag the translator passes must be named there. Its
+  // text stays in memory and only the missing flags' names reach the log and the state. A help that
+  // can't be read (no start, an error exit, nothing printed, 10 s) leaves the check unknown (null), and
+  // that version is asked again the next time it's learned. Nothing waits on it.
+  private checkFlags(version: string) {
+    if (version === "unknown") return;
+    const known = this.checks.get(version);
+    if (known) return this.setCheck(known);
+    if (this.checking.has(version)) return;
+    this.checking.add(version);
+    const done = (help: string | null) => {
+      this.checking.delete(version);
+      if (help === null) {
+        log(`claude ${version} check: couldn't read its help`);
+        if (this.version === version) this.setCheck(null);
+        return;
+      }
+      const missing = missingFlags(help);
+      const result: FlagCheck = { check: missing.length ? "changed" : "ok", missing };
+      this.checks.set(version, result);
+      log(`claude ${version} check: ${missing.length ? `lacks ${missing.join(", ")}` : "ok"}`);
+      if (this.version === version) this.setCheck(result);
+    };
+    try {
+      const p = Bun.spawn([claudeCommand(), "--help"], { cwd: versionCwd(), env: translatorEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => p.kill(), 10_000);
+      Promise.all([new Response(p.stdout).text(), p.exited]).then(
+        ([out, code]) => {
+          clearTimeout(timer);
+          done(code === 0 && out.trim() ? out : null);
+        },
+        () => {
+          clearTimeout(timer);
+          done(null);
+        },
+      );
+    } catch {
+      done(null);
+    }
+  }
+
+  // The check's part of the state, bumped when it changed.
+  private setCheck(c: FlagCheck | null) {
+    const t = state.translator;
+    const check = c?.check ?? null;
+    const missing = c ? [...c.missing] : [];
+    if (t.check === check && t.missing.join(" ") === missing.join(" ")) return;
+    t.check = check;
+    t.missing = missing;
+    bump();
   }
 
   private setError(e: { error: TranslatorError; until: string | null } | null) {

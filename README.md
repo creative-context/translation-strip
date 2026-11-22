@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <b>Version 0.9</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
+  <b>Version 0.12</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.0-6FA6E8?labelColor=1A1D21" alt="Version 0.9.0">
+  <img src="https://img.shields.io/badge/version-0.12.1-6FA6E8?labelColor=1A1D21" alt="Version 0.12.1">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">
@@ -96,7 +96,7 @@ A Markdown file that says how you sound: your registers, what you never write, a
 
 - The app and its server run on your Mac and listen on `127.0.0.1` only.
 - What you write, your language settings, the open chat's name and its last message go to Claude through a fresh Claude Code session on your plan, and nowhere else. A translation on the Mac stays on your Mac.
-- It keeps no message text: only your settings, with your notes per language, and a log of what happened.
+- It keeps no message text on disk: only your settings, with your notes per language, and a log of what happened. Your last few messages stay in its window's memory, so ⌘Z can bring one back, until you quit.
 
 The whole list is in [docs/privacy.md](docs/privacy.md).
 

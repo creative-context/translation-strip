@@ -41,7 +41,7 @@ macOS ties the Accessibility permission to the app's signature. If your keychain
 
 ## Where the strip sits
 
-The strip docks under the Teams window, as wide as it, and moves with it. When there's no room under Teams, it becomes a column beside Teams, as tall as its window, with the reply on top and what you wrote below. Position in the strip's settings menu (the gear), or Layout in the app menu, picks Automatic or a side: below, above, left or right of Teams. Drag the strip's outer edge to make it taller, or the column's to make it wider, and the app remembers the size. The strip steps out of the way when Teams is minimized, hidden or on another desktop.
+The strip docks under the Teams window, as wide as it, and moves with it. When there's no room under Teams, it becomes a column beside Teams, as tall as its window, with the reply on top and what you wrote below. Position in the strip's options menu (the gear), or Layout in the app menu, picks Automatic or a side: below, above, left or right of Teams. Drag the strip's outer edge to make it taller, or the column's to make it wider, and the app remembers the size. The strip steps out of the way when Teams is minimized, hidden or on another desktop. It comes in front with Teams; when another app covers Teams, it covers the strip too.
 
 ## Keys
 
@@ -54,21 +54,26 @@ The strip docks under the Teams window, as wide as it, and moves with it. When t
 | ⌘D | Dictate, in the language chosen in Settings |
 | ⌘, | Open Settings |
 | Esc | Clear |
+| ⌘Z | With both boxes empty, bring back the last message you sent or cleared; again for the one before |
 | ⌃⌥T | From any app, bring up the strip ready to type |
 
-## The settings menu
+## The options menu
 
-Normal and Formal pick the register, as your guide describes them. The settings menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Mac, which [translates on your Mac](#translating-on-this-mac) without Claude; Haiku, the fastest; Sonnet, which a new install starts with; or Opus, which writes the most natural replies and runs at low effort), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide and restarts the translator. The language, the guide, the linter and dictation are set once in Settings.
+Normal and Formal pick the register, as your guide describes them. The options menu (the gear) sets what ⌘⏎ does (send, or put the message in Teams without sending), picks the model (Mac, which [translates on your Mac](#translating-on-this-mac) without Claude; Haiku, the fastest; Sonnet, which a new install starts with; or Opus, which writes the most natural replies, runs at low effort and, when it's busy, has Sonnet answer with your guide), picks the language to reply in ([Reply in](#languages)), sets where the strip sits, opens your guide, restarts the translator, opens Settings (⌘,) and, once you've sent or cleared a message, lists your last five under Recent, where the language, the guide, the linter and dictation are set once.
 
 ## Translating on this Mac
 
 Mac, the first model in the gear, translates with Apple's Translation, built into macOS 26 and later. It runs on your Mac, so it needs no internet and uses nothing from your plan. It's a plain translation: it doesn't follow your voice guide, Normal and Formal don't change it, and Adjust is off for its replies. The linter still checks them. It reads which language you wrote in the way "Detected" does, and for a very short text it takes your dictation language. With Auto on, it replies in the language of the other person's last message, like the other models.
 
-The strip also uses it on its own when Claude can't answer: no internet, your plan's limit, Claude Code signed out, out of date or not installed, or a session that didn't answer. The reply then shows "Translated on this Mac"; point at it to see why. Adjust is off for that reply too. Each new message tries Claude first, except while your plan's limit lasts.
+The strip also uses it on its own when Claude can't answer: no internet, your plan's limit, Claude Code signed out, out of date or not installed, or a session that didn't answer. The reply then shows "Translated on this Mac"; point at it to see why. Adjust is off for that reply too, and Try Claude again beside the tag asks Claude for the same message, except while your plan's limit lasts. Each new message tries Claude first, except while your plan's limit lasts.
 
 The strip touches up what Translation writes in two ways: blank lines it adds between your lines come out, and :) :D ;) :( become the emoji Teams shows when you type them, since a paste skips that.
 
 Translation needs both languages on your Mac. When one is missing, the strip says "<language> to <language> isn't on this Mac": add it in System Settings › General › Language & Region › Translation Languages, and macOS downloads it from Apple. On macOS 14 and 15, Mac says "Can't translate on this Mac".
+
+## When Teams or Claude Code changes
+
+The strip reads Teams' window to send, and passes Claude Code a few options to translate. When an update moves something it relies on, an orange tag says so while the strip is idle: "Teams changed. Sending may fail" or "Claude Code changed. The strip may fail". Point at it to see what moved. Neither stops anything: you can still try, and the strip needs an update to handle the change.
 
 ## Languages
 
@@ -88,7 +93,7 @@ Example: with Auto on and a last message from Priya Raman in Português, a reply
 
 ## How it sends
 
-The app brings Teams forward, pastes the reply into the message box, checks that the box holds exactly that text and then presses Return. It says Sent only once your message shows in the chat: then both boxes empty and "✓ Sent · <time>" shows beside "To <chat>" for a few seconds. If the message doesn't show, the reply stays in the strip, with a notice to check the chat before sending again. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. A quote you're replying to isn't a draft: the message goes under it. Teams' own touch-ups as it takes the paste don't stop it: its autocorrect fixing a word, or a long link it shortens to its start and "…" (the strip compares the link's whole address). If Teams changes more than that, the message stays in the box unsent. If Teams is slow to take the paste, the strip waits up to 5 seconds.
+The app brings Teams forward, pastes the reply into the message box, checks that the box holds exactly that text and then presses Return. It says Sent only once your message shows in the chat: then both boxes empty and "✓ Sent · <time>" shows beside "To <chat>" for a few seconds. If the message doesn't show, the reply stays in the strip, with a notice to check the chat before sending again. If Teams empties its box but the strip can't see the chat to check, it says "Not confirmed. Check the chat" and keeps the reply too. It never presses a key while Teams isn't in front, and it sends only if Teams still has open the chat the strip shows next to Send. If you switch chats after translating, the strip says "Written for <name>" and won't send until you translate again or go back to that chat. If the box already has a draft, it stops and lets you add the message after it. A quote you're replying to isn't a draft: the message goes under it. Teams' own touch-ups as it takes the paste don't stop it: its autocorrect fixing a word, or a long link it shortens to its start and "…" (the strip compares the link's whole address). If Teams changes more than that, the message stays in the box unsent. If Teams is slow to take the paste, the strip waits up to 5 seconds.
 
 To send something as it is, with no translation, type it in the reply box while the strip is empty: it goes to the chat open in Teams, as you wrote it.
 
@@ -122,4 +127,4 @@ A linter checks each reply, in any language, against your guide's rules with pla
 <file>:<line> warning [<id>] <message>
 ```
 
-It exits with 0 when it found no errors and 1 when it did. When it finds an error, the app asks the translator for one fix, in the reply's own language, before you see the reply, and keeps the fix only if it's better. A warning shows above the reply. Pick it in Settings (⌘,), with Choose… beside Linter.
+It exits with 0 when it found no errors and 1 when it did. When it finds an error, the app asks the translator for one fix, in the reply's own language, before you see the reply, and keeps the fix only if it's better. A warning shows in an orange tag beside the reply, with Fix it: one click asks for the reply again with only that changed, and Undo puts it back. Pick it in Settings (⌘,), with Choose… beside Linter.

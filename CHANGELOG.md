@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.1
+
+- The strip no longer comes over another app while Teams sits behind it. A Teams notification or pop-up used to bring the strip in front of everything; now it comes in front only with Teams, and otherwise stays just above Teams' window, covered by whatever covers Teams.
+
+## 0.12.0
+
+- A message you sent or cleared comes back: ⌘Z with both boxes empty brings back the last one, and Recent in the options menu lists the last five. They stay in the strip's memory only and are gone when you quit.
+- When Teams or Claude Code updates and changes something the strip relies on, an orange tag says so before a send or a translation fails.
+- The log measures what happens before Teams empties its box after a paste, so the second paste can be removed in a later version.
+
+## 0.11.0
+
+- A voice finding's orange tag has Fix it: one click asks for the reply again with only that changed, and Undo puts it back. Before, the tag only showed the finding.
+- Replies carry what you mean instead of following your Spanish word by word: the translator works out what each idiom stands for and writes it as a native speaker would, and keeps your order and sentences where they already read naturally. It still adds nothing you didn't write.
+- When Opus is busy or unavailable, Sonnet answers that message, still with your voice guide, before the strip falls back to translating on the Mac. The next message tries Opus again, and the log says which model answered.
+- When Claude Code stops because your usage credits ran out or are turned off, the strip treats it as the plan's limit: the Mac's tag says the limit was reached, not that Claude didn't answer, and while it lasts the strip goes straight to the Mac. Claude Code 2.1.328 changed the wording of that error.
+
+## 0.10.0
+
+- The log keeps numbers about every send and every reply, never their text: how many pastes a send took and how long, the text's length as a range, the model, how long a reply took and its token counts, and Teams' version. They show what slows or breaks a send.
+- The strip no longer says Sent when it couldn't check: if Teams empties its box but the strip can't see the chat, it says "Not confirmed. Check the chat" and keeps the reply.
+- A reply the Mac made because Claude couldn't answer has Try Claude again beside its tag.
+- In a narrow strip, a language name that does nothing steps aside before a notice's words get cut.
+- The gear is called Options, and its menu opens Settings (⌘,).
+
+## 0.9.1
+
+- A long text translates on the Mac. The strip waited 15 seconds for Apple's Translation, which takes longer as the text grows, so a long text stopped with "Couldn't translate". The wait now grows with the text.
+- Adjust sits at the left of the reply's footer, like Normal and Formal under it, so it reads as a tool for the text, apart from the language, the chat and Send.
+
 ## 0.9.0
 
 - A new model, Mac, first in the gear's Model row, translates on your Mac with Apple's Translation (macOS 26 or later): no internet, and nothing from your plan. It doesn't follow your voice guide, so Formal and Adjust are off with it.

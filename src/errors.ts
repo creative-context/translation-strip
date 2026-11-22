@@ -6,7 +6,10 @@ import type { TranslatorError } from "./state";
 // What the stream's last rate_limit_event said, for the turn in progress.
 export type RateLimit = { status?: string; resetsAt?: number } | null;
 
-const LIMIT = /hit your (?:[\w' ]{0,40} )?limit|usage limit|limit reached|rate.?limit(?:ed)?\b|out of (?:extra )?usage|quota/i;
+// Usage credits: since Claude Code 2.1.328, credits that run out mid-reply no longer say "rate limit",
+// and 2.1.323 stops a model that needs credits when they're off or used up. An API key's account
+// with no money left says its balance is too low.
+const LIMIT = /hit your (?:[\w' ]{0,40} )?limit|usage limit|limit reached|rate.?limit(?:ed)?\b|out of (?:extra )?usage|quota|usage credits?|credit balance (?:is )?too low/i;
 const OFFLINE = /connection (?:error|refused|reset|closed)|network|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|unable to connect|socket hang up|offline|internet/i;
 
 // Claude Code isn't signed in, or its login ran out.

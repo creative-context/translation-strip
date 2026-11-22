@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var dockShow = false
     var firstPlace = true // the strip's first placement at launch also makes it active
     var followedPid: pid_t = 0
+    var teamsVersionLogged: String? // the Teams version the log last named ("app: Teams <version>")
     var layoutMenu: NSMenu? // the app menu's Layout submenu
     let resizer = EdgeResizer() // the strip's outer edge, to drag
     var resizeStart: (size: DockSize, frame: NSRect)?
@@ -327,6 +328,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             if !window.isVisible { window.orderFrontRegardless() }
             return
         }
+        if followedPid != teams.processIdentifier {
+            // A new Teams process: the log names its version when it isn't the one already named.
+            let version = Teams.version(of: teams)
+            if let line = Teams.versionLine(version, logged: teamsVersionLogged) {
+                ShellLog.write(line)
+                teamsVersionLogged = Teams.versionShown(version)
+            }
+        }
         followedPid = teams.processIdentifier
         docking = true
         let screens = screenAreas
@@ -338,10 +347,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let w = f.window(of: teams, ax: ax)
             let shape = w.map { Dock.shape(for: $0.frame, layout: layout, screens: screens, mainHeight: mainHeight, size: size) }
             let frame = w.flatMap { t in t.onScreen ? shape.map { Dock.frame($0, teams: t.frame, screens: screens, mainHeight: mainHeight, size: size) } : nil }
+            let teamsID = w?.id
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if let shape { self.resizer.shape = shape }
-                    self.place(frame, raise: raise, show: show)
+                    self.place(frame, raise: raise, show: show, teamsID: teamsID)
                     self.docking = false
                     if self.dockAgain {
                         self.dockAgain = false
@@ -383,8 +393,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         dock()
     }
 
-    // nil: Teams' window isn't on screen, so the strip steps out (unless `show`).
-    func place(_ f: NSRect?, raise: Bool, show: Bool) {
+    // nil: Teams' window isn't on screen, so the strip steps out (unless `show`). It comes in front
+    // only while Teams or the strip is the front app; otherwise it goes just above Teams' window (StripOrder).
+    func place(_ f: NSRect?, raise: Bool, show: Bool, teamsID: CGWindowID?) {
         guard !NSApp.isHidden else { return }
         let first = firstPlace
         firstPlace = false
@@ -397,7 +408,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             window.setFrame(f, display: true, animate: false)
             defaults.set(NSStringFromRect(f), forKey: "stripFrame")
         }
-        if raise || moved || !window.isVisible { window.orderFrontRegardless() }
+        let front = first || NSApp.isActive || NSWorkspace.shared.frontmostApplication?.bundleIdentifier == teamsBundleID
+        switch StripOrder.decide(raise: raise, moved: moved, visible: window.isVisible, front: front, teamsID: teamsID) {
+        case .keep: break
+        case .front: window.orderFrontRegardless()
+        case .aboveTeams(let id): window.order(.above, relativeTo: Int(id))
+        }
         if first {
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
@@ -512,12 +528,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 if !own { ShellLog.write("the server on port \(port) isn't this app's own; nothing will be sent") }
             }
         case "send":
+            let received = ProcessInfo.processInfo.systemUptime // the total runs from here to the outcome
+            // Whether Teams was the front app when the message came (the log's "front"; measured only).
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == teamsBundleID
             checkServer { own in
                 if let reason = OwnServer.refusal(mainFrame: mainFrame, localOrigin: localOrigin, own: own) {
-                    ShellLog.write("send: not sent (\(reason))")
+                    ShellLog.write(SendLog.line("send: not sent (\(reason))", self.measured(m, received: received, front: front, out: nil)))
                     return self.call("sent", ["ok": false, "reason": reason])
                 }
-                self.send(m)
+                self.send(m, received: received, front: front)
             }
         case "layout":
             if let l = (m["value"] as? String).flatMap(DockLayout.init(rawValue:)) { setLayout(l) }
@@ -565,7 +584,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     // MARK: sending
 
-    func send(_ m: [String: Any]) {
+    // What the outcome line says about a send: numbers only, never the text or the chat.
+    func measured(_ m: [String: Any], received: TimeInterval, front: Bool, out: SendOutcome?) -> SendLog.Measured {
+        let text = (m["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return SendLog.Measured(pastes: out?.pastes, boxMs: out?.boxMs, totalMs: SendLog.ms(since: received),
+                                chars: text.count, link: SendLog.hasLink(text), mode: (m["mode"] as? String) == "leave" ? "leave" : "send",
+                                front: front, raiseMs: out?.raiseMs)
+    }
+
+    func send(_ m: [String: Any], received: TimeInterval, front: Bool) {
         guard !sending else { return ShellLog.write("send: one is already in progress") }
         let text = (m["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return call("sent", ["ok": false]) }
@@ -579,7 +606,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let out = r.send(text, to: chat, leave: leave, afterDraft: afterDraft, log: { ShellLog.write($0) })
             DispatchQueue.main.async {
                 self.sending = false
-                ShellLog.write(out.ok ? (leave ? "send: left in the message box" : "send: sent") : "send: not sent (\(out.reason ?? "unknown"))")
+                let start = out.ok ? (leave ? "send: left in the message box" : "send: sent") : "send: not sent (\(out.reason ?? "unknown"))"
+                ShellLog.write(SendLog.line(start, self.measured(m, received: received, front: front, out: out)))
                 var reply: [String: Any] = ["ok": out.ok]
                 if let reason = out.reason { reply["reason"] = reason }
                 self.call("sent", reply)
@@ -615,6 +643,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
         case "guide":
             chooseGuide()
+        case "settings":
+            openSettings() // as ⌘, does
         default:
             ShellLog.write("the page asked to open something unknown")
         }
