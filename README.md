@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <b>Version 0.13</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
+  <b>Version 0.15</b> · macOS 14 or later · For the new Microsoft Teams · Built with Swift and <a href="https://bun.sh">Bun</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.13.0-6FA6E8?labelColor=1A1D21" alt="Version 0.13.0">
+  <img src="https://img.shields.io/badge/version-0.15.0-6FA6E8?labelColor=1A1D21" alt="Version 0.15.0">
   <img src="https://img.shields.io/badge/license-MIT-238551?labelColor=1A1D21" alt="MIT license">
   <img src="https://img.shields.io/badge/macOS-14%2B-8A8F98?labelColor=1A1D21" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/API_key-not_needed-6FA6E8?labelColor=1A1D21" alt="No API key needed">

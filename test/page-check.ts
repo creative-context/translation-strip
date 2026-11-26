@@ -427,7 +427,7 @@ check("Normal / Formal", "Formal while translating drops the first answer", asyn
 });
 
 // ===================================================================================== mic
-check("Mic", "the mic is Session Monitor's chip: 24 x 22, a fill that shows it can be pressed, lit white while listening", async () => {
+check("Mic", "the mic is Session Monitor's chip: 24 x 22, a fill that shows it can be pressed, in indigo while listening", async () => {
   const t = await open();
   const look = () => t.p.evaluate(() => { const m = document.getElementById("mic")!, r = m.getBoundingClientRect(), cs = getComputedStyle(m), i = m.querySelector("svg")!.getBoundingClientRect();
     return { w: r.width, h: r.height, radius: cs.borderRadius, bg: cs.backgroundColor, color: cs.color, icon: i.width }; });
@@ -439,8 +439,8 @@ check("Mic", "the mic is Session Monitor's chip: 24 x 22, a fill that shows it c
   await t.p.click("#mic");
   await settle(t.p, 250);
   const on = await look();
-  eq(on.bg, "rgb(247, 248, 248)", "fill while listening");
-  eq(on.color, "rgb(13, 14, 16)", "icon while listening");
+  eq(on.bg, "rgb(94, 106, 210)", "fill while listening (the accent)");
+  eq(on.color, "rgb(255, 255, 255)", "icon while listening");
   await t.p.click("#mic");
 });
 check("Mic", "mic button dictates into the box (listening label with five bars that follow the voice, full text, back to off)", async () => {
@@ -459,6 +459,8 @@ check("Mic", "mic button dictates into the box (listening label with five bars t
   await t.p.waitForFunction(() => document.getElementById("mic")!.getAttribute("aria-pressed") === "false", null, { timeout: 3000 })
     .catch(() => { throw new Fail("the mic stayed on after the final text"); });
   eq(await t.p.locator("#dictLabel").innerText(), "", "label at the end");
+  await waitState(t.p, "ready", 10000);   // ending by itself (the minute ran out) translates, as a stop does
+  eq(reqsTo(t, "/api/translate").length, 1, "translate requests after it ended by itself");
 });
 check("Mic", "⌘D starts dictation", async () => {
   const t = await open();
@@ -468,7 +470,7 @@ check("Mic", "⌘D starts dictation", async () => {
   await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.length > 5, null, { timeout: 3000 })
     .catch(() => { throw new Fail("no text came in"); });
 });
-check("Mic", "pressing the mic again stops it and keeps what was said", async () => {
+check("Mic", "pressing the mic again stops it, keeps what was said and translates it; the English waits for ⌘⏎", async () => {
   const t = await open();
   await t.p.click("#mic");
   await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.length > 5, null, { timeout: 3000 });
@@ -478,8 +480,40 @@ check("Mic", "pressing the mic again stops it and keeps what was said", async ()
   eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic pressed");
   const v = await val(t.p, "es");
   ok(v.length > 5 && ES.startsWith(v), `kept text should be the start of the sentence, got ${JSON.stringify(v)}`);
-  await settle(t.p, 500);
-  eq(await val(t.p, "es"), v, "text after waiting");
+  await waitState(t.p, "ready", 10000);
+  const r = reqsTo(t, "/api/translate");
+  eq(r.length, 1, "translate requests");
+  eq(r[0].body.text, v, "what was translated");
+  eq(await val(t.p, "es"), v, "text after the reply");
+  eq((await t.msgs()).filter((m) => m.type === "send").length, 0, "sends to Teams");
+});
+check("Mic", "When you stop: Send right away makes the mic's stop translate and send to the open chat", async () => {
+  try {
+  await putSettings({ dictationPhrase: "send" });
+  const t = await open();
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => (document.getElementById("es") as HTMLTextAreaElement).value.length > 10, null, { timeout: 3000 });
+  await t.p.click("#mic");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.state === "sent", null, { timeout: 10000 })
+    .catch(async () => { throw new Fail(`never sent; state ${await t.p.evaluate(() => document.getElementById("strip")!.dataset.state)}`); });
+  eq(reqsTo(t, "/api/translate").length, 1, "translate requests");
+  eq((await sends(t)).length, 1, "sends");
+  } finally { await resetSettings(); }
+});
+check("Mic", "a stop with no new words does nothing: the reply already there is not translated or sent again", async () => {
+  try {
+  await putSettings({ dictationPhrase: "send" });
+  const t = await open();
+  await t.p.fill("#es", ES);
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "ready", 10000);
+  await t.p.evaluate(() => { document.getElementById("mic")!.click(); document.getElementById("mic")!.click(); });   // before a word comes in
+  await settle(t.p, 2200);
+  eq(await t.p.locator("#mic").getAttribute("aria-pressed"), "false", "mic after");
+  eq(reqsTo(t, "/api/translate").length, 1, "translate requests");
+  eq((await sends(t)).length, 0, "sends");
+  eq(await t.p.evaluate(() => document.getElementById("strip")!.dataset.state), "ready", "the strip");
+  } finally { await resetSettings(); }
 });
 check("Mic", "⏎ while dictating stops it and translates what was said", async () => {
   const t = await open();
@@ -565,7 +599,7 @@ check("Mic", "Words by This Mac (the default): nothing goes to Claude after dict
   eq(reqsTo(t, "/api/fix").length, 0, "fix requests");
   has(await val(t.p, "es"), "pre su puesto", "the box keeps what this Mac heard");
 });
-check("Mic", "After the phrase: Send right away translates, then sends to the open chat as ⌘⏎ does", async () => {
+check("Mic", "When you stop: with the phrase, Send right away translates, then sends to the open chat as ⌘⏎ does", async () => {
   try {
   await putSettings({ dictationPhrase: "send" });
   const t = await open("dict=phrase");

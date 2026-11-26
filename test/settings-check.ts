@@ -440,8 +440,10 @@ check("Words by: This Mac or Claude; a choice posts { dictationEngine }; with Th
   same(await p.textContent("#dictationEngine option[value=claude]"), "Claude (needs a Claude model)", "the reason");
 });
 
-check("After “enviar mensaje”: Review first by default, or Send right away; a choice posts { dictationPhrase }", async () => {
+check("When you stop: Review first by default, or Send right away; a choice posts { dictationPhrase }", async () => {
   const p = await open();
+  same(await p.$eval("label[for=dictationPhrase]", (e: any) => e.firstChild.textContent), "When you stop", "the row's name");
+  same(await p.$eval("label[for=dictationPhrase] small", (e: any) => e.textContent), "The mic button, or “enviar mensaje” and a pause.", "its line");
   same(await p.$$eval("#dictationPhrase option", (o: any[]) => o.map((x) => x.textContent)), ["Review first", "Send right away"], "options");
   same(await p.$eval("#dictationPhrase", (e: any) => e.value), "review", "the default");
   await p.selectOption("#dictationPhrase", "send");

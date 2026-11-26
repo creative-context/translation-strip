@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0
+
+- The strip and its Settings take the family's newer look, the one Session Monitor has (design system 0.16.0): the main buttons and the mic while it listens in indigo, "Translating…" in the working blue, brighter orange and red for tags and errors, solid panels in Settings, and a menu one step lighter with a soft shadow only.
+
+## 0.14.0
+
+- Stopping the mic translates what you said, as ending with "enviar mensaje" does. Before, it only stopped and left the words in the box. Settings › Dictation › When you stop (until now "After “enviar mensaje”") covers both: Review first translates and waits for your ⌘⏎; Send right away also sends to the open chat, unless the reply has a tag to read first. Nothing happens if the mic heard no words.
+
 ## 0.13.0
 
 - The mic works as Session Monitor's: the same button, lit white while it listens; five bars beside "Listening" that follow your voice; two soft notes going up when it starts listening and down when it stops (Settings › Dictation › Sounds turns them off; your own sound files can replace them, as in Session Monitor). It reads the microphone straight from its device, so it hears you with any speakers or display as the sound output. It stops by itself after a minute, and after 4 seconds of no sound from the microphone it stops and says so.

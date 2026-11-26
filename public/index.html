@@ -56,18 +56,17 @@
   #pencil { display: inline-flex; }
   .btn kbd { font: inherit; }
   .adjust-btn svg.i { width: 12px; height: 12px; }
-  /* Dictation: the mic sits where Adjust sits on the English side. Listening is yours, so it's
-     neutral white, never a state color. */
+  /* Dictation: the mic sits where Adjust sits on the English side. */
   .dict-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--csm-text-meta); color: var(--color-text-secondary); white-space: nowrap; }
   .dict-label:empty { display: none; }
-  /* The mic is Session Monitor's: a 24 × 22 chip that always shows it can be pressed, lit white while it
-     listens. */
-  .mic { box-sizing: border-box; width: 24px; height: 22px; border-radius: var(--radius-element); background: #FFFFFF26; color: var(--color-text-primary);
+  /* The mic is Session Monitor's: a 24 × 22 chip that always shows it can be pressed, in the main
+     action's indigo while it listens. */
+  .mic { box-sizing: border-box; width: 24px; height: 22px; border-radius: var(--radius-element); background: var(--color-fill-strong); color: var(--color-text-primary);
     transition: background-color var(--duration-fast) var(--ease-standard); }
-  .mic:hover { background: #FFFFFF33; color: var(--color-text-primary); }
+  .mic:hover { background: var(--color-fill-strong-hover); color: var(--color-text-primary); }
   .mic svg.i { width: 14px; height: 14px; }
   [data-dict="on"] .f.es { background: var(--color-overlay-pressed); }
-  [data-dict="on"] .mic, [data-dict="on"] .mic:hover { background: #F7F8F8; color: var(--color-on-light); }
+  [data-dict="on"] .mic, [data-dict="on"] .mic:hover { background: var(--color-accent); color: var(--color-on-accent); }
   /* Five bars beside "Listening" follow the mic's level, as in Session Monitor: each takes the level with
      its own weight and a little chance, in transform only. Quiet, they rest low and breathe. Reduce Motion
      keeps them still. */
@@ -89,14 +88,14 @@
   .adjust-row .field:focus { background: var(--color-overlay-pressed); }
   .actions { display: inline-flex; gap: 8px; flex: none; }
   .actions:empty { display: none; }
-  .busy { display: none; position: absolute; left: 0; top: 0; color: var(--color-text-accent); align-items: center; gap: 8px; font-size: var(--msg); line-height: var(--msg-lh); }
+  .busy { display: none; position: absolute; left: 0; top: 0; color: var(--color-text-working); align-items: center; gap: 8px; font-size: var(--msg); line-height: var(--msg-lh); }
   [data-state="translating"] .busy, [data-state="starting"] .busy { display: inline-flex; }
   [data-state="translating"] .en-out, [data-state="starting"] .en-out { visibility: hidden; }
   [data-state="question"] .en-out { color: var(--color-text-orange); }
   [data-state="stale"] .en-out { color: var(--color-text-secondary); text-decoration: line-through; text-decoration-color: var(--color-text-disabled); }
 
   /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
-  [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: var(--color-working-muted); }
   [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
   /* A done tag has a check in a circle, an error tag the warning triangle; the rest keep the family's dots. */
   .status .ico { display: inline-flex; flex: none; }
@@ -485,8 +484,9 @@ window.strip = {
   dictLevel(level) { if (st.dict === "on") { dictLevel = Number(level) || 0; drawWave(dictLevel); } },
   access(m) {
     const r = SS.shellAccess(st, m);
+    commit(r.st);   // first, as in clearAll
     if (r.stopDictation) post(stopMsg);
-    commit(r.st); paint();
+    paint();
   },
   focus() { esIn.focus(); },
   layout(m) { commit(SS.shellLayout(st, m)); paint(); },
@@ -843,7 +843,7 @@ function onDictation(m) {
   const was = st.dict;
   const r = SS.onDictation(st, m, fields());
   commit(r.st);
-  if (was === "on" && m.state === "off" && !r.done) { paint(); fixDictation(); return; }   // it ended by itself (the minute ran out)
+  if (was === "on" && m.state === "off" && !r.done) { paint(); fixDictation(dictEnd()); return; }   // it ended by itself (the minute ran out)
   if (st.dict !== "on") { clearTimeout(armTimer); dictLevel = 0; }
   if (r.done) {
     if (dictThen) { dictThen(); return; }
@@ -879,7 +879,7 @@ function armDict(words) {
     stopDictation(st.dictPhraseSends ? translateThenSend : translate);
   }, SS.ARM_MS);
 }
-// Settings › Dictation › After the phrase: Send right away. It translates, then sends as ⌘⏎ does, but only a
+// Settings › Dictation › When you stop: Send right away. It translates, then sends as ⌘⏎ does, but only a
 // reply that came back clean: a question, an error, a tag to read (a voice finding, a stand-in) or a box you
 // changed meanwhile leaves the reply waiting for you.
 async function translateThenSend() {
@@ -898,7 +898,14 @@ function drawWave(level) {
   w.classList.toggle("hush", lvl < 0.08);
   [...w.children].forEach((b, i) => b.style.setProperty("--h", (0.2 + Math.min(0.8, lvl * WAVE_K[i] * (0.65 + Math.random() * 0.5))).toFixed(3)));
 }
-function toggleDictation() { if (st.dict === "on") stopDictation(); else startDictation(); }
+// Stopping the mic yourself (the button or ⌘D) or the minute running out ends it as the closing phrase does:
+// it translates, or with Settings › Dictation › Send right away it translates and sends. Nothing happens when
+// no words came in, so a reply already in the strip is never sent again.
+function dictEnd() {
+  const base = st.dictBase, sends = st.dictPhraseSends;
+  return () => { if (esIn.value.trim() === String(base || "").trim()) return; if (sends) translateThenSend(); else translate(); };
+}
+function toggleDictation() { if (st.dict === "on") stopDictation(dictEnd()); else startDictation(); }
 
 // ------------------------------------------------------------------------------ the fields
 // The Spanish changed: an answer for the old text no longer counts; a translation of it is out of date.
@@ -931,8 +938,8 @@ enOut.addEventListener("input", () => { commit(SS.editedEnglish(st, enOut.value,
 
 function clearAll() {
   const r = SS.clearAll(st, fields(), SS.clock(new Date()));
+  commit(r.st);   // first: the mic's "off" must find dictation already dropped, or it would read as the minute running out and translate
   if (r.stopDictation) post(stopMsg);
-  commit(r.st);
   paint(); esIn.focus();
 }
 
