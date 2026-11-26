@@ -477,7 +477,8 @@ describe("Translation Strip server", () => {
   });
 
   test("dictation's engine, sounds and phrase are settings: saved, read back, and they don't restart the translator", async () => {
-    const before = starts().length;
+    await statusIs("ready");
+    const before = (await settle(starts)).length;   // the spare from the test before may still be writing its line
     const r = await post("/api/settings", { dictationEngine: "claude", dictationSounds: false, dictationPhrase: "send" });
     expect(r.status).toBe(200);
     expect(r.body.settings).toMatchObject({ dictationEngine: "claude", dictationSounds: false, dictationPhrase: "send" });
