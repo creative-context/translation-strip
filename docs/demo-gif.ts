@@ -3,7 +3,7 @@
 // in the app. The story, with Auto on: in a chat in English you write in Spanish, ⏎ translates, ⌘⏎
 // sends, and the message shows in the chat; then a chat in Portuguese, where you write in English and
 // the same steps give Portuguese; then two more chats in English, one written in a mix of Spanish and
-// English and one in Icelandic. "Detected · …" shows what macOS's own detector says of each (it
+// English, whose reply gets an Adjust (⌘K, a note in Spanish, ⏎) before it goes, and one in Icelandic. "Detected · …" shows what macOS's own detector says of each (it
 // doesn't run in a browser, so each chat carries its answer). Frames are drawn in WebKit at 2x, one by one, and ffmpeg makes the GIFs at 880 px. The
 // window's round corners sit on GitHub's page color: one GIF for its dark theme, one for its light
 // theme (the README picks with <picture>), since a transparent GIF would weigh ten times as much.
@@ -35,7 +35,8 @@ const CHATS = [
   { id: "mix", name: "Hannah Brooks", initials: "HB", color: "#6b4f8a", language: "English",
     msgs: ["How's the release looking?", "Can we still ship it today?"],
     write: "sí, ya hice el fix del login, nada más falta que pase el CI y hacemos el deploy en la tarde",
-    out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon.", detected: "Español" },
+    out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon.", detected: "Español",
+    adjust: { note: "agrega que le aviso cuando salga", out: "Yes, I finished the login fix. We just need CI to pass, and then we'll deploy this afternoon. I'll let you know once it's live." } },
   { id: "is", name: "Omar Haddad", initials: "OH", color: "#8a6a3d", language: "English",
     msgs: ["Thanks for the numbers yesterday.", "When do you think the report will be ready?"],
     write: "Hæ! Ég kláraði skýrsluna og sendi hana á morgun.",
@@ -108,6 +109,11 @@ await context.route(`${BASE}/api/translate`, async (route: any) => {
   await new Promise((r) => setTimeout(r, 700));
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: current.out, language: current.language, from: "chat", lint: [] }) });
 });
+// An adjust gives the chat's adjusted reply.
+await context.route(`${BASE}/api/adjust`, async (route: any) => {
+  await new Promise((r) => setTimeout(r, 900));
+  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: current.adjust?.out ?? current.out, language: current.language, from: "chat", lint: [] }) });
+});
 const page = await context.newPage();
 await page.setContent(SCENE);
 const frame = await (async () => {
@@ -174,7 +180,28 @@ const tell = async (c: (typeof CHATS)[number]) => {
   await snap(250);
   await hint("");
   await until("ready", 800);
+  await page.waitForTimeout(250);   // Send's color settles before the long frame
   await snap(2000);
+
+  // An Adjust: ⌘K opens its note, written in Spanish; ⏎ rewrites the reply, and the tag says Adjusted.
+  if (c.adjust) {
+    await hint("<kbd>⌘K</kbd>Adjust");
+    await snap(450);
+    await frame.press("#es", "Meta+k");
+    await snap(250);
+    await hint("");
+    for (let i = 2; i <= c.adjust.note.length; i += 2) { await frame.fill("#adjIn", c.adjust.note.slice(0, i)); await snap(55); }
+    await frame.fill("#adjIn", c.adjust.note);
+    await snap(500);
+    await hint("<kbd>⏎</kbd>Adjust");
+    await snap(450);
+    await frame.press("#adjIn", "Enter");
+    await snap(250);
+    await hint("");
+    await until("ready", 900);
+    await page.waitForTimeout(250);   // Send's color settles before the long frame
+    await snap(2200);
+  }
 
   await hint("<kbd>⌘⏎</kbd>Send");
   await snap(450);
@@ -182,7 +209,7 @@ const tell = async (c: (typeof CHATS)[number]) => {
   await snap(200);
   await hint("");
   await until("sent", 600);
-  await page.evaluate((c: any) => { const m = document.getElementById(`mine-${c.id}`)!; m.querySelector(".bub")!.textContent = c.out; m.classList.add("in"); }, c);
+  await page.evaluate((c: any) => { const m = document.getElementById(`mine-${c.id}`)!; m.querySelector(".bub")!.textContent = c.adjust?.out ?? c.out; m.classList.add("in"); }, c);
   await record(400, 60);
 };
 
