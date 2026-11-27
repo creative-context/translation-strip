@@ -3,7 +3,7 @@
 // stream) comes from the family's kit. It starts only when run.
 import { isAbsolute } from "node:path";
 import pkg from "./package.json";
-import { clock, PARENT_ENV, PORT, PUBLIC_DIR } from "./src/config";
+import { clock, PARENT_ENV, PARTIAL_MS, PORT, PUBLIC_DIR } from "./src/config";
 import { lint } from "./src/lint";
 import { fixMacText, hintFor, MacHelper, type MacOutcome } from "./src/mac";
 import { dictationLanguage, isLanguage } from "./src/languages";
@@ -12,7 +12,7 @@ import { addUsage, charsOf, claudeQuestionLine, claudeReplyLine, macReplyLine, t
 import { createServer } from "./src/server-kit";
 import { checkChange, fileThere, loadSettings, saveSettings, settingsStamp } from "./src/settings";
 import { bump, onBump, publicSettings, snapshot, state, type TranslatorError } from "./src/state";
-import { Translator } from "./src/translator";
+import { Translator, type OnPartial } from "./src/translator";
 
 const VERSION = process.env.STRIP_VERSION || pkg.version; // the app says its own version; run by hand, package.json's
 
@@ -124,15 +124,23 @@ const STAND_IN = new Set<TranslatorError>(["offline", "limit", "login", "update"
 const standInLog = (error: string) => console.error(`${new Date().toISOString()} translated on the Mac instead (${error})`);
 const claudeError = (error: string, until?: string | null) => json(until ? { error, until } : { error }, 503);
 
-// A request, one at a time, start to finish. The state says busy all along, on the helper too.
-// t0: when the request reached the server (performance.now()), for the log's time.
-async function run(r: Ask, t0: number) {
+// What refuses a request before any work: an adjust on the mac model, and one while another runs.
+function refusal(r: Ask): Response | null {
   if (r.task === "adjust" && state.settings.model === "mac") return json({ error: "mac" }, 409);
   if (working || translator.busy()) return json({ error: "busy" }, 409);
+  return null;
+}
+
+// A request, one at a time, start to finish. The state says busy all along, on the helper too.
+// t0: when the request reached the server (performance.now()), for the log's time.
+// partial: the reply's words as Claude writes them, for a streamed answer (none on the Mac).
+async function run(r: Ask, t0: number, partial?: Words) {
+  const no = refusal(r);
+  if (no) return no;
   working = true;
   translator.refresh();
   try {
-    return state.settings.model === "mac" ? await runMac(r, t0) : await runClaude(r, t0);
+    return state.settings.model === "mac" ? await runMac(r, t0) : await runClaude(r, t0, partial);
   } finally {
     working = false;
     translator.refresh();
@@ -154,7 +162,7 @@ async function runMac(r: Ask, t0: number) {
 // names the errors, in the reply's own language (Auto off), so the fix keeps the language. The fix
 // is kept only when it has fewer errors; else the first reply goes back with its findings, as before.
 // Warnings are left alone (the guide says they depend on the message).
-async function runClaude(r: Ask, t0: number) {
+async function runClaude(r: Ask, t0: number, partial?: Words) {
   const model = state.settings.model;
   const until = translator.limitUntil();
   if (r.task === "polish" && until && Date.parse(until) > clock() && mac.available()) {
@@ -165,9 +173,10 @@ async function runClaude(r: Ask, t0: number) {
     }
     return claudeError("limit", until);
   }
-  const out = await translator.request(r);
+  const out = await translator.request(r, partial?.push);
   if (!out.ok) {
     if (r.task === "polish" && !out.stopped && STAND_IN.has(out.error) && mac.available()) {
+      partial?.now("");   // Claude's half-written words go while the Mac translates
       const m = await onMac(r);
       if (m.ok) {
         standInLog(out.error);
@@ -188,6 +197,8 @@ async function runClaude(r: Ask, t0: number) {
   let usage = out.usage ?? null;
   let fix: Fix = "none";
   if (errors.length && !translator.busy()) {
+    // The fix takes a few seconds and doesn't stream: the page sees the whole first reply meanwhile.
+    partial?.now(text);
     const note = `The user's voice guide rules this out, so change only it and keep everything else as it is: ${errors.map((f) => f.message).join(" / ")}`;
     const fixed = await translator.request({ task: "adjust", text: r.text, current: text, note, register: r.register, target: language, auto: false, ...(r.notes ? { notes: r.notes } : {}), ...(r.context ? { context: r.context } : {}) });
     usage = addUsage(usage, fixed.usage);
@@ -206,6 +217,93 @@ async function runClaude(r: Ask, t0: number) {
 // Counts only, never the text.
 const fixLog = (words: string) => console.error(`${new Date().toISOString()} lint: ${words}`);
 
+// A streamed answer's words, at most one line every PARTIAL_MS: push keeps the latest and sends it when
+// its turn comes, now sends at once, stop drops what waits (the final object replaces it).
+type Words = { push: OnPartial; now: OnPartial; stop: () => void };
+function throttled(send: (text: string) => void): Words {
+  let last = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let waiting: string | null = null;
+  const flush = () => {
+    timer = null;
+    if (waiting === null) return;
+    const text = waiting;
+    waiting = null;
+    last = performance.now();
+    send(text);
+  };
+  return {
+    push(text) {
+      waiting = text;
+      if (timer) return;
+      const wait = last + PARTIAL_MS - performance.now();
+      if (wait <= 0) flush();
+      else timer = setTimeout(flush, wait);
+    },
+    now(text) {
+      if (timer) clearTimeout(timer);
+      waiting = text;
+      flush();
+    },
+    stop() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      waiting = null;
+    },
+  };
+}
+
+// The page asks for a streamed answer with Accept: application/x-ndjson. It gets the same refusals
+// (409, before anything streams) as plain JSON; otherwise a 200 stream of JSON lines: { "partial": "<the
+// reply's words so far>" } while Claude writes (only the words of "text", never a question, the id, the
+// language or from; "" when a second try starts over), then one { "status", "body" }: the status and body
+// the plain answer would have had. Without that Accept, the plain answer, as before. The words are never logged.
+const wantsStream = (req: Request) => /application\/x-ndjson/i.test(req.headers.get("accept") ?? "");
+function answer(req: Request, r: Ask, t0: number): Response | Promise<Response> {
+  if (!wantsStream(req)) return run(r, t0);
+  const no = refusal(r);
+  if (no) return no;
+  const enc = new TextEncoder();
+  let open = true;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      // Not awaited: the stream starts at once and its lines go out as they come.
+      start(c) {
+        void stream(c);
+      },
+      cancel() {
+        open = false;
+      },
+    }),
+    { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store", "x-content-type-options": "nosniff" } },
+  );
+  async function stream(c: ReadableStreamDefaultController<Uint8Array>) {
+    const line = (o: unknown) => {
+      if (!open) return;
+      try {
+        c.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      } catch {
+        open = false; // the page went away; the request still finishes, and is logged, as before
+      }
+    };
+    const partial = throttled((text) => line({ partial: text }));
+    let status = 503;
+    let body: unknown = { error: "failed" };
+    try {
+      const res = await run(r, t0, partial);
+      status = res.status;
+      body = await res.json();
+    } catch {
+    } finally {
+      partial.stop();
+    }
+    line({ status, body });
+    try {
+      c.close();
+    } catch {}
+  }
+}
+
 async function routes(req: Request, url: URL): Promise<Response | undefined> {
   const post = req.method === "POST";
   if (post && !postAllowed(req)) return json({ error: "forbidden" }, 403);
@@ -219,7 +317,7 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     // target, when given, is a one-time override: this request writes in it, with Auto off.
     if (b.target !== undefined && !isLanguage(b.target)) return json({ error: "target" }, 400);
     const lang = b.target !== undefined ? { target: b.target as string, auto: false } : { target: state.settings.target, auto: state.settings.auto };
-    return run({ task: "polish", text, register: register(b.register), ...lang, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
+    return answer(req, { task: "polish", text, register: register(b.register), ...lang, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
   }
 
   if (url.pathname === "/api/adjust" && post) {
@@ -230,7 +328,7 @@ async function routes(req: Request, url: URL): Promise<Response | undefined> {
     if (!current || !note) return json({ error: "text" }, 400);
     // An adjust keeps the current text's language: the target is that language, Auto off.
     const language = str(b?.language, 40).trim() || state.settings.target;
-    return run({ task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
+    return answer(req, { task: "adjust", text, current, note, register: register(b.register), target: language, auto: false, ...notes(), ...(context(b.context) ? { context: context(b.context) } : {}) }, t0);
   }
 
   // Settings › Dictation › Claude: what this Mac heard, back with the words it misheard fixed, by the

@@ -17,7 +17,13 @@
 //   and exits 1, and the next one answers; "HANG-ONCE" → the first never answers, the next one does;
 //   "WRONGID-ONCE" → the first answers with another request's id, the next one answers right;
 //   "BUSY" → with --fallback-model, the reply comes from that model (its assistant message names it), as when the main one is busy;
-//   "NOUSAGE" → a result with no usage; "PARTUSAGE" → a usage with only the input and output counts.
+//   "NOUSAGE" → a result with no usage; "PARTUSAGE" → a usage with only the input and output counts;
+//   "TRICKLE" → the reply streams slowly (20 ms between pieces); "ESCAPES" → a reply with a line break, quotes,
+//   a backslash, an accent and an emoji, every character past ASCII written as a \u escape, streamed one
+//   character at a time, so every escape is split across pieces.
+// With --include-partial-messages, each reply also streams before its assistant message, as Claude Code does:
+// stream_event lines (message_start, content_block_start, content_block_delta with text_delta pieces of 1 to
+// 7 characters, content_block_stop, message_stop).
 // Every other result carries made-up token counts in `usage` (the API's names, as Claude Code 2.1 gives
 // them) and in `modelUsage`: USAGE below.
 // `--version` prints a made-up version, or the text of $STRIP_DIR/fake-version when it exists.
@@ -47,6 +53,7 @@ if (args.includes("--help")) {
   const OPTIONS: [string, string][] = [
     ["-d, --debug [filter]", "Enable debug mode"],
     ["--verbose", "Override verbose mode setting from config"],
+    ["--include-partial-messages", "Include partial message chunks as they arrive (only with --print and stream-json)"],
     ["-p, --print", "Print response and exit (useful for pipes)"],
     ["--output-format <format>", 'Output format (only works with --print): "text", "json", or "stream-json"'],
     ["--input-format <format>", 'Input format (only works with --print): "text" or "stream-json"'],
@@ -111,6 +118,23 @@ const out = (m: unknown) => process.stdout.write(JSON.stringify(m) + "\n");
 const init = () => out({ type: "system", subtype: "init", cwd: process.cwd(), session_id: session, tools: [], mcp_servers: [], model: `claude-${model}-test`, permissionMode: "default", slash_commands: [], apiKeySource: "none", claude_code_version: "2.1.0", uuid: crypto.randomUUID() });
 const fallback = arg("--fallback-model");
 let speaking = model; // the model this turn's assistant messages name
+const partials = args.includes("--include-partial-messages");
+const event = (e: unknown) => out({ type: "stream_event", event: e, session_id: session, parent_tool_use_id: null, uuid: crypto.randomUUID() });
+// The reply in pieces, as Claude Code streams it with --include-partial-messages. size: each piece's length
+// (by default 1 to 7 characters, in a fixed pattern); ms: the wait between pieces.
+async function stream(text: string, ms = 0, size?: number) {
+  if (!partials) return;
+  event({ type: "message_start", message: { model: `claude-${speaking}-test`, id: `msg_${Date.now()}`, type: "message", role: "assistant", content: [] } });
+  event({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  for (let i = 0, k = 0; i < text.length; k++) {
+    const n = size ?? 1 + ((k * 3) % 7);
+    event({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: text.slice(i, i + n) } });
+    i += n;
+    if (ms) await Bun.sleep(ms);
+  }
+  event({ type: "content_block_stop", index: 0 });
+  event({ type: "message_stop" });
+}
 const assistant = (text: string) => out({ type: "assistant", message: { model: `claude-${speaking}-test`, id: `msg_${Date.now()}`, type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: null }, parent_tool_use_id: null, session_id: session, uuid: crypto.randomUUID() });
 // Made-up token counts, the same on every turn, so the tests can check the sums.
 const USAGE = { input_tokens: 12, cache_creation_input_tokens: 345, cache_read_input_tokens: 6789, output_tokens: 23 };
@@ -155,6 +179,7 @@ async function turn(content: string) {
     if (once[1] === "HANG") return new Promise<void>(() => {});
     if (once[1] === "WRONGID") {
       const wrong = JSON.stringify({ id: "zzzzzzzz", text: "Can you send me the slides before lunch?", language: "English", from: "target" });
+      await stream(wrong);
       assistant(wrong);
       return result(wrong);
     }
@@ -187,8 +212,10 @@ async function turn(content: string) {
   else if (req.task === "fix") reply = answer(text.replace(/\bpre su puesto\b/g, "presupuesto"));
   else if (text.includes("KINDLY")) reply = answer(inLanguage("Could you kindly send me the slides before lunch?"));
   else if (text.includes("MEMORY")) reply = answer(`Turns seen: ${turns}. Before: ${before.join(" / ") || "nothing"}`);
+  else if (text.includes("ESCAPES")) reply = answer("First line\nShe said \"fine\" \\ café 😀 done").replace(/[^\x00-\x7f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
   else reply = answer(inLanguage(req.register === "formal" ? "Could you please send me the slides before lunch?" : "Can you send me the slides before lunch?"));
   if (text.includes("CHATTY")) reply = `Here it is:\n${reply}\nHope that helps.`;
+  await stream(reply, text.includes("TRICKLE") ? 20 : 0, text.includes("ESCAPES") ? 1 : undefined);
   assistant(reply);
   rateLimit("allowed", LIMIT_RESETS_AT);
   result(reply);

@@ -142,6 +142,60 @@ describe("translating", () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------- the reply's words as they come
+describe("the reply's words while Claude writes them", () => {
+  test("they show only for the current request, while it translates or adjusts, and the answer replaces them", () => {
+    let s = type(start(), ES);
+    const go = SS.translateStart(s.st, s.f);
+    s = applied(s, go.st);
+    expect(SS.streamText(s.st)).toBe("");
+    expect(tagOf(s)).toBeNull(); // the busy line covers the box until words come
+    const one = SS.streamed(s.st, s.st.req, "Could you take");
+    expect(SS.streamText(one)).toBe("Could you take");
+    expect(one.enSeq).toBe(s.st.enSeq); // the English box isn't written: the words sit in its place
+    expect(SS.view(one, null)).toMatchObject({ state: "translating", tag: { kind: "working", text: "Translating…" } });
+    expect(SS.canSend(one, s.f, false)).toBe(false);
+    expect(SS.canAdjust(one, s.f, "sonnet")).toBe(false);
+    expect(SS.streamed(one, s.st.req - 1, "Old words")).toBe(one); // an answer that no longer counts
+    const two = SS.streamed(one, s.st.req, "Could you take a look at");
+    expect(SS.streamText(two)).toBe("Could you take a look at");
+    expect(SS.streamText(SS.streamed(two, s.st.req, ""))).toBe(""); // a second try starts over
+    const done = applied({ ...s, st: two }, SS.translateDone(two, s.f, { text: EN, language: "English", from: "target" }));
+    expect(done.st.phase).toBe("ready");
+    expect(SS.streamText(done.st)).toBe("");
+    expect(done.f.en).toBe(EN);
+    expect(SS.streamed(done.st, done.st.req, "Late words")).toBe(done.st); // not while ready
+  });
+
+  test("a question, Esc or an edit drops them; a new request starts with none", () => {
+    let s = type(start(), ES);
+    s = applied(s, SS.translateStart(s.st, s.f).st);
+    const w = SS.streamed(s.st, s.st.req, "Could you take");
+    const q = SS.translateDone(w, s.f, { question: "This Thursday or next week's?" });
+    expect(q.phase).toBe("question");
+    expect(SS.streamText(q)).toBe("");
+    expect(q.en).toBe("This Thursday or next week's?");
+    expect(SS.streamText(SS.clearAll(w, s.f, "9:41 AM").st)).toBe("");
+    expect(SS.streamText(SS.typed(w, { es: ES + " y algo más", en: "" }))).toBe("");
+    const again = SS.translateStart({ ...w, phase: "ready" }, { es: ES + " otra vez", en: EN });
+    expect(SS.streamText(again.st)).toBe("");
+  });
+
+  test("an adjust: the words over the current English, which comes back on a question or an error", () => {
+    let s = ready();
+    const go = SS.adjustStart(s.st, s.f, "más corto", "English", "sonnet");
+    const w = SS.streamed(go.st, go.st.req, "Can you check");
+    expect(SS.streamText(w)).toBe("Can you check");
+    expect(tagOf({ st: w, f: s.f })).toBe("working: Adjusting…");
+    const q = SS.adjustDone(w, s.f, { question: "Shorter how?" }).st;
+    expect(SS.streamText(q)).toBe("");
+    expect(q.enSeq).toBe(s.st.enSeq); // the box still holds the current English
+    const e = SS.adjustDone(w, s.f, { error: "offline" }).st;
+    expect(SS.streamText(e)).toBe("");
+    expect(e.enSeq).toBe(s.st.enSeq);
+  });
+});
+
 // ---------------------------------------------------------------------------------------- out of date
 describe("out of date after an edit", () => {
   type Row = [string, string, string, string];   // name, phase before, Spanish after, phase after
@@ -253,7 +307,8 @@ describe("what a send leaves behind", () => {
     expect(go.st.phase).toBe("sending");
     expect(SS.view(go.st, null).tag).toEqual({ kind: "working", text: "Putting in Teams…" });
     expect(SS.sendStart(s.st, s.f, true, "send").msg).toEqual({ type: "send", text: EN, mode: "send", chat: "Priya Raman", afterDraft: true });
-    expect(SS.view(SS.sendStart(s.st, s.f, false, "send").st, null).tag).toEqual({ kind: "working", text: "Sending…" });
+    // Sending turns the ring that lands as Sent's check; Put in Teams keeps the family's dots.
+    expect(SS.view(SS.sendStart(s.st, s.f, false, "send").st, null).tag).toEqual({ kind: "working", text: "Sending…", mark: "ring" });
   });
 
   const refuse: [string, () => S][] = [
@@ -274,11 +329,14 @@ describe("what a send leaves behind", () => {
     expect(canSend({ ...s, st: SS.shellAccess(s.st, {}).st })).toBe(true);
   });
 
-  test("success (the message showed in the chat): both boxes empty, 'Sent · time' in the footer, the next typing starts over", () => {
+  test("success (the message showed in the chat): both boxes empty, 'Sent to <chat>' in the footer with the time in its title, the next typing starts over", () => {
     const s = sendAnd(ready(), { ok: true });
     expect(s.st.phase).toBe("sent");
     expect([s.f.es, s.f.en]).toEqual(["", ""]);
-    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent · 9:41 AM", title: "Sent to Priya Raman at 9:41 AM" });
+    expect(SS.view(s.st, null).tag).toEqual({ kind: "done", text: "Sent to Priya Raman", mark: "ring", title: "Sent to Priya Raman at 9:41 AM" });
+    expect(s.st.lastText).toBe(EN);   // what went, shown dimmed in the English box while "Sent" lasts
+    // With no chat name, just "Sent", the time still in its title.
+    expect(SS.view({ ...s.st, sentTo: "" }, null).tag).toEqual({ kind: "done", text: "Sent", mark: "ring", title: "Sent at 9:41 AM" });
     expect(canSend(s)).toBe(false);
     expect(s.st.chatFor).toBe("");
     expect(SS.typed(s.st, { es: "h", en: "" }).phase).toBe("idle");

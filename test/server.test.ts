@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { classify, errorFor, stderrWord } from "../src/errors";
 import { DICTATION, LANGUAGES } from "../src/languages";
 import { dropAddedBlankLines, emojiFor, fixMacText, hintFor, macWaitMs, outcomeOf } from "../src/mac";
-import { answerFor, parseReply, requestTurn, systemPrompt } from "../src/protocol";
+import { answerFor, parseReply, requestTurn, streamedText, systemPrompt } from "../src/protocol";
 import { addUsage, charsBucket, charsOf, claudeQuestionLine, claudeReplyLine, macReplyLine, usageOf } from "../src/reply-log";
 import { checkChange, loadSettings } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/state";
@@ -42,6 +42,29 @@ const post = async (path: string, body: object = {}, headers: Record<string, str
   const r = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
   return { status: r.status, body: (await r.json()) as any };
 };
+// A streamed answer (Accept: application/x-ndjson): its status and content type, each { partial } line with
+// when it came (ms since the request), and the last line's { status, body }.
+async function postStream(path: string, body: object) {
+  const t0 = performance.now();
+  const r = await fetch(`${BASE}${path}`, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson" }, body: JSON.stringify(body) });
+  const type = r.headers.get("content-type") ?? "";
+  if (!type.includes("ndjson")) return { status: r.status, type, partials: [] as { text: string; at: number }[], final: { status: r.status, body: (await r.json()) as any } };
+  const partials: { text: string; at: number }[] = [];
+  let final: { status: number; body: any } | null = null;
+  let buf = "";
+  const dec = new TextDecoder();
+  for await (const chunk of r.body as any) {
+    buf += dec.decode(chunk, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const o = JSON.parse(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+      if (typeof o.partial === "string") partials.push({ text: o.partial, at: performance.now() - t0 });
+      else final = o;
+    }
+  }
+  return { status: r.status, type, partials, final: final! };
+}
 const lines = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const starts = () => lines(join(DIR, "fake-starts.jsonl"));
 const turns = () => lines(join(DIR, "fake-turns.jsonl"));
@@ -317,6 +340,30 @@ describe("pure parts", () => {
     expect(flags.every((f) => /^--?[a-z]/.test(f))).toBe(true); // no values: not "", "stream-json" or "/dev/fd/3"
   });
 
+  test("a reply's words while it streams: only the text, after its id, with no half escape, and never a question", () => {
+    const full = '{"id": "ab12cd34", "text": "Line one\\nShe said \\"ok\\" \\\\ caf\\u00e9 \\ud83d\\ude00 done", "language": "English", "from": "target"}';
+    const final = JSON.parse(full).text;
+    let last = "";
+    for (let n = 0; n <= full.length; n++) {
+      const words = streamedText(full.slice(0, n), "ab12cd34");
+      if (words === null) continue;
+      expect(final.startsWith(words)).toBe(true); // every split, an escape cut in two included, shows a clean start
+      expect(words.length).toBeGreaterThanOrEqual(last.length);
+      expect(words).not.toMatch(/[\ud800-\udbff]$/); // never half an emoji
+      last = words;
+    }
+    expect(last).toBe(final);
+    expect(streamedText('{"id": "ab12cd34", "te', "ab12cd34")).toBeNull();
+    expect(streamedText('{"id": "zzzzzzzz", "text": "Can you', "ab12cd34")).toBeNull(); // another request's reply
+    expect(streamedText('{"text": "Can you", "id": "ab12cd34"}', "ab12cd34")).toBeNull(); // no id yet when the text comes
+    expect(streamedText('{"id": "ab12cd34", "question": "Which \\"text\\": one', "ab12cd34")).toBeNull();
+    expect(streamedText('{"id": "ab12cd34", "question": "Which one?"}', "ab12cd34")).toBeNull();
+    expect(streamedText('Here it is:\n{"id": "ab12cd34", "n": 3, "o": {"text": "no"}, "text": "  Yes, the', "ab12cd34")).toBe("Yes, the");
+    expect(streamedText('{"id": "ab12cd34", "text": "a\\', "ab12cd34")).toBe("a");
+    expect(streamedText('{"id": "ab12cd34", "text": "a\\u00', "ab12cd34")).toBe("a");
+    expect(streamedText('{"id": "ab12cd34", "text": "a\\ud83d\\ude', "ab12cd34")).toBe("a");
+  });
+
   test("the update check reads a help: the names it shows, the hidden flags aside", () => {
     const help = "Usage: claude [options]\n\nOptions:\n  -p, --print                 Print response and exit\n  --model <model>             Model for the session\n  --tools <tools...>          Tools (\"\" for none)\n";
     expect([...helpNames(help)].sort()).toEqual(["--model", "--print", "--tools", "-p"]);
@@ -366,7 +413,7 @@ describe("Translation Strip server", () => {
   test("starts claude quietly, with the guide as its system prompt", async () => {
     const s = await until("the first start's line", async () => starts()[0]); // ready comes at spawn, the line a moment later
     expect(s.model).toBe("haiku");
-    for (const flag of ["-p", "--input-format", "--output-format", "--verbose", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"]) expect(s.args).toContain(flag);
+    for (const flag of ["-p", "--input-format", "--output-format", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"]) expect(s.args).toContain(flag);
     expect(s.args[s.args.indexOf("--tools") + 1]).toBe("");
     expect(s.args[s.args.indexOf("--setting-sources") + 1]).toBe("");
     expect(s.args.join(" ")).not.toContain("Short sentences"); // the guide is never on the command line
@@ -516,6 +563,68 @@ describe("Translation Strip server", () => {
     const second = await post("/api/translate", { text: "otra cosa", register: "normal" });
     expect(second).toEqual({ status: 409, body: { error: "busy" } });
     expect((await slow).status).toBe(200);
+    await statusIs("ready");
+  });
+
+  test("a streamed translate: the reply's words as Claude writes them, at most one line every 60 ms, then the final object", async () => {
+    const { line, result: r } = await replyLineOf(() => postStream("/api/translate", { text: "TRICKLE ¿me mandas las slides antes de comer?", register: "normal" }));
+    expect(line).toMatch(claudeLine(`${USAGE_ONE} · lint 0 errors · fix none · tries 1`));
+    expect(r.status).toBe(200);
+    expect(r.type).toContain("application/x-ndjson");
+    expect(r.final).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?", language: "English", from: "target", lint: [], engine: "claude" } });
+    const words = r.partials.map((p) => p.text);
+    expect(words.length).toBeGreaterThanOrEqual(3); // it grew over several steps
+    for (let i = 0; i < words.length; i++) {
+      expect(r.final.body.text.startsWith(words[i])).toBe(true);
+      if (i) expect(words[i].length).toBeGreaterThan(words[i - 1].length);
+    }
+    for (const w of words) for (const never of ['"', "{", "English", "target"]) expect(w).not.toContain(never); // the text alone
+    const gaps = r.partials.slice(1).map((p, i) => p.at - r.partials[i].at);
+    expect(gaps.filter((g) => g < 30).length).toBeLessThanOrEqual(1); // the throttle (a line may arrive late and bunch with the next)
+  });
+
+  test("a streamed reply's escapes split across pieces: every step a clean start of the final text", async () => {
+    const r = await postStream("/api/translate", { text: "ESCAPES ¿me mandas las slides?", register: "normal" });
+    const final = "First line\nShe said \"fine\" \\ café 😀 done";
+    expect(r.final.status).toBe(200);
+    expect(r.final.body.text).toBe(final);
+    for (const p of r.partials) {
+      expect(final.startsWith(p.text)).toBe(true);
+      expect(p.text).not.toMatch(/\\u|[\ud800-\udbff]$/);
+    }
+  });
+
+  test("a streamed question shows no words, and a reply to another request never streams", async () => {
+    const q = await postStream("/api/translate", { text: "UNCLEAR TRICKLE mándame el reporte", register: "normal" });
+    expect(q.partials).toEqual([]);
+    expect(q.final).toEqual({ status: 200, body: { question: "Which report do you mean, the weekly one or the budget one?" } });
+    await statusIs("ready");
+    const w = await postStream("/api/translate", { text: "WRONGID ¿me mandas las slides?", register: "normal" });
+    expect(w.partials.every((p) => p.text === "")).toBe(true); // at most the second try's start-over
+    expect(w.final).toEqual({ status: 503, body: { error: "failed" } });
+    await statusIs("ready");
+  });
+
+  test("a streamed adjust, and a streamed request while one runs: a plain 409 busy", async () => {
+    const slow = postStream("/api/translate", { text: "SLOW ¿me mandas las slides?", register: "normal" });
+    await statusIs("busy");
+    const second = await postStream("/api/translate", { text: "otra cosa", register: "normal" });
+    expect(second.status).toBe(409);
+    expect(second.type).toContain("application/json");
+    expect(second.final.body).toEqual({ error: "busy" });
+    expect((await slow).final.status).toBe(200);
+    await statusIs("ready");
+    const a = await postStream("/api/adjust", { text: "¿me mandas las slides?", current: "Can you send me the slides before lunch?", note: "add thanks TRICKLE", register: "normal", language: "English" });
+    expect(a.final).toEqual({ status: 200, body: { text: "Can you send me the slides before lunch?, thanks!", language: "English", from: "target", lint: [], engine: "claude" } });
+    expect(a.partials.length).toBeGreaterThanOrEqual(1);
+    for (const p of a.partials) expect(a.final.body.text.startsWith(p.text)).toBe(true);
+    await statusIs("ready");
+  });
+
+  test("a streamed reply with a linter error: the first reply's words, then the fixed one as the final", async () => {
+    const r = await postStream("/api/translate", { text: "KINDLY ¿me mandas las slides?", register: "normal" });
+    expect(r.partials.at(-1)?.text).toBe("Could you kindly send me the slides before lunch?"); // all of it while the fix runs
+    expect(r.final.body.text).toBe("Could you send me the slides before lunch?");
     await statusIs("ready");
   });
 
@@ -858,7 +967,7 @@ describe("Translation Strip server", () => {
     expect(log).toContain(VERSION_WORDS);
     expect(log).toContain("session exited (code 1, login; claude 2.1.0 (Claude Code stand-in))");
     expect(log).toContain("update;");
-    for (const never of [SECRET, "Invalid API key", "unknown option", "slides", "MEMORY", "Ops sync", "Kim Park"]) expect(log).not.toContain(never);
+    for (const never of [SECRET, "Invalid API key", "unknown option", "slides", "MEMORY", "Ops sync", "Kim Park", "First line", "café", "caf\\u00e9", "partial"]) expect(log).not.toContain(never); // streamed words too
     // Every reply line has one of the shapes, numbers and fixed words only.
     const replies = log.split("\n").filter((l) => /^\S+ reply: /.test(l)).map((l) => l.slice(l.indexOf(" ") + 1));
     expect(replies.length).toBeGreaterThan(10);

@@ -30,6 +30,7 @@
       once: "", onceFor: "", // the language button's one-time target, and the Spanish it holds for
       prevLang: null,    // the language the English had before an adjust: { language, from, langAuto }, for undo
       prev: "", prevLint: [], adjusted: false, adjustOpen: false, lastNote: "", adjText: "",
+      partial: "", partialReq: 0, // the reply's words as Claude writes them, and the request they belong to (streamText)
       err: null,         // { kind, until, what, source?, language? } when phase is "error"
       engine: "",        // what wrote the translation on show: "claude", "mac" (this Mac's Translation), or "" (typed, or none yet)
       fallback: null,    // { kind, until } when this Mac translated it because Claude couldn't (the Claude error)
@@ -138,12 +139,15 @@
     const p = st.phase, t = st.teams, tr = (srv && srv.translator) || {}, model = modelOf(srv);
     const v = { state: p, tag: null, actions: [] };
     const tag = (kind, text, actions) => { v.tag = { kind, text }; if (actions) v.actions = actions; };
-    if (p === "translating") v.state = tr.status === "starting" ? "starting" : "translating";
-    else if (p === "sending") tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…");
+    // Once the words come, they take the box and "Translating…" moves to the footer.
+    if (p === "translating" && streamText(st)) { v.state = "translating"; tag("working", "Translating…"); }
+    else if (p === "translating") v.state = tr.status === "starting" ? "starting" : "translating";
+    // Sending turns the family's ring, which lands as the check of "Sent" (the page keeps the same mark).
+    else if (p === "sending") { tag("working", st.sendMode === "leave" ? "Putting in Teams…" : "Sending…"); if (st.sendMode !== "leave") v.tag.mark = "ring"; }
     else if (p === "adjusting") tag("working", "Adjusting…");
-    // Sent: in the footer, for a few seconds (fadeDone).
-    // "To <chat>" is right beside it, so the tag says only when; its title says to whom.
-    else if (p === "sent") { tag("done", `Sent · ${st.sentAt}`); if (st.sentTo) v.tag.title = `Sent to ${st.sentTo} at ${st.sentAt}`; }
+    // Sent: in the footer, for a few seconds (fadeDone). To and Send step aside, so the tag says to whom;
+    // the time is in its title (in a 3-second state it is always now).
+    else if (p === "sent") { tag("done", st.sentTo ? `Sent to ${st.sentTo}` : "Sent"); v.tag.mark = "ring"; v.tag.title = `${st.sentTo ? `Sent to ${st.sentTo}` : "Sent"} at ${st.sentAt}`; }
     else if (p === "leave") tag("idle", "Left in Teams, not sent");
     else if (p === "error") { const e = errorView(st.err.kind, st.err.until, st.err.what, st.err); v.state = e.state; v.tag = e.tag; v.actions = e.actions; }
     else if (p === "question") tag("asks", "Asks you");
@@ -299,6 +303,20 @@
     const n = next(st, { req: st.req + 1, prev: f.en, prevLint: st.lint, prevLang: { language: st.language, from: st.from, langAuto: st.langAuto }, lastNote: note, en: f.en, notice: null, adjustOpen: false, phase: "adjusting", adjText: text });
     return { st: n, body: { text, current, note, register: st.register, context: context(st.teams), language: st.language || target || "English" } };
   }
+  // The reply's words while Claude writes them (the server's { partial } lines), for request `req`: kept
+  // only while that request is the current one and still translating or adjusting. Each line has all the
+  // words so far, so the latest replaces the one before; "" (a second try starting over) clears them.
+  const STREAM_PHASES = ["translating", "adjusting"];
+  function streamed(st, req, text) {
+    if (req !== st.req || !STREAM_PHASES.includes(st.phase) || typeof text !== "string") return st;
+    if (text === st.partial && st.partialReq === req) return st;
+    return next(st, { partial: text, partialReq: req });
+  }
+  // The words to show in place of the English box, or "": only for the current request, while it runs.
+  // The answer (translateDone, adjustDone), Esc, an edit or a new request ends the phase or moves req
+  // on, so the words go without each transition clearing them.
+  const streamText = st => (STREAM_PHASES.includes(st.phase) && st.partialReq === st.req ? st.partial : "");
+
   // { st, focus }: focus says the Spanish box takes the keyboard back (a new English came back).
   function adjustDone(st, f, d) {
     d = d && typeof d === "object" ? d : {};
@@ -407,8 +425,9 @@
     m = m || {};
     if (m.ok) {
       // The shell answers ok only once the message shows in the chat (or sits in Teams' box, in
-      // Put in Teams mode): then both boxes empty for the next message, and "Sent · time" stays in the
-      // footer. Until then, and on any failure, the English stays here.
+      // Put in Teams mode): then both boxes empty for the next message, and "Sent to <chat>" stays in the
+      // footer, with what went (lastText) shown dimmed in the English box. Until then, and on any failure,
+      // the English stays here.
       const n = next(st, keepRecent(st, { es: st.es, en: st.lastText, chat: st.sentTo || st.chatFor, at: now, how: st.sendMode === "leave" ? "leave" : "sent" }));
       Object.assign(n, { leftover: null, sentAt: now, es: "", adjusted: false, chatFor: "", language: "", from: "", langAuto: false, langWho: "", once: "", onceFor: "", prevLang: null, engine: "", fallback: null, phase: st.sendMode === "leave" ? "leave" : "sent" });
       writeEnglish(n, "", []); writeSpanish(n, "");
@@ -646,7 +665,7 @@
   const api = {
     create, context, mismatch, shapeUnknown, shapeSeveral, shellLayout, LAYOUTS, errorView, view, dataTeams, dictLabel, langView, langInert, enPlaceholder, canRetarget, untilText, clock,
     canTranslate, canAdjust, adjustOff, canSend, toneOff, fallbackWhy, ADJUST_NEEDS, TONE_NEEDS,
-    translateStart, translateDone, adjustStart, adjustDone, undo, setRegister,
+    translateStart, translateDone, adjustStart, adjustDone, undo, setRegister, streamed, streamText,
     typed, editedEnglish, setAdjustOpen, clearNotice, cancelDraft, fadeDone, clearAll,
     sendStart, sendTimeout, sendDone,
     dictStart, dictStop, dictFinish, onDictation, dictArm, dictByPhrase, fixStart, fixDone, phraseAtEnd, stripPhrase, sendPhrases, ARM_MS,

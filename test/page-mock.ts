@@ -15,7 +15,12 @@
 //   kindly    a polish with a voice-check finding    STARTING  the translator starts again (3 s) before it answers
 //   LOGIN     error "login" (Claude Code isn't signed in)      UPDATE    error "update" (Claude Code needs an update)
 //   NOCLAUDE  error "missing" (Claude Code isn't installed, or not where it installs to)
-// Adjust notes: "corto" or "short" gives a shorter English; "UNCLEAR" a question; "OFFLINE" and the others as above.
+//   SLOW      a long English streamed slowly (a word every 120 ms, about 4 s), whose final reply drops a word, as the linter's fix would
+//   ASKLATE   English words stream for about a second, then the answer is a question
+// Adjust notes: "corto" or "short" gives a shorter English; "UNCLEAR" a question; "OFFLINE" and the others as above; SLOW as above.
+// Streaming: a page that asks for it (Accept: application/x-ndjson) gets a translate's or an adjust's English as the server
+// sends it, { "partial": "<the words so far>" } lines, then { "status", "body" }. The usual reply's words start at 60 % of its
+// 700 ms and are all there by its end, so "Translating…" still shows first; a question or an error doesn't stream.
 // This Mac's Translation (the model "mac"): the page's URL picks it, read from each request's Referer, so one page can
 // try it while the others don't: ?model=mac answers as the Mac (engine "mac", no register, adjust refused with 409 mac),
 // ?fallback=<error> as the Mac standing in for Claude after that error (offline, limit, login, update, missing, failed).
@@ -94,7 +99,35 @@ function restart(ms: number) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const SLOW_STREAMED = "I went through the budget this morning and found two lines that really don't add up, so could we go over them together on Thursday's call before it goes out?";
+const SLOW_FINAL = SLOW_STREAMED.replace("really ", "");
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+// A Claude reply, after `ms`. A page that asks for a stream gets its English word by word: nothing for `quiet` ms, then the
+// words spread over the rest (or `every` ms apart, for SLOW), then the final line. `words`: the English that streams, when it
+// differs from the final reply's (SLOW, ASKLATE).
+type Pace = { ms: number; quiet?: number; every?: number; words?: string };
+function claudeReply(req: Request, body: any, pace: Pace): Response | Promise<Response> {
+  const shown: string = pace.words ?? (typeof body.text === "string" ? body.text : "");
+  if (!/application\/x-ndjson/.test(req.headers.get("accept") ?? "") || !shown) return sleep(pace.ms).then(() => json(body));
+  const parts = shown.split(/(?<= )/);
+  const quiet = pace.quiet ?? Math.round(pace.ms * 0.6);
+  const every = pace.every ?? Math.max(10, Math.floor((pace.ms - quiet) / parts.length));
+  return new Response(new ReadableStream<Uint8Array>({
+    async start(c) {
+      const line = (o: unknown) => { try { c.enqueue(enc.encode(JSON.stringify(o) + "\n")); return true; } catch { return false; } };
+      await sleep(quiet);
+      let sofar = "";
+      for (const p of parts) {
+        sofar += p;
+        if (!line({ partial: sofar.trim() })) return;
+        await sleep(every);
+      }
+      line({ status: 200, body });
+      try { c.close(); } catch {}
+    },
+  }), { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+}
 
 async function waitReady() {
   while (translator.status === "starting") await sleep(100);
@@ -176,7 +209,7 @@ async function onMac(body: any, fallback: string | null) {
   return json(reply);
 }
 
-async function translate(body: any, flags: Flags = NO_FLAGS) {
+async function translate(req: Request, body: any, flags: Flags = NO_FLAGS) {
   const text = String(body?.text ?? "");
   if (modelFor(flags) === "mac") return onMac(body, null);
   if (flags.fallback) return onMac(body, flags.fallback);
@@ -184,7 +217,8 @@ async function translate(body: any, flags: Flags = NO_FLAGS) {
   await waitReady();
   const hit = await trigger(text);
   if (hit) return hit;
-  await sleep(DELAY);
+  if (/asklate/i.test(text)) return claudeReply(req, { question: "This Thursday or next week's?" }, { ms: 1200, quiet: 200, every: 90, words: EN_SLOW_ASK });
+  if (/slow/i.test(text)) return claudeReply(req, { text: SLOW_FINAL, language: settings.target, from: "target", lint: [], engine: "claude" }, { ms: 4000, quiet: 300, every: 120, words: SLOW_STREAMED });
   const register = body?.register === "formal" ? "formal" : "normal";
   // A one-time target writes in it with Auto off; else Auto follows the chat when it's clear.
   const override = typeof body?.target === "string" ? body.target : null;
@@ -192,8 +226,9 @@ async function translate(body: any, flags: Flags = NO_FLAGS) {
   const fromChat = override === null && settings.auto ? chatLanguage(body?.context?.last) : null;
   const language = override ?? fromChat ?? settings.target;
   const out = /kindly/i.test(text) ? "Kindly review the budget before Thursday." : polishIn(language)[register];
-  return json({ text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text), engine: "claude" });
+  return claudeReply(req, { text: out, language, from: fromChat ? "chat" : "target", lint: lintFor(out, text), engine: "claude" }, { ms: DELAY });
 }
+const EN_SLOW_ASK = "Could you take a look at the budget before";
 
 // POST /api/fix: Claude checking dictated words. The made-up misheard "pre su puesto" comes back fixed after a
 // moment; words with FIXFAIL answer 503 offline, so the page keeps the Mac's words.
@@ -206,7 +241,7 @@ async function fix(body: any, flags: Flags = NO_FLAGS) {
   return json({ text: text.replace(/\bpre su puesto\b/g, "presupuesto") });
 }
 
-async function adjust(body: any, flags: Flags = NO_FLAGS) {
+async function adjust(req: Request, body: any, flags: Flags = NO_FLAGS) {
   if (modelFor(flags) === "mac") return json({ error: "mac" }, 409);
   const note = String(body?.note ?? "");
   const current = String(body?.current ?? "");
@@ -215,9 +250,9 @@ async function adjust(body: any, flags: Flags = NO_FLAGS) {
   const language = LANGUAGES.includes(body?.language) ? body.language : settings.target;
   const hit = await trigger(note);
   if (hit) return hit;
-  await sleep(DELAY);
+  if (/slow/i.test(note)) return claudeReply(req, { text: SLOW_FINAL, language, from: "target", lint: [], engine: "claude" }, { ms: 4000, quiet: 300, every: 120, words: SLOW_STREAMED });
   const out = /cort|short|breve/i.test(note) ? polishIn(language).shorter : `${current.replace(/ \(adjusted\)$/, "")} (adjusted)`;
-  return json({ text: out, language, from: "target", lint: lintFor(out, text), engine: "claude" });
+  return claudeReply(req, { text: out, language, from: "target", lint: lintFor(out, text), engine: "claude" }, { ms: DELAY });
 }
 
 // POST /api/settings, with the contract's rules: anything outside them is 400 { error: "settings" } and changes nothing.
@@ -280,8 +315,8 @@ Bun.serve({
     if (req.method === "POST") {
       let body: any = {};
       try { body = await req.json(); } catch {}
-      if (p === "/api/translate") return translate(body, flags);
-      if (p === "/api/adjust") return adjust(body, flags);
+      if (p === "/api/translate") return translate(req, body, flags);
+      if (p === "/api/adjust") return adjust(req, body, flags);
       if (p === "/api/fix") return fix(body, flags);
       if (p === "/api/settings") {
         if (!applySettings(body)) return json({ error: "settings" }, 400);

@@ -19,6 +19,8 @@ struct SendOutcome {
     var pastes: Int? = nil // ⌘V presses (1 or 2); nil when the send stopped before the paste
     var boxMs: Int? = nil // from the first ⌘V until the box changed; nil when it didn't
     var raiseMs: Int? = nil // from asking Teams to come forward until it was front; nil when it already was, or never came
+    var focusMs: Int? = nil // from asking the box for the cursor until it had it (0.15 s when it never said so)
+    var postedMs: Int? = nil // from Return until the message showed in the chat (or the box emptied, with no list to read)
 }
 
 // What one send measured while it ran, across its two attempts. Numbers only, never text.
@@ -28,6 +30,8 @@ final class SendMeter {
     var boxMs: Int?
     var hadList = false // the chat's message list could be read before Return
     var raiseMs: Int? // the first attempt's: from asking Teams forward until it was front, when it wasn't already
+    var focusMs: Int? // the first attempt's: from asking the box for the cursor until it had it
+    var postedMs: Int? // from Return until the send was confirmed
 }
 
 // The send's outcome line (the log): its start ("send: sent", "send: not sent (<reason>)", "send: left in
@@ -43,6 +47,8 @@ enum SendLog {
         var mode: String? = nil // "send" or "leave"
         var front: Bool? = nil // Teams was the front app when the send message came
         var raiseMs: Int? = nil // from asking Teams forward until it was front; left out when it already was
+        var focusMs: Int? = nil // from asking the box for the cursor until it had it
+        var postedMs: Int? = nil // from Return until the message showed in the chat
     }
 
     static func bucket(_ chars: Int) -> String {
@@ -68,6 +74,8 @@ enum SendLog {
         if let mode = m.mode { f.append(mode) }
         if let front = m.front { f.append("front \(front ? "yes" : "no")") }
         if let ms = m.raiseMs { f.append("raise \(ms) ms") }
+        if let ms = m.focusMs { f.append("focus \(ms) ms") }
+        if let ms = m.postedMs { f.append("posted \(ms) ms") }
         return f.isEmpty ? "" : " · " + f.joined(separator: ", ")
     }
 
@@ -136,7 +144,9 @@ enum Clipboard {
 
 // The paste's decisions, as pure functions the Swift check runs.
 enum PasteWatch {
-    static let every: TimeInterval = 0.05 // how often the box is looked at after ⌘V
+    static let every: TimeInterval = 0.025 // how often the box is looked at after ⌘V (and after Return)
+    static let focusMax: TimeInterval = 0.1 // how long the box has to say it has the cursor (about 0.15 s with the last look and focusSettle)
+    static let focusSettle: TimeInterval = 0.03 // after it says so, before the paste
     static let limit: TimeInterval = 5 // how long Teams has to take the paste
     // While the box hasn't changed: when the shell first looks for Teams' box again (Teams may
     // have built it anew, so the one it holds answers no more or never changes), then how often.
@@ -186,6 +196,8 @@ extension TeamsReader {
         out.pastes = meter.pastes > 0 ? meter.pastes : nil
         out.boxMs = meter.boxMs
         out.raiseMs = meter.raiseMs
+        out.focusMs = meter.focusMs
+        out.postedMs = meter.postedMs
         return out
     }
 
@@ -241,8 +253,14 @@ extension TeamsReader {
             return true
         }
 
+        // The cursor into the box: on until the box says it has it (and a moment more for Teams to
+        // take it in), at most the 0.15 s this always waited before 0.16.0.
+        let focusAsked = ProcessInfo.processInfo.systemUptime
         AXUIElementSetAttributeValue(box, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        Thread.sleep(forTimeInterval: 0.15)
+        let hasCursor = { (AX.attr(box, kAXFocusedAttribute) as? Bool) == true }
+        _ = wait(PasteWatch.focusMax, every: PasteWatch.every, hasCursor)
+        Thread.sleep(forTimeInterval: PasteWatch.focusSettle)
+        if attempt == 1 { meter.focusMs = SendLog.ms(since: focusAsked) }
         let addsToDraft = afterDraft && !before.isEmpty
         if addsToDraft {
             // The caret to the end of the draft, then a new line.
@@ -365,6 +383,7 @@ extension TeamsReader {
             log("send: the message box lost the text after the paste; nothing pressed")
             return SendOutcome(ok: false, reason: "mismatch")
         }
+        let returnAt = ProcessInfo.processInfo.systemUptime
         guard key(36) else { // ⏎
             log("send: Teams lost the front before Return")
             return SendOutcome(ok: false, reason: "not-sent")
@@ -376,20 +395,25 @@ extension TeamsReader {
         // An empty box isn't proof: Teams has emptied it without posting. The message must show in
         // the chat as the user's newest. With no message list before (a new chat), the empty box is all
         // there is; a list that could be read before and can't be now confirms nothing (SendConfirm).
-        let listNow = meter.hadList && wait(SendConfirm.listWait) { listReadable() }
+        let listNow = meter.hadList && wait(SendConfirm.listWait, every: 0.05) { listReadable() }
         switch SendConfirm.afterReturn(listBefore: meter.hadList, listNow: listNow) {
-        case .ok: return SendOutcome(ok: true, sent: true)
+        case .ok:
+            meter.postedMs = SendLog.ms(since: returnAt)
+            return SendOutcome(ok: true, sent: true)
         case .unconfirmed:
             log("send: the box emptied but the chat's messages couldn't be read to check")
             return SendOutcome(ok: false, reason: "unconfirmed")
         case .check: break
         }
-        let shown = wait(TeamsShape.postedWait) {
+        let shown = wait(TeamsShape.postedWait, every: 0.05) {   // the message list: read every 50 ms, as before
             guard let now = lastOwn() else { return false }
             if let b = ownBefore, CFEqual(b.item, now.item), b.text == now.text { return false }
             return Teams.postedAs(text, now.text)
         }
-        if shown { return SendOutcome(ok: true, sent: true) }
+        if shown {
+            meter.postedMs = SendLog.ms(since: returnAt)
+            return SendOutcome(ok: true, sent: true)
+        }
         log("send: the box emptied but the message didn't show in the chat")
         return SendOutcome(ok: false, reason: "not-posted")
     }
@@ -417,11 +441,11 @@ extension TeamsReader {
         return true
     }
 
-    private func wait(_ seconds: Double, _ done: () -> Bool) -> Bool {
+    private func wait(_ seconds: Double, every: Double = PasteWatch.every, _ done: () -> Bool) -> Bool {
         let until = Date().addingTimeInterval(seconds)
         while !done() {
             if Date() > until { return false }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: every)
         }
         return true
     }

@@ -22,6 +22,8 @@
 //   20-menu-recent  21-restored  22-teams-changed  23-claude-changed   (named <frame>-1200 and <frame>-640)
 // and the mic as Session Monitor's (0.13.0), at the same two sizes:
 //   24-mic-idle  25-listening  26-armed  27-mic-silent  28-claude-checking   (named <frame>-1200 and <frame>-640)
+// and the reply's words as they come, at the same two sizes: 29-streaming   (named <frame>-1200 and <frame>-640)
+// and the new Sent (0.17.0), at the same two sizes: 30-sending  31-sent   (named <frame>-1200 and <frame>-640)
 // and the column's seven (360 x 900, dark, scale 2; no dictation frame: its label is the strip's):
 //   v01-idle  v02-ready  v03-sent  v04-send-error-long-chat  v05-adjust-open  v06-menu-open  v07-first-run  v08-menu-mac
 // A control that fails saves its capture in .local/page-check/failed/. The folder is emptied at each run.
@@ -50,8 +52,8 @@ const contexts: any[] = [];
 let lastPage: any = null;
 const pageErrors: string[] = [];
 
-async function open(query = "", wait = true): Promise<T> {
-  const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 2, colorScheme: "dark" });
+async function open(query = "", wait = true, reduce = false): Promise<T> {
+  const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 2, colorScheme: "dark", reducedMotion: reduce ? "reduce" : "no-preference" });
   contexts.push(ctx);
   const p = await ctx.newPage();
   lastPage = p;
@@ -272,7 +274,7 @@ const colCheck = (group: string, name: string, fn: () => Promise<string | void>)
 const narrowCheck = (group: string, name: string, fn: () => Promise<string | void>) => checks.push({ group, name, fn, mode: "narrow" });
 // The column pass presses the same controls in a 360 x 900 window and checks its layout. The groups that are only
 // about the strip's own geometry (Design, Page) and the checks that read its row's shape don't repeat.
-const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Translate button", "Dictation", "Layout", "Language", "This Mac", "Recent", "Update check"]);
+const COLUMN_GROUPS = new Set(["Keys", "Normal / Formal", "Mic", "Adjust", "Settings menu", "Send", "Send reasons", "Teams", "First run", "Replies", "Streaming", "Translate button", "Dictation", "Layout", "Language", "This Mac", "Recent", "Update check"]);
 const ROW_ONLY: RegExp[] = [/its two columns/, /^the settings are four labeled rows/, /^a long message scrolls inside its box/, /^a short strip/];
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 
@@ -1261,30 +1263,95 @@ async function sendFlow(how: "click" | "key", query = "") {
   eq(s[0].mode, "send", "mode");
   return t;
 }
-check("Send", "Send button, mode send: Sending…, then, once the message shows in the chat, both boxes empty and 'Sent · time' shows in the footer (To names the chat; the title says it too), in green with a check, for 3 s", async () => {
-  const t = await sendFlow("click");
+check("Send", "Send button, mode send: Sending… turns the ring; once the message shows in the chat the same ring lands as a check and the tag says 'Sent to <chat>' (the time in its title), what went stays dimmed in the English box, To and Send step aside, the Spanish fades and empties; after 3 s it all leaves, the English rising 6 px, and To and Send fade back", async () => {
+  const t = await open();
+  await translateFlow(t);
   const english = await val(t.p, "en");
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  eq(await tagText(t.p), "Sending…", "tag while sending");
+  const words = () => (document.querySelector("#status > span:last-child") as HTMLElement).getBoundingClientRect().left;
+  const sending = await t.p.evaluate((w: string) => {
+    const r = document.querySelector("#status svg.ring") as any; (window as any).__ring = r;
+    const a = r && r.querySelector(".arc");
+    return { ring: !!r, anim: a ? getComputedStyle(a).animationName : "", play: a ? getComputedStyle(a).animationPlayState : "", x: (0, eval)(w)() };
+  }, `(${words})`);
+  ok(sending.ring, "Sending… has the ring");
+  eq(sending.anim, "spin", "the ring turns while sending");
+  eq(sending.play, "running", "it turns");
   await waitState(t.p, "sent");
-  const done = (await tagText(t.p)).replace(/\s+/g, " ").trim();
-  ok(/^Sent · \d{1,2}:\d{2} (AM|PM)$/.test(done), `footer tag ${JSON.stringify(done)}`);
-  ok(/^Sent to .+ at \d{1,2}:\d{2} (AM|PM)$/.test((await t.p.locator("#status").getAttribute("title")) ?? ""), "the title says to whom");
+  const sent = await t.p.evaluate((w: string) => {
+    const r = document.querySelector("#status svg.ring") as any, a = r && r.querySelector(".arc");
+    return { same: !!r && r === (window as any).__ring, play: a ? getComputedStyle(a).animationPlayState : "", x: (0, eval)(w)() };
+  }, `(${words})`);
+  ok(sent.same, "the ring that turned is the one that lands");
+  eq(sent.play, "paused", "it stops where it is");
+  ok(Math.abs(sent.x - sending.x) < 0.5, `the words stay in place (${sending.x} → ${sent.x})`);
+  eq((await tagText(t.p)).replace(/\s+/g, " ").trim(), "Sent to Priya Raman", "footer tag");
+  ok(/^Sent to Priya Raman at \d{1,2}:\d{2} (AM|PM)$/.test((await t.p.locator("#status").getAttribute("title")) ?? ""), "the title has the time");
   eq(await t.p.evaluate(() => document.getElementById("status")!.className), "status tag s-done", "the tag's kind");
-  ok(await t.p.evaluate(() => !!document.querySelector("#status .ico svg")), "the tag has its check");
   ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
-  eq(await val(t.p, "en"), "", "the English box empties once it's in the chat");
-  eq(await val(t.p, "es"), "", "Spanish box");
+  await settle(t.p, 400);
+  ok(await t.p.evaluate(() => parseFloat(getComputedStyle(document.querySelector("#status .tick")!).strokeDashoffset) < 0.01), "the tick has drawn itself");
+  ok(await vis(t.p, "#sentText"), "what went shows in the English box");
+  eq((await t.p.locator("#sentText").innerText()).trim(), english, "it is what went");
+  eq(await val(t.p, "en"), "", "the English box itself is empty for the next message");
+  eq(await val(t.p, "es"), "", "the Spanish faded and emptied");
   eq(await focused(t.p), "es", "focus");
-  ok(await t.p.locator("#send").isDisabled(), "Send is off: it was sent");
+  eq(await t.p.evaluate(() => [getComputedStyle(document.getElementById("to")!).visibility, getComputedStyle(document.getElementById("send")!).visibility].join()), "hidden,hidden", "To and Send step aside");
   await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.fading === "yes", null, { timeout: 5000 });
   eq(await t.p.evaluate(() => getComputedStyle(document.getElementById("tagrow")!).transitionProperty), "opacity", "the tag fades out, not just vanishes");
+  eq(await t.p.evaluate(() => getComputedStyle(document.getElementById("sentText")!).transitionProperty), "opacity, transform", "the English fades and rises");
+  await t.p.waitForTimeout(150);   // part way through the 240 ms way out
+  const rise = await t.p.evaluate(() => new DOMMatrix(getComputedStyle(document.getElementById("sentText")!).transform).f);
+  ok(rise < -1 && rise >= -6, `it rises, up to 6 px (at ${rise} px)`);
   await waitState(t.p, "idle", 3000);
   eq(await tagText(t.p), "", "the tag is gone after 3 s");
   ok(await t.p.evaluate(() => !document.getElementById("strip")!.dataset.fading), "the fade is over");
+  const back = await t.p.evaluate(() => { const s = getComputedStyle(document.getElementById("send")!); return { vis: s.visibility, op: parseFloat(s.opacity) }; });
+  eq(back.vis, "visible", "Send is back");
+  ok(back.op < 1, `Send fades back in (opacity ${back.op} right away)`);
+  await settle(t.p, 300);
+  eq(await t.p.evaluate(() => getComputedStyle(document.getElementById("send")!).opacity), "1", "Send is whole again");
+});
+check("Send", "typing while 'Sent' shows ends it with its way out (never before 0.3 s), and the typed words stay", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sent");
+  await settle(t.p, 400);   // past the Spanish fade
+  await t.p.keyboard.type("h");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.fading === "yes", null, { timeout: 400 })
+    .catch(() => { throw new Fail("typing didn't start the way out"); });
+  await waitState(t.p, "idle", 1000);
+  eq(await val(t.p, "es"), "h", "the typed words stay");
+  ok(!(await t.p.locator("#translate").isDisabled()), "Translate is on for them");
+});
+check("Send", "a key while the sent Spanish is still fading: only the key stays", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sent");
+  await t.p.keyboard.type("h");
+  await waitState(t.p, "idle", 2000);
+  eq(await val(t.p, "es"), "h", "only the new key");
+});
+check("Send", "Reduce Motion: the ring is whole and still while sending, the check is whole when it lands, and the English fades without rising", async () => {
+  const t = await open("", true, true);
+  await translateFlow(t);
+  await t.p.click("#send");
+  await waitState(t.p, "sending");
+  eq(await t.p.evaluate(() => { const a = getComputedStyle(document.querySelector("#status svg.ring .arc")!); return [a.animationName, a.strokeDasharray].join(" / "); }), "none / 1px, 0px", "a whole, still ring");
+  await waitState(t.p, "sent");
+  eq(await t.p.evaluate(() => parseFloat(getComputedStyle(document.querySelector("#status .tick")!).strokeDashoffset)), 0, "the check is whole at once");
+  await t.p.waitForFunction(() => document.getElementById("strip")!.dataset.fading === "yes", null, { timeout: 5000 });
+  eq(await t.p.evaluate(() => getComputedStyle(document.getElementById("sentText")!).transform), "none", "no rise");
 });
 check("Send", "⌘⏎ sends the same way", async () => {
   const t = await sendFlow("key");
   await waitState(t.p, "sent");
   eq(await val(t.p, "en"), "", "the English box empties");
+  ok(await vis(t.p, "#sentText"), "what went shows dimmed");
 });
 check("Send", "Put in Teams mode: the button says so, mode leave, 'Left in Teams, not sent'", async () => {
   await setMode("leave");
@@ -1669,6 +1736,104 @@ check("First run", "the cover goes away when Accessibility is allowed", async ()
 });
 
 // ===================================================================================== replies
+// ---------------------------------------------------------------------------------------- the reply's words as they come
+// The mock's SLOW reply streams a long English a word every 120 ms, and its final reply drops "really", as the linter's fix
+// would; ASKLATE streams words, then asks a question.
+const SLOW_WORDS = "I went through the budget this morning and found two lines that really don't add up, so could we go over them together on Thursday's call before it goes out?";
+const SLOW_FINAL = SLOW_WORDS.replace("really ", "");
+const streamOf = (p: any) => p.evaluate(() => {
+  const s = document.getElementById("stream")!;
+  return { on: document.getElementById("strip")!.dataset.stream === "on", words: s.offsetWidth > 0 ? s.textContent ?? "" : "", box: document.getElementById("en")!.offsetWidth > 0 };
+});
+const waitWords = (p: any, timeout = 5000) =>
+  p.waitForFunction(() => (document.getElementById("stream")!.textContent ?? "").length > 0 && document.getElementById("strip")!.dataset.stream === "on", null, { timeout })
+    .catch(() => { throw new Fail("the reply's words never showed"); });
+check("Streaming", "a slow reply's words grow in the English box over several steps, read-only, with Translating… in the footer and Send off; the final reply replaces them", async () => {
+  const t = await open();
+  await t.p.fill("#es", "Revisé el presupuesto SLOW");
+  await t.p.press("#es", "Enter");
+  await waitState(t.p, "translating");
+  ok(await vis(t.p, ".busy"), "the busy line shows until the first words come");
+  await waitWords(t.p);
+  const steps: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const s = await streamOf(t.p);
+    ok(s.on && !s.box, "the words take the English box's place");
+    if (s.words && s.words !== steps.at(-1)) steps.push(s.words);
+    if (i === 3) {
+      eq(await tagText(t.p), "Translating…", "the footer says it isn't done");
+      ok(!(await vis(t.p, ".busy")), "the busy line leaves the box to the words");
+      ok(await t.p.locator("#send").isDisabled(), "Send is off while the words come");
+      ok(!(await vis(t.p, "#adjustBtn")), "Adjust is hidden while the words come");
+      eq(await t.p.locator("#stream").evaluate((e: HTMLElement) => e.isContentEditable), false, "the words are read-only");
+      await t.p.keyboard.press("Meta+Enter");
+      eq((await sends(t)).length, 0, "⌘⏎ sends nothing while the words come");
+      await expectLayout(t.p);
+    }
+    await t.p.waitForTimeout(250);
+  }
+  ok(steps.length >= 4, `the words grew over several steps (${steps.length})`);
+  for (let i = 1; i < steps.length; i++) ok(steps[i].startsWith(steps[i - 1]) && steps[i].length > steps[i - 1].length, `each step adds to the one before (${JSON.stringify(steps[i - 1])} → ${JSON.stringify(steps[i])})`);
+  ok(SLOW_WORDS.startsWith(steps.at(-1)!), "the words are the reply's");
+  await waitState(t.p, "ready", 8000);
+  eq(await val(t.p, "en"), SLOW_FINAL, "the final reply replaces the words");
+  const s = await streamOf(t.p);
+  ok(!s.on && s.box, "the English box is back");
+  ok(await t.p.locator("#send").isEnabled(), "Send is on with the final reply");
+});
+check("Streaming", "Esc while the words come clears them, and the rest of that reply never shows", async () => {
+  const t = await open();
+  await t.p.fill("#es", "Revisé el presupuesto SLOW");
+  await t.p.press("#es", "Enter");
+  await waitWords(t.p);
+  await t.p.keyboard.press("Escape");
+  eq(await state(t.p), "idle", "state after Esc");
+  eq((await streamOf(t.p)).on, false, "the words are gone");
+  eq(await val(t.p, "es"), "", "the Spanish box");
+  eq(await val(t.p, "en"), "", "the English box");
+  await t.p.waitForTimeout(4500); // the mock's stream goes on to its end meanwhile
+  eq(await state(t.p), "idle", "state once that reply ended");
+  eq(await val(t.p, "en"), "", "the English box once that reply ended");
+  eq((await streamOf(t.p)).on, false, "no words came back");
+});
+check("Streaming", "a question after the words started shows only the question", async () => {
+  const t = await open();
+  await t.p.fill("#es", "Revisé el presupuesto ASKLATE");
+  await t.p.press("#es", "Enter");
+  await waitWords(t.p);
+  await waitState(t.p, "question", 5000);
+  eq(await val(t.p, "en"), "This Thursday or next week's?", "the English box holds the question alone");
+  eq((await streamOf(t.p)).on, false, "the words are gone");
+  ok(await t.p.locator("#send").isDisabled(), "Send stays off for a question");
+});
+check("Streaming", "an adjust streams its words over the English, with Adjusting… and Send off, and the final reply replaces them", async () => {
+  const t = await open();
+  await translateFlow(t);
+  await t.p.keyboard.press("Meta+k");
+  await t.p.fill("#adjIn", "más claro SLOW");
+  await t.p.press("#adjIn", "Enter");
+  await waitState(t.p, "adjusting");
+  await waitWords(t.p);
+  eq(await tagText(t.p), "Adjusting…", "the footer says it isn't done");
+  ok(await t.p.locator("#send").isDisabled(), "Send is off while the words come");
+  ok(!(await streamOf(t.p)).box, "the words take the English box's place");
+  await expectLayout(t.p);
+  await waitState(t.p, "ready", 8000);
+  eq(await val(t.p, "en"), SLOW_FINAL, "the final reply replaces the words");
+  eq(await tagText(t.p), "Adjusted", "tag");
+});
+narrowCheck("Streaming", "at 640 with a long chat name, the words still come with the working tag's dots in the footer, its title saying Translating…", async () => {
+  const t = await open();
+  await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT });
+  await t.p.fill("#es", "Revisé el presupuesto SLOW");
+  await t.p.press("#es", "Enter");
+  await waitWords(t.p);
+  await t.p.waitForTimeout(600);
+  ok(await vis(t.p, "#status .calm"), "the working dots show beside the words");
+  eq(await t.p.locator("#status").getAttribute("title"), "Translating…", "the tag's title");
+  ok(await t.p.locator("#send").isDisabled(), "Send is off while the words come");
+  await expectLayout(t.p);
+});
 check("Replies", "UNCLEAR: asks a question (orange text in the English box), Send off, retry works", async () => {
   const t = await open();
   await t.p.click("#es");
@@ -2255,7 +2420,7 @@ narrowCheck("Narrow", "microphone denied: Open Settings stays whole; Normal and 
   eq(await t.p.locator("#dictLabel").getAttribute("title"), "Microphone not allowed", "the label's words in its title");
   await expectLayout(t.p);
 });
-narrowCheck("Narrow", "after a send, 'Sent · time' stays whole in a short footer; the chat's name gives way first", async () => {
+narrowCheck("Narrow", "after a send, 'Sent to <chat>' in a short footer: To and Send have left the line; a name too long ends in an ellipsis, whole in the title", async () => {
   const t = await open();
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
   await ready(t);
@@ -2263,8 +2428,9 @@ narrowCheck("Narrow", "after a send, 'Sent · time' stays whole in a short foote
   await waitState(t.p, "sent");
   await settle(t.p, 300);
   const txt = (await tagText(t.p)).replace(/\s+/g, " ").trim();
-  ok(/^Sent · \d{1,2}:\d{2} (AM|PM)$/.test(txt), `tag ${JSON.stringify(txt)}`);
-  ok(await t.p.evaluate(() => { const w = document.querySelector("#status > span:last-child") as HTMLElement; return w.scrollWidth <= w.clientWidth + 1; }), "the tag shows whole");
+  eq(txt, `Sent to ${LONG_CHAT}`, "tag");
+  eq(await t.p.evaluate(() => [getComputedStyle(document.getElementById("to")!).display, getComputedStyle(document.getElementById("send")!).display].join()), "none,none", "To and Send left the line");
+  ok(((await t.p.locator("#status").getAttribute("title")) ?? "").startsWith(`Sent to ${LONG_CHAT} at `), "the title keeps the whole name");
   await expectLayout(t.p);
 });
 narrowCheck("Narrow", "a failed translation: the notice and Try again in the footer, whole", async () => {
@@ -2394,6 +2560,7 @@ for (const [why, title] of FALLBACKS) {
     ok(/\bs-info\b/.test(tag.cls) && /\bs-idle\b/.test(tag.cls), `the tag's kind: ${tag.cls}`);
     ok(tag.dot, "the still dot");
     if (typeof title === "string") eq(tag.title, title, "the tag's title"); else ok(title.test(tag.title), `the tag's title: ${JSON.stringify(tag.title)}`);
+    await settle(t.p, 400);   // the box fades from the working blue for 240 ms: measure it at rest
     const c = await tagContrast(t.p);
     ok(c >= 4.5, `the tag's words reach ${c.toFixed(2)}:1, under 4.5:1`);
     eq(await state(t.p), "ready", "data-state");
@@ -2644,7 +2811,7 @@ async function keepRecent(t: T, replies: string[], sendLast = false) {
   for (let i = 0; i < replies.length; i++) {
     await translateFlow(t, `${ES} ${i + 1}`);
     await t.p.fill("#en", replies[i]);
-    if (sendLast && i === replies.length - 1) { await t.p.click("#send"); await waitState(t.p, "sent"); }
+    if (sendLast && i === replies.length - 1) { await t.p.click("#send"); await waitState(t.p, "sent"); await settle(t.p, 250); }   // To and Send have stepped aside
     else { await t.p.keyboard.press("Escape"); await waitState(t.p, "idle"); }
   }
 }
@@ -2905,7 +3072,16 @@ const micFrames: Frame[] = [
       await t.p.waitForFunction(() => document.getElementById("dictLabel")!.textContent!.includes("gives no sound"), null, { timeout: 3000 });
   } },
 ];
-for (const f of [...macFrames, ...quickFrames, ...nextFrames, ...micFrames]) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
+// The reply's words as they come, at the same two sizes: a slow reply mid-stream, to a long chat name.
+const streamFrames: Frame[] = [
+  { file: "29-streaming", make: async (t) => { await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await t.p.fill("#es", "Revisé el presupuesto SLOW"); await t.p.press("#es", "Enter"); await waitWords(t.p); await t.p.waitForTimeout(1200); } },
+];
+// The new Sent (0.17.0): the ring turning while sending, and landed, with what went, at the two sizes.
+const sentFrames: Frame[] = [
+  { file: "30-sending", make: async (t) => { await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); await t.p.click("#send"); await waitState(t.p, "sending"); } },
+  { file: "31-sent", make: async (t) => { await setTeams(t.p, { ...PRIYA_TEAMS, chat: LONG_CHAT }); await ready(t, LONG_EN); await t.p.click("#send"); await waitState(t.p, "sent"); } },
+];
+for (const f of [...macFrames, ...quickFrames, ...nextFrames, ...micFrames, ...streamFrames, ...sentFrames]) for (const w of [1200, 640]) frames.push({ ...f, file: `${f.file}-${w}`, size: { w, h: 145 } });
 for (const f of frames) {
   check("Frames", `capture ${f.file}`, async () => {
     if (f.before) await f.before();
@@ -2914,7 +3090,7 @@ for (const f of frames) {
     const t = await open(f.query ?? "");
     await f.make(t);
     if (!f.file.startsWith("16")) await t.p.mouse.move(W / 2, 0);   // (16 keeps the pointer on Settings…)
-    await settle(t.p, f.file.startsWith("07") ? 300 : 500);
+    await settle(t.p, f.file.startsWith("07") ? 300 : f.file.startsWith("30") ? 150 : 500);
     await t.p.screenshot({ path: join(OUT, `${f.file}.png`) });
     const r = await layout(t.p);
     ok(!r.issues.length, r.issues.join("; "));
@@ -3019,14 +3195,15 @@ colCheck("Column", "the Spanish footer is today's row: Normal / Formal, the mic,
   eq(mic.w, 24, "mic width (Session Monitor's chip)"); eq(tr.h, 28, "Translate height");
   ok(foot.h > f2.h, "the note adds a row");
 });
-colCheck("Column", "'Sent · time' sits in the English footer, and the gear still works", async () => {
+colCheck("Column", "'Sent to <chat>' sits in the English footer, To and Send keep their place while hidden (the footer keeps its height), and the gear still works", async () => {
   const t = await open();
   await setTeams(t.p, { open: true, chat: LONG_CHAT, from: "A", last: "B", draft: false });
   await ready(t);
   await t.p.click("#send");
   await waitState(t.p, "sent");
   await settle(t.p, 400);
-  ok((await tagText(t.p)).startsWith("Sent ·"), "the footer says it was sent");
+  ok((await tagText(t.p)).startsWith("Sent to "), "the footer says it was sent");
+  eq(await t.p.evaluate(() => [getComputedStyle(document.getElementById("send")!).display !== "none", getComputedStyle(document.getElementById("send")!).visibility].join()), "true,hidden", "Send keeps its place, hidden");
   await expectLayout(t.p);
   await t.p.click("#more");
   ok(await vis(t.p, "#menu"), "the gear opens the menu while the message shows");

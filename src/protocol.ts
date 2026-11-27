@@ -129,3 +129,84 @@ function matchBrace(s: string, start: number) {
   return -1;
 }
 
+
+// The words of a reply while Claude still writes it: the value of the reply object's top-level
+// "text" key, read out of the JSON written so far, or null when there is nothing to show yet. Called
+// with everything the turn has written so far, each time a piece arrives, so a piece that ends in
+// the middle of an escape (\n, \", \\, \uXXXX, a surrogate pair) is simply read again once the rest
+// comes: an escape that isn't whole yet is held back, never shown half. Only after the object's "id"
+// has matched the request's: a reply to something else never shows. A question (its "question" key
+// comes before any "text") never shows either, nor the id, the language or from.
+export function streamedText(sofar: string, id: string): string | null {
+  const start = sofar.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let expectKey = false;
+  let key: string | null = null;
+  let idOk = false;
+  for (let i = start; i < sofar.length; i++) {
+    const c = sofar[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < sofar.length && sofar[j] !== '"') j += sofar[j] === "\\" ? 2 : 1;
+      const done = j < sofar.length;
+      const raw = sofar.slice(i + 1, done ? j : sofar.length);
+      if (depth === 1 && expectKey) {
+        if (!done) return null;
+        key = decodeRaw(raw);
+        expectKey = false;
+      } else if (depth === 1 && key !== null) {
+        if (key === "question") return null;
+        if (key === "id") {
+          if (!done) return null;
+          idOk = decodeRaw(raw) === id;
+        } else if (key === "text") {
+          if (!idOk) return null;
+          const text = decodeRaw(done ? raw : wholeEscapes(raw));
+          return text === null ? null : text.replace(/^\s+/, "");
+        }
+        key = null;
+      }
+      if (!done) return null;
+      i = j;
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      depth++;
+      if (depth === 1) expectKey = true;
+    } else if (c === "}" || c === "]") {
+      if (--depth <= 0) return null; // the object ended with no text
+    } else if (c === "," && depth === 1) {
+      expectKey = true; // a value that isn't a string (a number, true, an object) ends here too
+      key = null;
+    }
+  }
+  return null;
+}
+
+// A JSON string's raw inside, decoded; null when it isn't valid JSON (a raw line break, say).
+function decodeRaw(raw: string): string | null {
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return null;
+  }
+}
+
+// The longest start of a string's raw inside that ends on a whole character: a trailing backslash,
+// a \u with fewer than four digits, or a high surrogate whose low half hasn't come yet is left out.
+function wholeEscapes(raw: string): string {
+  let i = 0;
+  while (i < raw.length) {
+    if (raw[i] !== "\\") { i++; continue; }
+    if (i + 1 >= raw.length) return raw.slice(0, i);
+    if (raw[i + 1] !== "u") { i += 2; continue; }
+    if (i + 6 > raw.length) return raw.slice(0, i);
+    const code = parseInt(raw.slice(i + 2, i + 6), 16);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (i + 12 > raw.length) return raw.slice(0, i);
+      i += 12;
+    } else i += 6;
+  }
+  return raw;
+}

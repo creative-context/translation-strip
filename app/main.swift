@@ -590,7 +590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let text = (m["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return SendLog.Measured(pastes: out?.pastes, boxMs: out?.boxMs, totalMs: SendLog.ms(since: received),
                                 chars: text.count, link: SendLog.hasLink(text), mode: (m["mode"] as? String) == "leave" ? "leave" : "send",
-                                front: front, raiseMs: out?.raiseMs)
+                                front: front, raiseMs: out?.raiseMs, focusMs: out?.focusMs, postedMs: out?.postedMs)
     }
 
     func send(_ m: [String: Any], received: TimeInterval, front: Bool) {

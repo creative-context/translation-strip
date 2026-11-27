@@ -516,7 +516,9 @@ enum SwiftCheck {
         check("paste: after a draft, more text is the paste",
               PasteWatch.decide(before: "Half a thought", after: "Half a thought\nCan you send it?", own: 7, now: 7).pasted, true)
         check("paste: restores only on the shell's own changeCount", [PasteWatch.restores(own: 5, now: 5), PasteWatch.restores(own: 5, now: 6)], [true, false])
-        check("paste: watched every 50 ms for up to 5 s", [PasteWatch.every, PasteWatch.limit], [0.05, 5])
+        check("paste: watched every 25 ms for up to 5 s", [PasteWatch.every, PasteWatch.limit], [0.025, 5])
+        check("send: the cursor waited for up to 0.1 s, then 30 ms more (about the 0.15 s it always waited)", [PasteWatch.focusMax, PasteWatch.focusSettle], [0.1, 0.03])
+        check("send: 0.25 s between the paste showing and Return", TeamsShape.pasteSettle, 0.25)
         check("paste: the box looked for again after 0.5 s, then every second", [PasteWatch.lookAfter, PasteWatch.lookEvery], [0.5, 1])
     }
 
@@ -551,6 +553,9 @@ enum SwiftCheck {
         check("send log: refused before Teams was asked, front only",
               SendLog.line("send: not sent (not-own-server)", SendLog.Measured(totalMs: 15, chars: 12, link: false, mode: "send", front: false)),
               "send: not sent (not-own-server) · total 15 ms, under 100 chars, link no, send, front no")
+        check("send log: focus and posted come last",
+              SendLog.line("send: sent", SendLog.Measured(pastes: 1, boxMs: 50, totalMs: 900, chars: 40, link: false, mode: "send", front: false, raiseMs: 20, focusMs: 40, postedMs: 400)),
+              "send: sent · pastes 1, box 50 ms, total 900 ms, under 100 chars, link no, send, front no, raise 20 ms, focus 40 ms, posted 400 ms")
         check("send log: pasting again, after 430 ms", SendLog.pastingAgain(afterMs: 430),
               "send: Teams emptied its box after the paste; pasting again · after 430 ms")
         check("send log: pasting again, not measured", SendLog.pastingAgain(afterMs: nil),

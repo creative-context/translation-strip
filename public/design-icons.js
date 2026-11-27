@@ -1,4 +1,4 @@
-/* mac-app-design 0.16.0 (icons.js). Vendored: don't edit here. Change it in the design repo and vendor again. */
+/* mac-app-design 0.17.0 (icons.js). Vendored: don't edit here. Change it in the design repo and vendor again. */
 // The family's icons: drawn on a 24 px grid, all in the same 1.25 px stroke (base.css sets it).
 // One source for both apps. In a page:
 //   DesignIcons.svg("folder")        an inline <svg class="i"> string
@@ -14,6 +14,7 @@
     "question": "<path d=\"M20.5 12a8.5 8.5 0 0 1-12.4 7.6L3.5 20.5l1-4.4A8.5 8.5 0 1 1 20.5 12z\"/><path d=\"M9.8 9.6a2.3 2.3 0 1 1 3.1 2.2c-.6.3-.9.7-.9 1.3\"/><path d=\"M12 15.8h.01\"/>",
     "error": "<path d=\"M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z\"/><path d=\"M12 9.5v4\"/><path d=\"M12 17h.01\"/>",
     "check": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"m8 12.5 2.8 2.8L16.5 9.5\"/>",
+    "ring": "<circle class=\"track\" cx=\"12\" cy=\"12\" r=\"9\"/><circle class=\"arc\" cx=\"12\" cy=\"12\" r=\"9\" pathLength=\"1\"/><path class=\"tick\" d=\"m8 12.5 2.8 2.8L16.5 9.5\" pathLength=\"1\"/>",
     "moon": "<path d=\"M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z\"/>",
     "power": "<path d=\"M12 3v8\"/><path d=\"M6.3 7.2a8 8 0 1 0 11.4 0\"/>",
     "bot": "<rect x=\"4\" y=\"8\" width=\"16\" height=\"12\" rx=\"3\"/><path d=\"M12 4v4\"/><path d=\"M9 13.5v1\"/><path d=\"M15 13.5v1\"/>",
@@ -62,8 +63,10 @@
     "circle": "<circle cx=\"12\" cy=\"12\" r=\"9\"/>",
     "open": "<path d=\"M14 4h6v6\"/><path d=\"m20 4-9 9\"/><path d=\"M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4\"/>"
   };
-  // Icons that move: a spinner turns, an alert breathes while it's new, a bot breathes while it works.
-  const classes = {"spinner": "spin", "alert": "pulse", "question": "pulse", "error": "pulse", "bot": "bot", "chev": "chev"};
+  // Icons that move: a spinner turns, an alert breathes while it's new, a bot breathes while it works,
+  // a ring turns while something goes out and closes into a check when it lands (inline only: its
+  // parts take the page's styles, which a sprite's <use> copy doesn't).
+  const classes = {"ring": "ring", "spinner": "spin", "alert": "pulse", "question": "pulse", "error": "pulse", "bot": "bot", "chev": "chev"};
   const svg = (name, cls) => `<svg class="i ${cls ?? classes[name] ?? ""}" viewBox="0 0 24 24" aria-hidden="true">${paths[name] ?? ""}</svg>`;
   function mount(doc = root.document) {
     if (doc.getElementById("design-icons")) return;

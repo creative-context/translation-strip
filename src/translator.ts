@@ -21,7 +21,7 @@ import { close, closeSync, constants, mkdirSync, openSync, readFileSync, statSyn
 import { join } from "node:path";
 import { claudeCommand, DAY_FILE, FIRST_TRY_MS, MAX_RESTARTS, RESTART_WINDOW_MS, SLEEP_GAP_MS, STDERR_KEEP, TIMEOUT_MS, TOOL_PATH, TRANSLATOR_DIR } from "./config";
 import { classify, errorFor, stderrWord, type RateLimit } from "./errors";
-import { parseReply, requestId, requestTurn, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
+import { parseReply, requestId, requestTurn, streamedText, systemPrompt, userTurn, type Reply, type Request } from "./protocol";
 import { addUsage, usageOf, type Usage } from "./reply-log";
 import { fileThere } from "./settings";
 import { bump, state, type ClaudeModel, type Model, type Status, type TranslatorError } from "./state";
@@ -34,7 +34,10 @@ import { bump, state, type ClaudeModel, type Model, type Status, type Translator
 export type Outcome = ({ ok: true; reply: Reply; answeredBy?: ClaudeModel } | { ok: false; error: TranslatorError; until?: string | null; aborted?: true; stopped?: true; unusable?: true }) & { usage?: Usage; tries?: number };
 
 // ms: how long this try waits; retry: a failure of this try is tried once more, so it doesn't restart the translator itself.
-type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null; ms: number; retry: boolean };
+// onPartial: the reply's words so far, each time they grow (streamedText), for a request that asked for them.
+// raw: the turn's text as it streams in (in memory only), and shown: the words last given to onPartial.
+export type OnPartial = (text: string) => void;
+type Turn = { id: string; text: string[]; resolve: (o: Outcome) => void; timer: ReturnType<typeof setTimeout> | null; ms: number; retry: boolean; onPartial?: OnPartial; raw: string; shown: string };
 type Session = {
   proc: Subprocess<"pipe", "pipe", "pipe">;
   pid: number;
@@ -87,7 +90,7 @@ export const aliasOf = (id: unknown): ClaudeModel | null => (typeof id === "stri
 export function translatorArgs(model: ClaudeModel): string[] {
   return [
     claudeCommand(), "-p",
-    "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--model", model,
     ...(FALLBACK[model] ? ["--fallback-model", FALLBACK[model]!] : []),
     ...(EFFORT[model] ? ["--effort", EFFORT[model]!] : []),
@@ -298,17 +301,20 @@ export class Translator {
   // One request, on its own session. The caller checks busy() first. A first try that ends without
   // an answer for a reason a fresh session can fix (it exited, stalled, or answered with no JSON or
   // another request's id) gets one more, on a fresh session.
-  async request(req: Request): Promise<Outcome> {
-    const first = await this.attempt(req, Math.min(FIRST_TRY_MS, TIMEOUT_MS), true);
+  // onPartial, when given, gets the reply's words as Claude writes them (the whole text so far each time),
+  // and "" when a second try starts over.
+  async request(req: Request, onPartial?: OnPartial): Promise<Outcome> {
+    const first = await this.attempt(req, Math.min(FIRST_TRY_MS, TIMEOUT_MS), true, onPartial);
     if (first.ok || !(first.aborted || first.unusable) || first.stopped || first.error !== "failed") return { ...first, tries: 1 };
     log("no answer from that session; trying once more on a fresh one");
-    const second = await this.attempt(req, TIMEOUT_MS, false);
+    if (onPartial) try { onPartial(""); } catch {}
+    const second = await this.attempt(req, TIMEOUT_MS, false, onPartial);
     const usage = addUsage(first.usage, second.usage);
     const { usage: _, ...rest } = second;
     return { ...rest, tries: 2, ...(usage ? { usage } : {}) } as Outcome;
   }
 
-  private async attempt(req: Request, ms: number, retry: boolean): Promise<Outcome> {
+  private async attempt(req: Request, ms: number, retry: boolean, onPartial?: OnPartial): Promise<Outcome> {
     if (!this.spare || this.spare.retired) {
       if (retry) this.crashes = 0; // a request always gets one try, past the cap too
       this.start(retry ? "request" : "retry");
@@ -319,7 +325,7 @@ export class Translator {
     this.active = s;
     const id = requestId();
     const outcome = await new Promise<Outcome>((resolve) => {
-      const turn: Turn = { id, text: [], resolve, timer: null, ms, retry };
+      const turn: Turn = { id, text: [], resolve, timer: null, ms, retry, onPartial, raw: "", shown: "" };
       turn.timer = setTimeout(() => this.timedOut(s), ms);
       s.turn = turn;
       this.refresh();
@@ -437,6 +443,7 @@ export class Translator {
       return;
     }
     const turn = s.turn;
+    if (m.type === "stream_event") return this.streamed(turn, m.event);
     if (m.type === "rate_limit_event") {
       s.rateLimit = { status: m.rate_limit_info?.status, resetsAt: Number(m.rate_limit_info?.resetsAt) || undefined };
       return;
@@ -464,6 +471,31 @@ export class Translator {
     const why = isError ? "" : parseReply(text) ? " (a reply with another id)" : " (no JSON reply)";
     log(`turn failed: ${c.error}${why}`);
     this.end(s, { ok: false, error: c.error, until: c.until, ...(isError ? {} : { unusable: true as const }), ...counted });
+  }
+
+  // A piece of the reply as Claude writes it (--include-partial-messages): its text pieces make up the
+  // reply so far, and the words of its "text" go to the request's onPartial when they grew. A new
+  // message (an API retry, the fallback model taking over) starts over. Nothing here is logged.
+  private streamed(turn: Turn, ev: any) {
+    if (!turn.onPartial || !ev || typeof ev !== "object") return;
+    if (ev.type === "message_start") {
+      turn.raw = "";
+      if (turn.shown) {
+        turn.shown = "";   // the words on screen were the message before: clear them until the new one writes
+        try {
+          turn.onPartial("");
+        } catch {}
+      }
+      return;
+    }
+    if (ev.type !== "content_block_delta" || ev.delta?.type !== "text_delta" || typeof ev.delta.text !== "string") return;
+    turn.raw += ev.delta.text;
+    const words = streamedText(turn.raw, turn.id);
+    if (!words || words === turn.shown) return;
+    turn.shown = words;
+    try {
+      turn.onPartial(words);
+    } catch {}
   }
 
   // A session ended without being asked to: names why in one word from its stderr (read to its

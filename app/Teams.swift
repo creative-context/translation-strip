@@ -69,7 +69,7 @@ enum TeamsShape {
     static let findAgain: TimeInterval = 1 // how often to search again while the box isn't found
     static let askAgain: TimeInterval = 5 // how often to ask for the tree again while the box isn't found
     static let postedWait: TimeInterval = 5 // how long a sent message has to show in the chat
-    static let pasteSettle: TimeInterval = 0.4 // between the paste showing in the box and Return
+    static let pasteSettle: TimeInterval = 0.25 // between the paste showing in the box and Return (0.4 s before 0.16.0)
     static let depthLimit = 80
     static let messagesBack = 15
     static let textLimit = 4000

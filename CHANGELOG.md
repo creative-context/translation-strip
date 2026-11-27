@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.17.0
+
+- A new Sent. While a message goes to Teams, "Sending…" turns a ring, the family's new mark (design system 0.17.0). Once the message shows in the chat, the same ring stops where it is and closes into a check, and the tag says "Sent to <chat>"; the time moves to its title. What went stays in the green box, dimmed. To and Send fade and step aside, so nothing looks as if it could go again, and the Spanish fades before it empties. After 3 seconds the tag, the green and the English leave together in 0.24 s, the English rising 6 px toward the chat, and To and Send fade back. Typing in the Spanish while it says Sent starts that way out at once (never before 0.3 s), and what you type stays. With Reduce Motion the ring is whole and still and the check appears whole; only the fades remain.
+
+## 0.16.0
+
+- The English shows while Claude writes it. In a translation or an adjust, the words come into the English box as they arrive, with Translating… or Adjusting… in the footer; Send, ⌘⏎ and Adjust wait for the finished reply, which replaces them (it can differ after the voice linter's fix). On a long message you start reading before it's done. Esc, an edit or a question drops the words, as before. The server streams `/api/translate` and `/api/adjust` as JSON lines when asked with `Accept: application/x-ndjson`, and answers plain JSON otherwise; the translator runs with `--include-partial-messages`. The streamed words are never logged.
+- Sending to Teams waits less: the shell goes on as soon as Teams' box has the cursor instead of always waiting 0.15 s, waits 0.25 s instead of 0.4 s between the paste and Return, and looks at the box every 25 ms instead of 50. The send's log line adds `focus` and `posted` times, numbers only.
+
+## 0.15.1
+
+- The reply's box takes the family's tinted surfaces, as Session Monitor's cards: crimson for an error such as "Teams didn't take it. Not sent", deep blue while it translates or sends, dark green once sent. Its notice has no pill behind it: the mark and the words in their color, right on the surface, as a card's tag. Gray words on those surfaces take the tinted gray.
+
 ## 0.15.0
 
 - The strip and its Settings take the family's newer look, the one Session Monitor has (design system 0.16.0): the main buttons and the mic while it listens in indigo, "Translating…" in the working blue, brighter orange and red for tags and errors, solid panels in Settings, and a menu one step lighter with a soft shadow only.

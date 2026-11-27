@@ -1,4 +1,4 @@
-/* mac-app-design 0.16.0 (components.css). Vendored: don't edit here. Change it in the design repo and vendor again. */
+/* mac-app-design 0.17.0 (components.css). Vendored: don't edit here. Change it in the design repo and vendor again. */
 /* Components: the pieces both apps draw, with their states. Class names are the first
    app's, so nothing renames; a few aliases name a state by its meaning (needs, soft). */
 
@@ -36,6 +36,25 @@ button.tag { border: 0; font: inherit; font-size: var(--csm-text-meta); cursor: 
   animation: calm 2.4s ease-in-out infinite; animation-delay: var(--sync, 0s); }
 .calm i:nth-child(2) { animation-delay: calc(var(--sync, 0s) + 0.4s); }
 .calm i:nth-child(3) { animation-delay: calc(var(--sync, 0s) + 0.8s); }
+
+/* Going out: a ring that turns while something is on its way (a message sent, a file saved), then
+   lands as a check. A quarter of the ring turns over its faint track, one turn in 1.2 s: quicker than
+   the other marks (2.4 s), because what it waits for is short and a slower turn reads as
+   stuck. When it lands (inside .s-done) the arc stops where it is, the track comes up and the tick
+   draws itself, so the mark that waited becomes the mark that says done. Its color follows the tag
+   over 240 ms. Draw it inline, DesignIcons.svg("ring"). */
+svg.ring { transition: color 240ms var(--ease-standard); }
+svg.ring .track { opacity: 0.3; transition: opacity 140ms var(--ease-standard); }
+svg.ring .arc { stroke-dasharray: 0.25 1; transform-box: fill-box; transform-origin: center; animation: spin 1.2s linear infinite; }
+svg.ring .tick { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.s-done svg.ring .arc { animation-play-state: paused; }
+.s-done svg.ring .track { opacity: 1; }
+.s-done svg.ring .tick { animation: draw 200ms var(--ease-standard) 100ms forwards; }
+/* Reduce Motion: a whole ring while it waits, and the check whole when it lands. */
+@media (prefers-reduced-motion: reduce) {
+  svg.ring .arc { stroke-dasharray: 1 0; }
+  .s-done svg.ring .tick { stroke-dashoffset: 0; }
+}
 
 /* ---------- header: the app's name, its counts, its views ---------- */
 header { display: flex; align-items: center; gap: 8px; height: 24px; flex: none; container-type: inline-size; }

@@ -93,19 +93,53 @@
   [data-state="translating"] .en-out, [data-state="starting"] .en-out { visibility: hidden; }
   [data-state="question"] .en-out { color: var(--color-text-orange); }
   [data-state="stale"] .en-out { color: var(--color-text-secondary); text-decoration: line-through; text-decoration-color: var(--color-text-disabled); }
+  /* The reply's words as Claude writes them: they take the English box's place, read-only, on its working
+     tint, while "Translating…" or "Adjusting…" says in the footer that it isn't done. No motion: each line of
+     words simply replaces the last. The box itself keeps what it held (an adjust's current English). */
+  .en-stream { display: none; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-primary); cursor: default; }
+  [data-stream="on"] .en-stream { display: block; }
+  [data-stream="on"] .en-out { display: none; }
+  [data-stream="on"] .busy { display: none; }
 
-  /* The English side takes the family's state colors: blue working, orange needs you, green done, red error. */
-  [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: var(--color-working-muted); }
+  /* The English side takes the family's tinted surfaces, as its cards do: deep blue working, crimson error, dark
+     green done. Orange (read first) keeps a mix, since the family has no orange surface. Gray words on a tint
+     take the tinted gray, as on the cards. */
+  [data-state="translating"] .f.en, [data-state="starting"] .f.en, [data-state="sending"] .f.en, [data-state="adjusting"] .f.en { background: var(--color-tint-working); }
   [data-state="draft"] .f.en, [data-state="question"] .f.en { background: color-mix(in srgb, var(--color-warning) 22%, transparent); }
+  :is([data-state="translating"], [data-state="starting"], [data-state="sending"], [data-state="adjusting"], [data-state="error"], [data-state="stale"], [data-state="written"], [data-state="sent"], [data-state="leave"]) .f.en { --color-text-secondary: var(--color-text-tinted); }
+  /* The notice has no fill, as a card's tag: its mark and words in their color, right on the surface. */
+  #status.tag { background: none; padding: 0; }
   /* A done tag has a check in a circle, an error tag the warning triangle; the rest keep the family's dots. */
   .status .ico { display: inline-flex; flex: none; }
   .status .ico svg.i { width: 14px; height: 14px; stroke-width: 1.6px; }   /* the banners' size, a firmer line: legible in a 20 px tag */
-  [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
-  /* Its last moment: the tag and the green fade out together (a fade only, so Reduce Motion keeps it). */
-  [data-fading="yes"] #tagrow { opacity: 0; transition: opacity var(--fade-out) ease-out; }
-  [data-fading="yes"] .f.en { background: transparent; transition: background-color var(--fade-out) ease-out; }
-  body { --fade-out: 400ms; }
-  [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: color-mix(in srgb, var(--color-error) 22%, transparent); }
+  [data-state="sent"] .f.en, [data-state="leave"] .f.en { background: var(--color-tint-done); }
+  /* The tag's words and mark change color with its state, as the box does. */
+  #status { transition: color 240ms var(--ease-standard); }
+  /* Sent: what went stays in the box, dimmed, under "Sent to <chat>"; To and Send step aside (a fade, then
+     hidden, keeping their place) so nothing looks as if it could go again, and come back with a fade. */
+  .en-sent { display: none; box-sizing: border-box; width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: var(--msg); line-height: var(--msg-lh); color: var(--color-text-tinted); cursor: default; }
+  [data-state="sent"] .en-sent { display: block; }
+  [data-state="sent"] .en-out { display: none; }
+  #to, #send { transition: opacity var(--duration-exit) var(--ease-standard), visibility 0s, background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+  [data-state="sent"] #to, [data-state="sent"] #send { opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--duration-exit) var(--ease-standard), visibility 0s var(--duration-exit); }
+  /* Once faded (data-stepped), in the row they leave the line, so the tag has its room; in the column they
+     keep their place, so the footer doesn't change height. */
+  @media (orientation: landscape) { [data-stepped] #to, [data-stepped] #send { display: none; } }
+  /* The Spanish that went fades before it empties (.going, 160 ms). */
+  .es-in, #detected { transition: opacity var(--duration-exit) var(--ease-standard); }
+  .f.es.going .es-in, .f.es.going #detected { opacity: 0; }
+  /* Its last moment (data-fading, 240 ms): the tag and the green fade out together, and the English rises
+     6 px as it goes, toward the chat. Reduce Motion keeps the fades and drops the rise. */
+  [data-fading="yes"] #tagrow { opacity: 0; transition: opacity var(--fade-out) var(--ease-standard); }
+  [data-fading="yes"] .f.en { background: transparent; transition: background-color var(--fade-out) var(--ease-standard); }
+  [data-fading="yes"] .en-sent { opacity: 0; transform: translateY(-6px);
+    transition: opacity var(--fade-out) var(--ease-standard), transform var(--fade-out) var(--ease-standard); }
+  @media (prefers-reduced-motion: reduce) { [data-fading="yes"] .en-sent { transform: none; } }
+  body { --fade-out: 240ms; }
+  [data-state="error"] .f.en, [data-state="stale"] .f.en, [data-state="written"] .f.en { background: var(--color-tint-error); }
   [data-state="ready"] .f.en { background: var(--obsidian-veil-selected); }
   [data-state="ready"] .f.en:focus-within { background: var(--color-overlay-pressed); }
 
@@ -293,6 +327,8 @@
     <div class="f en">
       <div class="en-wrap">
         <textarea class="en-out" id="en" lang="en" placeholder="English" aria-label="Translation" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <div class="en-stream" id="stream" role="textbox" aria-readonly="true" aria-multiline="true" aria-label="Translation" aria-busy="true"></div>
+        <div class="en-sent" id="sentText"></div>
         <div class="busy"><span class="calm"><i></i><i></i><i></i></span><span id="busyText">Translating…</span></div>
       </div>
       <div class="adjust-row">
@@ -360,7 +396,7 @@ const $ = id => document.getElementById(id);
 const box = $("strip"), esIn = $("es"), enOut = $("en"), adjIn = $("adjIn"), menu = $("menu"), moreBtn = $("more");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ic = n => DesignIcons.svg(n);
-const FADE_MS = 3000, FADE_OUT_MS = 400;   // how long "Sent" stays in the footer, the last part fading out (--fade-out)
+const FADE_MS = 3000, FADE_OUT_MS = 240, TYPE_AFTER_MS = 300, ES_FADE_MS = 160;   // how long "Sent" stays in the footer, the last part fading out (--fade-out)
 
 // The design system has no mic yet: drawn on its 24 px grid and stroke, to add to mac-app-design before it is vendored.
 const MIC = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg>`;
@@ -464,16 +500,27 @@ function standIn(msg) {
 // writes the boxes the state wrote (the English that came back, the Spanish dictation heard).
 let st = SS.create();
 let detectSeq = 0, detectTimer = 0, detected = null;   // the language of what's being written (askDetect)
-let fadeTimer = 0, sendWatch = 0, dictTimer = 0, dictThen = null;
-const fields = () => ({ es: esIn.value, en: enOut.value });
+let fadeTimer = 0, stepTimer = 0, sendWatch = 0, dictTimer = 0, dictThen = null;
+let esGoing = null;   // the Spanish that went, while it fades (ES_FADE_MS), then empties; the box counts as empty meanwhile
+const fields = () => ({ es: esGoing !== null ? "" : esIn.value, en: enOut.value });
 function commit(n) {
   const old = st;
   st = n;
   if (n.enSeq !== old.enSeq) enOut.value = n.en;
-  if ((old.phase === "sent" || old.phase === "leave") && n.phase !== old.phase) clearTimeout(fadeTimer);
-  if (n.esSeq !== old.esSeq) { esIn.value = n.esText; setTimeout(askDetect, 0); }   // dictation, a send, Esc: its language too
+  if ((old.phase === "sent" || old.phase === "leave") && n.phase !== old.phase) { clearTimeout(fadeTimer); clearTimeout(stepTimer); delete box.dataset.stepped; }
+  if (n.esSeq !== old.esSeq && old.phase === "sending" && n.phase === "sent" && esIn.value.trim()) fadeSpanish(n.esText);
+  else if (n.esSeq !== old.esSeq) { endSpanishFade(); esIn.value = n.esText; setTimeout(askDetect, 0); }   // dictation, a send, Esc: its language too
   if (!n.dictStopping && dictThen) { dictThen = null; clearTimeout(dictTimer); }   // what waited on the last words is dropped
 }
+// After a send the Spanish fades, then empties. A key in the meantime goes in on its own: the old text
+// comes out around it (onSpanishBeforeInput / onSpanishInput).
+let esFadeTimer = 0;
+function fadeSpanish(text) {
+  esGoing = esIn.value; $("fields").querySelector(".f.es").classList.add("going");
+  clearTimeout(esFadeTimer);
+  esFadeTimer = setTimeout(() => { if (esGoing === null) return; endSpanishFade(); esIn.value = text; askDetect(); paint(); }, ES_FADE_MS);
+}
+function endSpanishFade() { clearTimeout(esFadeTimer); esGoing = null; $("fields").querySelector(".f.es").classList.remove("going"); }
 const stopMsg = { type: "dictation", action: "stop" };
 
 // What the shell tells the page (and what the stand-in tells it).
@@ -519,10 +566,15 @@ function connect() {
 // The server pings every 9 s; silence for 25 s means a dead connection that never closed.
 setInterval(() => { if (Date.now() - lastBeat > 25000) { lastBeat = Date.now(); connect(); } }, 5000);
 
-async function api(path, body) {
+// onPartial: asks for a streamed answer (a translate or an adjust): each { partial } line goes to it as it
+// comes, and the last line, { status, body }, is the answer. A server that answers plain JSON works too.
+async function api(path, body, onPartial) {
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 60000);
   try {
-    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}), signal: ctl.signal });
+    const headers = { "content-type": "application/json" };
+    if (onPartial) headers.accept = "application/x-ndjson";
+    const r = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}), signal: ctl.signal });
+    if (onPartial && r.body && /ndjson/.test(r.headers.get("content-type") || "")) return await streamOf(r, onPartial);
     let data = {};
     try { data = await r.json(); } catch (e) {}
     return { status: r.status, data: data && typeof data === "object" ? data : {} };
@@ -530,11 +582,33 @@ async function api(path, body) {
     return { status: 0, data: { error: "failed" } };
   } finally { clearTimeout(timer); }
 }
+// A streamed answer's lines, read as they come.
+async function streamOf(r, onPartial) {
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = "", last = null;
+  const take = (line) => {
+    let o;
+    try { o = JSON.parse(line); } catch (e) { return; }
+    if (!o || typeof o !== "object") return;
+    if (typeof o.partial === "string") onPartial(o.partial);
+    else if (typeof o.status === "number") last = { status: o.status, data: o.body && typeof o.body === "object" ? o.body : {} };
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (line.trim()) take(line); }
+  }
+  if (buf.trim()) take(buf);
+  return last || { status: 0, data: { error: "failed" } };
+}
 // One request at a time on the server: a "busy" waits and asks again, for as long as this ask is still the current one.
-async function ask(path, body, id) {
+// onPartial: the reply's words as they come (a translate or an adjust).
+async function ask(path, body, id, onPartial) {
   const until = Date.now() + 50000;
   for (;;) {
-    const r = await api(path, body);
+    const r = await api(path, body, onPartial);
     if (id !== st.req) return null;
     if (r.status === 409 && r.data.error === "busy" && Date.now() < until) { await sleep(700); if (id !== st.req) return null; continue; }
     return r;
@@ -588,7 +662,9 @@ function fitSteps() {
   if (over(en) && !$("lang").hidden && !$("lang").querySelector(".auto").hidden) step("lang");   // "Auto · " leaves; the title still says it
   // A language button that does nothing (no Auto, the reply in the target) leaves before the notice's words shorten.
   if (over(en) && !$("lang").hidden && SS.langInert(st, settings().target)) step("nolang");
-  // "Sent · time" stays whole: the chat's name gives way first (its title keeps it). Other notices shorten first.
+  // "Sent to <chat>": To and Send have left the line; if it still doesn't fit, the name ends in an ellipsis
+  // (the title keeps it). Other done tags stay whole: the chat's name gives way first. Other notices shorten first.
+  if (over(en) && st.phase === "sent") { row.style.flexShrink = "1"; row.style.minWidth = "0"; }
   const keepTag = $("status").classList.contains("s-done");
   if (over(en) && !keepTag) notice(true);          // the notice shortens down to its dot; its buttons stay whole
   if (over(en)) step("name");
@@ -653,6 +729,12 @@ function paint() {
   box.dataset.dict = st.dict;
   $("fields").inert = st.access.accessibility === false;
   $("busyText").textContent = v.state === "starting" ? "Starting translator…" : "Translating…";
+  // The reply's words while Claude writes them, in the English box's place; the newest line stays in view.
+  const streamWords = SS.streamText(st), stream = $("stream");
+  box.dataset.stream = streamWords ? "on" : "";
+  if (stream.textContent !== streamWords) { stream.textContent = streamWords; stream.lang = enOut.lang; stream.scrollTop = stream.scrollHeight; }
+  const sentText = $("sentText"), sentWords = st.phase === "sent" ? st.lastText || "" : "";
+  if (sentText.textContent !== sentWords) { sentText.textContent = sentWords; sentText.lang = enOut.lang; }
   $("chat").textContent = (t && t.chat) || "";
   $("to").title = (t && t.chat) || "";
   esIn.readOnly = st.phase === "sending";
@@ -699,13 +781,16 @@ function paint() {
   if (sig !== drawn) {
     drawn = sig;
     const status = $("status"), actions = $("actions");
+    // The ring that turned while sending is the one that lands: kept, not drawn again.
+    const ring = v.tag && v.tag.mark === "ring" ? status.querySelector(":scope > .ico.ring-mark") : null;
     status.replaceChildren(); actions.replaceChildren();
     if (v.tag) {
       // "info" (this Mac stood in for Claude) is the design system's still gray tag.
       status.className = `status tag s-${v.tag.kind}${v.tag.kind === "info" ? " s-idle" : ""}`;
       status.title = v.tag.title || v.tag.text;   // the whole words, when the tag has to shorten them
-      const mark = document.createElement("span");
-      if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
+      let mark = document.createElement("span");
+      if (v.tag.mark === "ring") { if (ring) mark = ring; else { mark.className = "ico ring-mark"; mark.innerHTML = ic("ring"); } }
+      else if (v.tag.kind === "working") { mark.className = "calm"; mark.innerHTML = "<i></i><i></i><i></i>"; }
       else if (v.tag.kind === "done" || v.tag.kind === "error") { mark.className = "ico"; mark.innerHTML = ic(v.tag.kind === "done" ? "check" : "error"); }
       else mark.className = v.tag.kind === "needs" || v.tag.kind === "asks" ? "pdot" : "sdot";
       const words = document.createElement("span");
@@ -755,10 +840,15 @@ async function translate(target) {
   if (!go) return;
   commit(go.st);
   paint();
-  const r = await ask("/api/translate", go.body, st.req);
+  const r = await ask("/api/translate", go.body, st.req, wordsFor(st.req));
   if (!r) return;
   commit(SS.translateDone(st, fields(), r.data));
   paint();
+}
+
+// The reply's words as they come, for request `req`: shown only while it's still the current one (SS.streamed).
+function wordsFor(req) {
+  return (text) => { const n = SS.streamed(st, req, text); if (n !== st) { commit(n); paint(); } };
 }
 
 function openAdjust() {
@@ -773,7 +863,7 @@ async function adjust(note) {
   if (!go) return;
   commit(go.st);
   paint();
-  const r = await ask("/api/adjust", go.body, st.req);
+  const r = await ask("/api/adjust", go.body, st.req, wordsFor(st.req));
   if (!r) return;
   const res = SS.adjustDone(st, fields(), r.data);
   commit(res.st);
@@ -810,15 +900,31 @@ function onSent(m) {
   clearTimeout(sendWatch);
   commit(SS.sendDone(st, m, SS.clock(new Date())));
   paint();
-  // "Sent" stays a few seconds, fades out over the last 0.4 s, then the strip is empty again.
+  // "Sent" stays 3 seconds, its last 0.24 s on the way out, then the strip is empty again.
   if (st.phase === "sent" || st.phase === "leave") {
     esIn.focus();
+    sentAt = performance.now();
+    if (st.phase === "sent") stepAside();
     clearTimeout(fadeTimer);
-    fadeTimer = setTimeout(() => {
-      box.dataset.fading = "yes";
-      fadeTimer = setTimeout(() => { const n = SS.fadeDone(st); if (n !== st) { commit(n); paint(); } }, FADE_OUT_MS);
-    }, FADE_MS - FADE_OUT_MS);
+    fadeTimer = setTimeout(leaveSent, FADE_MS - FADE_OUT_MS);
   }
+}
+// To and Send step aside: they fade (CSS), then leave the row's line (data-stepped), and the footer fits again.
+function stepAside() { clearTimeout(stepTimer); stepTimer = setTimeout(() => { if (st.phase === "sent") { box.dataset.stepped = "yes"; fitFooter(); } }, ES_FADE_MS); }
+// Back in the line, still invisible (it is still Sent), so they fade back in when the strip empties.
+function stepBack() { clearTimeout(stepTimer); if (box.dataset.stepped) { delete box.dataset.stepped; void box.offsetWidth; } }
+// The way out of Sent: the tag, the green and the English fade (the English rising), then an empty strip.
+// Typing starts it at once (never sooner than TYPE_AFTER_MS in, so "Sent" is seen); what was typed stays.
+let sentAt = 0;
+function leaveSent() {
+  if ((st.phase !== "sent" && st.phase !== "leave") || box.dataset.fading) return;
+  clearTimeout(fadeTimer);
+  box.dataset.fading = "yes";
+  fadeTimer = setTimeout(() => {
+    stepBack();
+    const n = SS.fadeDone(st);
+    if (n !== st) { commit(n); if (fields().es.trim()) commit(SS.typed(st, fields())); paint(); askDetect(); }
+  }, FADE_OUT_MS);
 }
 
 // ------------------------------------------------------------------------------ dictation
@@ -909,7 +1015,24 @@ function toggleDictation() { if (st.dict === "on") stopDictation(dictEnd()); els
 
 // ------------------------------------------------------------------------------ the fields
 // The Spanish changed: an answer for the old text no longer counts; a translation of it is out of date.
-function onSpanishInput() { commit(SS.typed(st, fields())); paint(); askDetect(); }
+function onSpanishInput() {
+  if (esGoing !== null) {
+    // A key while the sent Spanish fades: keep only what was just typed, around the old text.
+    const v = esIn.value, o = esGoing;
+    let i = 0; while (i < o.length && v[i] === o[i]) i++;
+    let j = 0; while (j < o.length - i && v[v.length - 1 - j] === o[o.length - 1 - j]) j++;
+    endSpanishFade();
+    esIn.value = v.slice(i, v.length - j); esIn.setSelectionRange(esIn.value.length, esIn.value.length);
+  }
+  if ((st.phase === "sent" || st.phase === "leave") && !box.dataset.fading) {
+    // Typing ends "Sent" with its own way out; the typed words wait for the empty strip (leaveSent).
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(leaveSent, Math.max(0, TYPE_AFTER_MS - (performance.now() - sentAt)));
+    askDetect(); return;
+  }
+  if ((st.phase === "sent" || st.phase === "leave") && box.dataset.fading) { askDetect(); return; }
+  commit(SS.typed(st, fields())); paint(); askDetect();
+}
 
 // The language of what's being written, guessed on the Mac by the shell (detect, then detected),
 // at most every quarter second while typing, with the text as it is then. The page keeps only the
